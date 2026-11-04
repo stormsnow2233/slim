@@ -114,6 +114,6 @@ data class ReaderPrefs(
     val fontSize: Float = 19f,
     val lineHeight: Float = 1.75f,
     val themeIndex: Int = 0,
-    val pageMode: Int = 0, // 0 上下滚动 1 左右翻页
+    val pageMode: Int = 1, // 0 上下滚动 1 章内左右翻页
     val indent: Boolean = true,
 )

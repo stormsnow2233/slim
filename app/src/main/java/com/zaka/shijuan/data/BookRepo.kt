@@ -18,11 +18,16 @@ data class SourceResult(
 
 object BookRepo {
 
-    private val pool = Executors.newFixedThreadPool(6)
+    private val pool = Executors.newFixedThreadPool(20)
 
-    private fun enc(s: String): String = URLEncoder.encode(s, "UTF-8")
+    /** 正文预取：提前把下一章拉回来，翻页时几乎不用等 */
+    private val prefetchPool = Executors.newFixedThreadPool(3)
 
-    private fun fill(tpl: String, key: String): String = tpl.replace("{key}", enc(key))
+    private fun enc(s: String, charset: String = "UTF-8"): String =
+        runCatching { URLEncoder.encode(s, charset) }.getOrDefault(URLEncoder.encode(s, "UTF-8"))
+
+    private fun fill(tpl: String, key: String, charset: String = "utf-8"): String =
+        tpl.replace("{key}", enc(key, if (charset.contains("gb")) "GBK" else "UTF-8"))
 
     /** 搜索单个书源 —— 依次尝试镜像与备用路径 */
     fun searchSource(src: Source, key: String): SourceResult {
@@ -36,17 +41,25 @@ object BookRepo {
         }
         val rule = src.search ?: return SourceResult(src.id, src.name, false, error = "该源未配置搜索规则")
 
+        // GBK 站点（笔趣阁系、飘天、顶点等）的搜索参数必须用 GBK 编码，否则中文搜不到
+        val keyCharset = if (rule.keyCharset.equals("utf-8", true) && src.charset.contains("gb")) "gbk"
+        else rule.keyCharset
+
         var lastErr = "连接不上"
-        for (base in src.bases) {
+        // 已知能通的域名排最前，省掉镜像探测那几秒
+        val known = ActiveBases[src.id]
+        val ordered = if (known != null && src.bases.contains(known))
+            listOf(known) + src.bases.filter { it != known } else src.bases
+        for (base in ordered) {
             val urls = buildList {
-                add(fill(rule.url, key))
-                rule.extraUrls.forEach { add(fill(it, key)) }
+                add(fill(rule.url, key, keyCharset))
+                rule.extraUrls.forEach { add(fill(it, key, keyCharset)) }
             }
             for (path in urls) {
                 val full = if (path.startsWith("http")) path else base + path
                 val resp = if (rule.method.equals("POST", true)) {
                     val body = HashMap<String, String>()
-                    fill(rule.body, key).split("&").forEach {
+                    fill(rule.body, key, keyCharset).split("&").forEach {
                         val kv = it.split("=", limit = 2)
                         if (kv.size == 2) body[kv[0]] = kv[1]
                     }
@@ -103,7 +116,7 @@ object BookRepo {
     /** 详情页：补作者/封面/简介（失败不致命） */
     fun getDetail(src: Source, book: Book): Book {
         val base = ActiveBases[src.id] ?: src.base
-        val resp = Net.get(book.url, src.charset, base + "/")
+        val resp = Net.get(book.url, src.charset, base + "/", useCache = true)
         if (!resp.ok) return book
         val doc = Rules.parse(resp.body)
         val d = src.detail
@@ -127,10 +140,43 @@ object BookRepo {
         return book.copy(name = name, author = author, cover = cover, intro = intro)
     }
 
+    /**
+     * 详情 + 目录一次拿全。
+     * 两者原本是同一张页面各抓一次，现在先打一枪填缓存，再并行解析，
+     * 打开书籍的等待时间从「两次往返」压到「一次往返」。
+     */
+    fun getDetailAndToc(src: Source, book: Book): Pair<Book, Result<Toc>> {
+        val base = ActiveBases[src.id] ?: src.base
+        Net.get(book.url, src.charset, base + "/", useCache = true)
+
+        val detRef = java.util.concurrent.atomic.AtomicReference(book)
+        val tocRef = java.util.concurrent.atomic.AtomicReference<Result<Toc>>(
+            Result.failure(Exception("未执行"))
+        )
+        val a = Thread { detRef.set(runCatching { getDetail(src, book) }.getOrDefault(book)) }
+        val b = Thread { tocRef.set(runCatching { getToc(src, book) }.getOrElse { Result.failure(it) }) }
+        a.isDaemon = true; b.isDaemon = true
+        a.start(); b.start()
+        runCatching { a.join(18000) }
+        runCatching { b.join(18000) }
+        return detRef.get() to tocRef.get()
+    }
+
+    /** 后台预取指定章节正文（翻页时直接命中缓存） */
+    fun prefetchChapter(src: Source, chapter: Chapter, store: Store) {
+        if (store.loadContent(chapter.url) != null) return
+        runCatching {
+            prefetchPool.execute {
+                runCatching { getChapter(src, chapter) }.getOrNull()
+                    ?.onSuccess { store.saveContent(chapter.url, it.text) }
+            }
+        }
+    }
+
     /** 目录 */
     fun getToc(src: Source, book: Book): Result<Toc> {
         val base = ActiveBases[src.id] ?: src.base
-        val resp = Net.get(book.url, src.charset, base + "/")
+        val resp = Net.get(book.url, src.charset, base + "/", useCache = true)
         if (!resp.ok) return Result.failure(Exception(resp.error))
         val doc = Rules.parse(resp.body)
         val t = src.toc
@@ -252,7 +298,7 @@ object BookRepo {
                 try { onUpdate(r) } finally { latch.countDown() }
             }
         }
-        runCatching { latch.await(45, java.util.concurrent.TimeUnit.SECONDS) }
+        runCatching { latch.await(20, java.util.concurrent.TimeUnit.SECONDS) }
     }
 
     /** 当前每个源实际连通的域名 */

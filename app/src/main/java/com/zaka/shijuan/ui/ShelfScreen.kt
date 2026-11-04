@@ -75,7 +75,7 @@ fun ShelfScreen(
                 modifier = Modifier.fillMaxSize(),
             ) {
                 items(shelf, key = { it.book.url + it.book.sourceId }) { item ->
-                    Box {
+                    Box(Modifier.animateItem()) {
                         Column(
                             modifier = Modifier
                                 .combinedClickable(

@@ -1,18 +1,39 @@
 package com.zaka.shijuan.data
 
+import okhttp3.ConnectionPool
+import okhttp3.Dispatcher
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
+import okhttp3.Protocol
 import okhttp3.Request
 import java.io.ByteArrayOutputStream
+import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
-/** 统一网络层：处理编码、UA、Referer、重试 */
+/**
+ * 统一网络层：处理编码、UA、Referer、重试。
+ *
+ * 性能取舍：
+ *  - 连接池放大 + 长保活，同一站点连续抓目录/正文时不再重新握手
+ *  - 单请求超时收短（5s 连接 / 12s 读取），慢源尽快失败，不拖整个并发搜索
+ *  - 每站点 8 并发，整机 48 并发，够 15+ 源同时打
+ *  - 页面级小缓存，返回上一页、重进详情不重复下载
+ */
 object Net {
 
+    private val dispatcher = Dispatcher().apply {
+        maxRequests = 48
+        maxRequestsPerHost = 8
+    }
+
     private val client: OkHttpClient = OkHttpClient.Builder()
-        .connectTimeout(12, TimeUnit.SECONDS)
-        .readTimeout(20, TimeUnit.SECONDS)
-        .callTimeout(25, TimeUnit.SECONDS)
+        .dispatcher(dispatcher)
+        .connectionPool(ConnectionPool(28, 6, TimeUnit.MINUTES))
+        .connectTimeout(5, TimeUnit.SECONDS)
+        .readTimeout(12, TimeUnit.SECONDS)
+        .writeTimeout(10, TimeUnit.SECONDS)
+        .callTimeout(16, TimeUnit.SECONDS)
+        .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
         .followRedirects(true)
         .followSslRedirects(true)
         .retryOnConnectionFailure(true)
@@ -23,6 +44,20 @@ object Net {
             "Chrome/122.0.0.0 Mobile Safari/537.36"
 
     data class Resp(val ok: Boolean, val code: Int, val body: String, val error: String = "", val via: String = "")
+
+    // ── 页面小缓存：只存最近的几十页，避免来回跳转重复下载 ──
+    private val pageCache = object : LinkedHashMap<String, Resp>(64, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Resp>?): Boolean = size > 48
+    }
+
+    /** 记录每个源实际连通的 base（避开挂掉的镜像，后续请求直接走通的） */
+    private val bestBase = ConcurrentHashMap<String, String>()
+
+    fun rememberBase(sourceId: String, base: String) {
+        bestBase[sourceId] = base
+    }
+
+    fun baseOf(sourceId: String): String? = bestBase[sourceId]
 
     /** 按站点编码解码（GBK 站点很常见，必须处理） */
     private fun decode(bytes: ByteArray, charset: String, contentType: String?): String {
@@ -55,13 +90,19 @@ object Net {
         charset: String = "utf-8",
         referer: String = "",
         headers: Map<String, String> = emptyMap(),
+        useCache: Boolean = false,
     ): Resp {
+        val key = "G|$url|$charset"
+        if (useCache) pageCache[key]?.let { return it }
         val builder = Request.Builder().url(safeUrl(url)).header("User-Agent", UA)
             .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
             .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
+            .header("Connection", "keep-alive")
         if (referer.isNotBlank()) builder.header("Referer", referer)
         headers.forEach { (k, v) -> builder.header(k, v) }
-        return exec(builder.build(), charset)
+        val resp = exec(builder.build(), charset)
+        if (useCache && resp.ok) pageCache[key] = resp
+        return resp
     }
 
     fun post(
@@ -84,12 +125,28 @@ object Net {
         return exec(builder.build(), charset)
     }
 
-    fun getBytes(url: String): ByteArray? = runCatching {
-        val req = Request.Builder().url(safeUrl(url)).header("User-Agent", UA).build()
-        client.newCall(req).execute().use { r ->
+    fun getBytes(url: String, referer: String = ""): ByteArray? = runCatching {
+        val b = Request.Builder().url(safeUrl(url)).header("User-Agent", UA)
+        if (referer.isNotBlank()) b.header("Referer", referer)
+        client.newCall(b.build()).execute().use { r ->
             if (!r.isSuccessful) null else r.body?.bytes()
         }
     }.getOrNull()
+
+    /** 预连接：点开书籍前先把到该站的 TCP/TLS 握手做掉，省掉首包那一两百毫秒 */
+    fun warmUp(url: String) {
+        runCatching {
+            val b = Request.Builder().url(safeUrl(url)).head()
+                .header("User-Agent", UA)
+                .build()
+            client.newCall(b).enqueue(object : okhttp3.Callback {
+                override fun onFailure(call: okhttp3.Call, e: java.io.IOException) = Unit
+                override fun onResponse(call: okhttp3.Call, response: okhttp3.Response) {
+                    response.close()
+                }
+            })
+        }
+    }
 
     private fun exec(request: Request, charset: String, depth: Int = 0): Resp = try {
         client.newCall(request).execute().use { r ->
@@ -153,9 +210,9 @@ object Net {
     fun parallel(urls: List<String>, charset: String = "utf-8"): List<Resp> {
         val out = arrayOfNulls<Resp>(urls.size)
         val threads = urls.mapIndexed { i, u ->
-            Thread { out[i] = get(u, charset) }.apply { start() }
+            Thread { out[i] = get(u, charset) }.apply { isDaemon = true; start() }
         }
-        threads.forEach { runCatching { it.join(20000) } }
+        threads.forEach { runCatching { it.join(16000) } }
         return out.map { it ?: Resp(false, 0, "", "未返回") }
     }
 

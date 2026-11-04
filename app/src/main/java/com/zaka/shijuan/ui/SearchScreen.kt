@@ -316,7 +316,7 @@ fun SearchScreen(
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 items(merged, key = { it.name + it.primary.sourceId }) { m ->
-                    BookRow(m, onOpenBook)
+                    Box(Modifier.animateItem()) { BookRow(m, onOpenBook) }
                 }
             }
         }

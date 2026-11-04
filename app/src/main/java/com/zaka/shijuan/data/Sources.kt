@@ -16,6 +16,7 @@ data class SearchRule(
     val fields: Map<String, String> = emptyMap(),
     val auto: Boolean = false,             // 规则认不出时启用自动识别
     val extraUrls: List<String> = emptyList(),
+    val keyCharset: String = "utf-8",      // 关键词编码：GBK 老站必须用 gbk，否则搜不到
 )
 
 data class DetailRule(
@@ -255,6 +256,150 @@ object Sources {
             detail = DetailRule(name = "h1@text", author = ".author a@text", cover = ".book-img img@src", intro = ".book-intro@text"),
             toc = TocRule(list = ".catalog-content-wrap a[href*=\"/chapter\"], .volume-wrap a[href*=\"/chapter\"]", name = "@text", url = "@href"),
             content = ContentRule(body = ".read-content@html || .content@html"),
+        ),
+
+
+        // ─────────── 轻小说（国内直连） ───────────
+        Source(
+            id = "linovelib", name = "哔哩轻小说", group = "轻小说",
+            base = "https://www.linovelib.com", mirrors = listOf("https://www.bilinovel.com"),
+            charset = "utf-8", status = "local",
+            note = "日轻/台版翻译最全的站之一，轻小说首选",
+            search = SearchRule(
+                url = "/search.php?searchkey={key}",
+                list = ".book-img-text li, .bookbox, .book-item",
+                fields = mapOf(
+                    "name" to "h4 a@text || h3 a@text || a@title",
+                    "bookUrl" to "h4 a@href || h3 a@href || a@href",
+                    "cover" to "img@data-src || img@src",
+                    "author" to ".book-author@text || .author@text",
+                    "intro" to "p.intro@text || .book-intro@text",
+                ),
+                auto = true,
+            ),
+            detail = DetailRule(
+                name = "h1@text",
+                author = ".book-author@text || .author@text",
+                cover = ".book-img img@src || .book-layout img@src",
+                intro = ".book-intro@text || #intro@text || .book-dec@text",
+            ),
+            toc = TocRule(list = ".catalog ul li a, .chapter-list a, #vol_1 a", name = "@text", url = "@href"),
+            content = ContentRule(body = "#acontent@html || .read-content@html || #content@html"),
+        ),
+
+        Source(
+            id = "wenku8", name = "轻小说文库", group = "轻小说",
+            base = "https://www.wenku8.net", charset = "utf-8", status = "local",
+            note = "老牌轻小说文库，日轻翻译量大。部分章节要登录，遇到就换源",
+            search = SearchRule(
+                url = "/modules/article/search.php?searchtype=articlename&searchkey={key}",
+                keyCharset = "gbk",
+                list = "table.css tr, table.grid tr, .grid tr",
+                fields = mapOf(
+                    "name" to "td:nth-child(1) a@text || td:nth-child(2) a@text",
+                    "bookUrl" to "td:nth-child(1) a@href || td:nth-child(2) a@href",
+                    "author" to "td:nth-child(3)@text",
+                    "latest" to "td:nth-child(2) a@text || td:nth-child(4) a@text",
+                ),
+                auto = true,
+            ),
+            detail = DetailRule(name = "h1@text || #title@text", author = "#info a@text || .author@text", cover = "#fmimg img@src || .cover img@src", intro = "#intro@text || .intro@text"),
+            toc = TocRule(list = "#content table td a, .css table td a, .chapter_list a", name = "@text", url = "@href"),
+            content = ContentRule(body = "#content@html || #acontent@html"),
+        ),
+
+        Source(
+            id = "sfacg", name = "SF轻小说", group = "轻小说",
+            base = "https://book.sfacg.com", charset = "utf-8", status = "local",
+            note = "正版轻小说站，原创轻小说多。免费章节能看，付费章要买",
+            search = SearchRule(
+                url = "/Search/?keyword={key}", auto = true,
+                list = ".Comic_Pic_List li, .book-list li, .result-list li",
+                fields = mapOf(
+                    "name" to "h3 a@text || .title a@text || a@title",
+                    "bookUrl" to "h3 a@href || .title a@href || a@href",
+                    "cover" to "img@src || img@data-src",
+                    "author" to ".author@text || .sub@text",
+                    "intro" to ".intro@text || .desc@text",
+                ),
+            ),
+            detail = DetailRule(name = "h1@text || .title@text", author = ".author@text", cover = ".cover img@src", intro = ".intro@text || .desc@text"),
+            toc = TocRule(list = ".chapter-list a, .catalog a, .list a[href*='/Novel/']", name = "@text", url = "@href"),
+            content = ContentRule(body = ".article-content@html || #content@html || .content@html"),
+        ),
+
+        Source(
+            id = "trxs", name = "同人小说", group = "轻小说",
+            base = "https://www.trxs.cc", charset = "utf-8", status = "local",
+            note = "同人/二次元向文本多，轻小说改编同人很全",
+            search = SearchRule(
+                url = "/modules/article/search.php?searchkey={key}", auto = true,
+                list = ".bookbox, .novel-item, .grid tr",
+                fields = mapOf(
+                    "name" to "h4 a@text || td:nth-child(1) a@text || a@title",
+                    "bookUrl" to "h4 a@href || td:nth-child(1) a@href || a@href",
+                    "author" to ".author@text || td:nth-child(3)@text",
+                    "cover" to "img@src || img@data-src",
+                ),
+            ),
+            detail = DetailRule(name = "h1@text", author = ".author@text || #info a@text", cover = "#fmimg img@src", intro = "#intro@text || .intro@text"),
+            toc = TocRule(list = "#list dl dd a, .chapter-list a, #content table td a", name = "@text", url = "@href"),
+            content = ContentRule(body = "#content@html || #acontent@html"),
+        ),
+
+        // ─────────── 综合补充 ───────────
+        Source(
+            id = "ptwxz", name = "飘天文学", group = "综合",
+            base = "https://www.ptwxz.com", charset = "gbk", status = "local",
+            note = "老牌 GBK 站，完本资源多",
+            search = SearchRule(
+                url = "/modules/article/search.php?searchkey={key}", auto = true,
+                list = ".grid tr, .bookbox, .novel-list li",
+                fields = mapOf(
+                    "name" to "td:nth-child(1) a@text || h4 a@text || a@title",
+                    "bookUrl" to "td:nth-child(1) a@href || h4 a@href || a@href",
+                    "author" to "td:nth-child(3)@text || .author@text",
+                ),
+            ),
+            detail = DetailRule(name = "h1@text", author = "#info a@text || .author@text", cover = "#fmimg img@src", intro = "#intro@text || .intro@text"),
+            toc = TocRule(list = "#list dl dd a, #content table td a, .chapter-list a", name = "@text", url = "@href"),
+            content = ContentRule(body = "#content@html || #acontent@html"),
+        ),
+
+        Source(
+            id = "ddxs", name = "顶点小说", group = "综合",
+            base = "https://www.ddxs.com", charset = "gbk", status = "local",
+            note = "GBK 老站，书库大更新快",
+            search = SearchRule(
+                url = "/modules/article/search.php?searchkey={key}", auto = true,
+                list = ".grid tr, .bookbox, .novel-list li",
+                fields = mapOf(
+                    "name" to "td:nth-child(1) a@text || h4 a@text || a@title",
+                    "bookUrl" to "td:nth-child(1) a@href || h4 a@href || a@href",
+                    "author" to "td:nth-child(3)@text || .author@text",
+                ),
+            ),
+            detail = DetailRule(name = "h1@text", author = "#info a@text || .author@text", cover = "#fmimg img@src", intro = "#intro@text || .intro@text"),
+            toc = TocRule(list = "#list dl dd a, #content table td a, .chapter-list a", name = "@text", url = "@href"),
+            content = ContentRule(body = "#content@html || #acontent@html"),
+        ),
+
+        Source(
+            id = "xbiquge", name = "新笔趣阁", group = "笔趣阁系",
+            base = "https://www.xbiquge.la", charset = "utf-8", status = "local",
+            note = "笔趣阁系里比较稳的一个，网文全",
+            search = SearchRule(
+                url = "/modules/article/search.php?searchkey={key}", auto = true,
+                list = ".grid tr, .bookbox, .novel-list li",
+                fields = mapOf(
+                    "name" to "td:nth-child(1) a@text || h4 a@text || a@title",
+                    "bookUrl" to "td:nth-child(1) a@href || h4 a@href || a@href",
+                    "author" to "td:nth-child(3)@text || .author@text",
+                ),
+            ),
+            detail = DetailRule(name = "h1@text", author = "#info a@text || .author@text", cover = "#fmimg img@src", intro = "#intro@text || .intro@text"),
+            toc = TocRule(list = "#list dl dd a, #content table td a, .chapter-list a", name = "@text", url = "@href"),
+            content = ContentRule(body = "#content@html || #acontent@html"),
         ),
 
         // ─────────── 电子书 ───────────

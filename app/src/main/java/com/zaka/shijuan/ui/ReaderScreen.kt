@@ -8,14 +8,12 @@ import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.gestures.detectTapGestures
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.foundation.pager.PagerState
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -26,11 +24,13 @@ import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
+import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
@@ -61,35 +61,52 @@ fun ReaderScreen(
     var showToc by remember { mutableStateOf(false) }
     var prefs by remember { mutableStateOf(store.readerPrefs()) }
 
+    // 章内分页状态
+    var pageCount by remember { mutableIntStateOf(1) }
+    var pagerState by remember { mutableStateOf<PagerState?>(null) }
+    var currentPage by remember { mutableIntStateOf(0) }
+
     val theme = ReaderThemes.getOrElse(prefs.themeIndex) { ReaderThemes[0] }
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
     val tocState = rememberLazyListState()
     val chapter = chapters.getOrNull(index)
 
-    // 加载章节
+    // 加载章节 + 后台预取下一章
     LaunchedEffect(index) {
         val ch = chapters.getOrNull(index) ?: return@LaunchedEffect
         loading = true
         error = ""
         content = null
+        pageCount = 1
+        currentPage = 0
         scrollState.scrollTo(0)
         withContext(Dispatchers.IO) {
+            val src = Sources.byId(book.sourceId)
             val cached = store.loadContent(ch.url)
             if (cached != null) {
                 content = Content(ch.name, cached)
                 loading = false
-                return@withContext
+            } else if (src == null) {
+                error = "书源不存在"; loading = false
+            } else {
+                BookRepo.getChapter(src, ch)
+                    .onSuccess {
+                        content = it
+                        store.saveContent(ch.url, it.text)
+                    }
+                    .onFailure { error = it.message ?: "加载失败" }
+                loading = false
             }
-            val src = Sources.byId(book.sourceId)
-            if (src == null) { error = "书源不存在"; loading = false; return@withContext }
-            BookRepo.getChapter(src, ch)
-                .onSuccess {
-                    content = it
-                    store.saveContent(ch.url, it.text)
+
+            // 提前把下一章拉回来，翻到下一章基本不用等
+            val next = chapters.getOrNull(index + 1)
+            if (src != null && next != null) {
+                BookRepo.prefetchChapter(src, next, store)
+                if (chapters.getOrNull(index + 2) != null) {
+                    chapters.getOrNull(index + 2)?.let { BookRepo.prefetchChapter(src, it, store) }
                 }
-                .onFailure { error = it.message ?: "加载失败" }
-            loading = false
+            }
         }
     }
 
@@ -102,20 +119,26 @@ fun ReaderScreen(
         onProgress(index, chapter?.name ?: "", p, chapters.size)
     }
 
-    // 滚动模式：到底自动下一章
     LaunchedEffect(scrollState.value, scrollState.maxValue, loading) {
         if (scrollState.maxValue > 0) {
-            val p = scrollState.value.toFloat() / scrollState.maxValue
-            saveProgress(p)
-            if (p > 0.985f && !loading && index < chapters.size - 1) {
-                // 已经在底部，等用户继续滑
-            }
+            saveProgress(scrollState.value.toFloat() / scrollState.maxValue)
+        }
+    }
+
+    // 翻页模式下按页数算进度
+    LaunchedEffect(currentPage, pageCount) {
+        if (prefs.pageMode == 1 && pageCount > 0) {
+            saveProgress((currentPage + 1).toFloat() / pageCount)
         }
     }
 
     DisposableEffect(Unit) {
         onDispose {
-            val p = if (scrollState.maxValue > 0) scrollState.value.toFloat() / scrollState.maxValue else 0f
+            val p = when {
+                prefs.pageMode == 1 && pageCount > 0 -> (currentPage + 1).toFloat() / pageCount
+                scrollState.maxValue > 0 -> scrollState.value.toFloat() / scrollState.maxValue
+                else -> 0f
+            }
             onProgress(index, chapter?.name ?: "", p, chapters.size)
         }
     }
@@ -125,34 +148,50 @@ fun ReaderScreen(
     }
     BackHandler(enabled = !showSettings && !showToc && showBar) { showBar = false }
 
+    // 翻页模式下的边缘点击：先翻页，翻到头才切章
+    fun handleTap(x: Float, width: Int) {
+        if (prefs.pageMode == 1) {
+            when {
+                x < width * 0.30f -> {
+                    val p = pagerState
+                    if (p != null && p.currentPage > 0) {
+                        scope.launch { p.animateScrollToPage(p.currentPage - 1) }
+                    } else if (index > 0) index--
+                }
+                x > width * 0.70f -> {
+                    val p = pagerState
+                    if (p != null && p.currentPage < pageCount - 1) {
+                        scope.launch { p.animateScrollToPage(p.currentPage + 1) }
+                    } else if (index < chapters.size - 1) index++
+                }
+                else -> showBar = !showBar
+            }
+        } else {
+            when {
+                x < width * 0.28f -> if (index > 0) index-- else showBar = true
+                x > width * 0.72f -> if (index < chapters.size - 1) index++ else showBar = true
+                else -> showBar = !showBar
+            }
+        }
+    }
+
     Box(
         Modifier
             .fillMaxSize()
             .background(theme.bg)
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onTap = { offset ->
-                        val w = size.width
-                        when {
-                            offset.x < w * 0.28f -> {
-                                if (index > 0) index-- else showBar = true
-                            }
-                            offset.x > w * 0.72f -> {
-                                if (index < chapters.size - 1) index++ else showBar = true
-                            }
-                            else -> showBar = !showBar
-                        }
-                    }
-                )
+            .pointerInput(prefs.pageMode, pageCount, pagerState) {
+                detectTapGestures(onTap = { offset -> handleTap(offset.x, size.width) })
             }
     ) {
-        // ── 正文 ──
         Column(Modifier.fillMaxSize()) {
             Spacer(Modifier.height(statusBarHeight()))
 
             when {
                 loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
-                    CircularProgressIndicator(Modifier.size(24.dp), strokeWidth = 2.dp, color = theme.text.copy(alpha = 0.5f))
+                    CircularProgressIndicator(
+                        Modifier.size(24.dp), strokeWidth = 2.dp,
+                        color = theme.text.copy(alpha = 0.5f),
+                    )
                 }
 
                 error.isNotBlank() -> Column(
@@ -186,37 +225,37 @@ fun ReaderScreen(
                 }
 
                 prefs.pageMode == 1 -> {
-                    // 左右翻页：整章一页，左右滑动切章
-                    val pager = rememberPagerState(initialPage = index, pageCount = { chapters.size })
-                    LaunchedEffect(pager.currentPage) {
-                        if (pager.currentPage != index) index = pager.currentPage
+                    // ── 章内左右滑动翻页 ──
+                    val bodyText = remember(content, prefs.indent) {
+                        TextPaginator.normalize(content?.text.orEmpty(), prefs.indent)
                     }
-                    LaunchedEffect(index) {
-                        if (index != pager.currentPage) pager.animateScrollToPage(index)
-                    }
-                    HorizontalPager(
-                        state = pager,
-                        modifier = Modifier.fillMaxSize(),
-                    ) { page ->
-                        val c = if (page == index) content else null
-                        Column(
-                            Modifier
-                                .fillMaxSize()
-                                .verticalScroll(rememberScrollState())
-                                .padding(horizontal = 22.dp, vertical = 12.dp)
-                        ) {
-                            ChapterTitle(c?.title ?: chapters.getOrNull(page)?.name ?: "", prefs, theme)
-                            if (c != null) {
-                                BodyText(c.text, prefs, theme)
-                            } else {
-                                Spacer(Modifier.height(40.dp))
-                                Box(Modifier.fillMaxWidth(), contentAlignment = Alignment.Center) {
-                                    CircularProgressIndicator(Modifier.size(20.dp), strokeWidth = 2.dp,
-                                        color = theme.text.copy(alpha = 0.4f))
-                                }
-                            }
-                            FootNav(page, chapters.size, theme) { if (page > 0) index = page - 1; else Unit }
+                    Box(Modifier.fillMaxSize()) {
+                        key(index, prefs.fontSize, prefs.lineHeight, prefs.indent) {
+                            PagedChapter(
+                                bodyText = bodyText,
+                                title = content?.title ?: chapter?.name ?: "",
+                                prefs = prefs,
+                                colors = theme,
+                                modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 8.dp),
+                                onPageCount = { pageCount = it },
+                                onPagerReady = { p ->
+                                    pagerState = p
+                                    currentPage = p.currentPage
+                                },
+                            )
                         }
+                        Text(
+                            "${currentPage + 1} / $pageCount",
+                            color = theme.text.copy(alpha = 0.32f),
+                            fontSize = 10.sp,
+                            modifier = Modifier
+                                .align(Alignment.BottomCenter)
+                                .padding(bottom = 6.dp),
+                        )
+                    }
+                    LaunchedEffect(pagerState) {
+                        val p = pagerState ?: return@LaunchedEffect
+                        snapshotFlow { p.currentPage }.collect { currentPage = it }
                     }
                 }
 
@@ -254,17 +293,26 @@ fun ReaderScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = {
-                    onProgress(index, chapter?.name ?: "",
-                        if (scrollState.maxValue > 0) scrollState.value.toFloat() / scrollState.maxValue else 0f,
-                        chapters.size)
+                    onProgress(
+                        index, chapter?.name ?: "",
+                        if (prefs.pageMode == 1 && pageCount > 0) (currentPage + 1).toFloat() / pageCount
+                        else if (scrollState.maxValue > 0) scrollState.value.toFloat() / scrollState.maxValue
+                        else 0f,
+                        chapters.size,
+                    )
                     onBack()
                 }) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = theme.text)
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(book.name, color = theme.text, style = MaterialTheme.typography.titleMedium,
-                        maxLines = 1, overflow = TextOverflow.Ellipsis)
-                    Text("${index + 1} / ${chapters.size}", color = theme.text.copy(alpha = 0.6f), fontSize = 11.sp)
+                    Text(
+                        book.name, color = theme.text, style = MaterialTheme.typography.titleMedium,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        "${index + 1} / ${chapters.size}",
+                        color = theme.text.copy(alpha = 0.6f), fontSize = 11.sp,
+                    )
                 }
                 IconButton(onClick = { showToc = true }) {
                     Icon(Icons.Rounded.FormatListBulleted, "目录", tint = theme.text)
@@ -338,8 +386,10 @@ fun ReaderScreen(
                                     }
                             ) {
                                 if (i == prefs.themeIndex) {
-                                    Icon(Icons.Rounded.Check, null, Modifier.size(18.dp).align(Alignment.Center),
-                                        tint = t.text)
+                                    Icon(
+                                        Icons.Rounded.Check, null,
+                                        Modifier.size(18.dp).align(Alignment.Center), tint = t.text,
+                                    )
                                 }
                             }
                             Spacer(Modifier.height(4.dp))
@@ -364,8 +414,15 @@ fun ReaderScreen(
                         color = if (prefs.pageMode == 1) MaterialTheme.colorScheme.primaryContainer
                         else MaterialTheme.colorScheme.surfaceVariant,
                         onClick = { prefs = prefs.copy(pageMode = 1); store.saveReaderPrefs(prefs) },
-                    ) { Text("左右翻章", Modifier.padding(horizontal = 12.dp, vertical = 7.dp), fontSize = 12.sp) }
+                    ) { Text("左右翻页", Modifier.padding(horizontal = 12.dp, vertical = 7.dp), fontSize = 12.sp) }
                 }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    if (prefs.pageMode == 1) "左右滑动在章内翻页，翻到本章最后一页继续滑才进下一章"
+                    else "上下滑到底可继续往下读",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                )
             }
         }
     }
@@ -440,7 +497,10 @@ private fun BodyText(text: String, prefs: ReaderPrefs, theme: ReaderTheme) {
 
 @Composable
 private fun FootNav(index: Int, total: Int, theme: ReaderTheme, onPrev: () -> Unit) {
-    Column(Modifier.fillMaxWidth().padding(vertical = 16.dp), horizontalAlignment = Alignment.CenterHorizontally) {
+    Column(
+        Modifier.fillMaxWidth().padding(vertical = 16.dp),
+        horizontalAlignment = Alignment.CenterHorizontally,
+    ) {
         Text(
             if (index >= total - 1) "—— 全书完 ——" else "—— 第 ${index + 1} / $total 章 ——",
             color = theme.text.copy(alpha = 0.45f),
@@ -464,7 +524,11 @@ private fun BarAction(
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = 14.dp, vertical = 6.dp),
     ) {
-        Icon(icon, label, tint = theme.text.copy(alpha = if (enabled) 0.9f else 0.3f), modifier = Modifier.size(22.dp))
+        Icon(
+            icon, label,
+            tint = theme.text.copy(alpha = if (enabled) 0.9f else 0.3f),
+            modifier = Modifier.size(22.dp),
+        )
         Spacer(Modifier.height(2.dp))
         Text(label, fontSize = 10.sp, color = theme.text.copy(alpha = if (enabled) 0.7f else 0.3f))
     }
@@ -473,5 +537,5 @@ private fun BarAction(
 @Composable
 private fun statusBarHeight(): androidx.compose.ui.unit.Dp {
     val cfg = LocalConfiguration.current
-    return WindowInsets.statusBars.getTop(androidx.compose.ui.platform.LocalDensity.current).dp
+    return WindowInsets.statusBars.getTop(LocalDensity.current).dp
 }

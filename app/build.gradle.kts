@@ -12,8 +12,8 @@ android {
         applicationId = "com.zaka.shijuan"
         minSdk = 24
         targetSdk = 35
-        versionCode = 20
-        versionName = "2.0"
+        versionCode = 21
+        versionName = "2.1"
         resourceConfigurations += listOf("zh", "zh-rCN")
     }
 
@@ -73,4 +73,5 @@ dependencies {
     implementation("org.jsoup:jsoup:1.18.1")
     implementation("io.coil-kt:coil-compose:2.7.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
+    testImplementation("junit:junit:4.13.2")
 }

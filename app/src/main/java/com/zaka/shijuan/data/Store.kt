@@ -123,7 +123,7 @@ class Store(context: Context) {
         fontSize = sp.getFloat("font_size", 19f),
         lineHeight = sp.getFloat("line_height", 1.75f),
         themeIndex = sp.getInt("theme", 0),
-        pageMode = sp.getInt("page_mode", 0),
+        pageMode = sp.getInt("page_mode", 1),
         indent = sp.getBoolean("indent", true),
     )
 
