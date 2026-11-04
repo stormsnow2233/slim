@@ -110,11 +110,14 @@ fun DetailScreen(
         loadToc()
     }
 
-    // 上次读到哪
+    // 上次读到哪：阅读记忆优先（不管在不在书架都记得），其次书架进度
     val shelfItem = remember(full.url) {
         store.shelf().find { it.book.url == full.url && it.book.sourceId == full.sourceId }
     }
-    val startIdx = shelfItem?.chapterIndex ?: 0
+    val record = remember(full.url, toc.size) { store.recordOf(full) }
+    val startIdx = (record?.chapterIndex ?: shelfItem?.chapterIndex ?: 0)
+        .coerceIn(0, (toc.size - 1).coerceAtLeast(0))
+    val startName = record?.chapterName?.ifBlank { null } ?: shelfItem?.chapterName.orEmpty()
 
     fun read(idx: Int) {
         if (toc.isEmpty()) return
@@ -303,8 +306,8 @@ fun DetailScreen(
                                 Spacer(Modifier.width(6.dp))
                                 Text(
                                     when {
-                                        shelfItem != null && shelfItem.chapterName.isNotBlank() ->
-                                            "继续阅读 · ${shelfItem.chapterName.take(8)}"
+                                        startName.isNotBlank() ->
+                                            "继续阅读 · ${startName.take(8)}"
                                         toc.isNotEmpty() -> "开始阅读"
                                         loading -> "加载中…"
                                         else -> "暂无目录"
@@ -421,7 +424,7 @@ fun DetailScreen(
                                     else MaterialTheme.colorScheme.onBackground,
                                 )
                                 Spacer(Modifier.weight(1f))
-                                if (ch.index == startIdx && shelfItem != null) {
+                                if (ch.index == startIdx && startName.isNotBlank()) {
                                     TinyTag("上次读到")
                                 }
                             }

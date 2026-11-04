@@ -45,6 +45,7 @@ fun SearchScreen(
     store: Store,
     enabled: Set<String>,
     onOpenBook: (Book) -> Unit,
+    onOpenDrawer: () -> Unit = {},
 ) {
     var keyword by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<Map<String, SourceResult>>(emptyMap()) }
@@ -113,6 +114,8 @@ fun SearchScreen(
                 .padding(start = 16.dp, end = 16.dp, top = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            DrawerButton(onClick = onOpenDrawer)
+            Spacer(Modifier.width(8.dp))
             TextField(
                 value = keyword,
                 onValueChange = { keyword = it },

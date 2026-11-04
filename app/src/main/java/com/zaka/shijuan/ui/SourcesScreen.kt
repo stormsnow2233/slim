@@ -32,6 +32,7 @@ import kotlinx.coroutines.withContext
 fun SourcesScreen(
     enabled: Set<String>,
     onToggle: (String, Boolean) -> Unit,
+    onOpenDrawer: () -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var checks by remember { mutableStateOf<Map<String, SourceResult>>(emptyMap()) }
@@ -46,6 +47,8 @@ fun SourcesScreen(
                 .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
+            DrawerButton(onClick = onOpenDrawer)
+            Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text("书源", style = MaterialTheme.typography.headlineLarge)
                 Text(
@@ -181,7 +184,12 @@ private fun SourceCard(
 }
 
 @Composable
-fun MineScreen(store: com.zaka.shijuan.data.Store, shelfCount: Int, enabledCount: Int) {
+fun MineScreen(
+    store: com.zaka.shijuan.data.Store,
+    shelfCount: Int,
+    enabledCount: Int,
+    onOpenDrawer: () -> Unit = {},
+) {
     var prefs by remember { mutableStateOf(store.readerPrefs()) }
     var showClear by remember { mutableStateOf(false) }
 
@@ -193,7 +201,11 @@ fun MineScreen(store: com.zaka.shijuan.data.Store, shelfCount: Int, enabledCount
             .padding(horizontal = 20.dp)
     ) {
         Spacer(Modifier.height(16.dp))
-        Text("我的", style = MaterialTheme.typography.headlineLarge)
+        Row(verticalAlignment = Alignment.CenterVertically) {
+            DrawerButton(onClick = onOpenDrawer)
+            Spacer(Modifier.width(12.dp))
+            Text("我的", style = MaterialTheme.typography.headlineLarge)
+        }
         Spacer(Modifier.height(16.dp))
 
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {

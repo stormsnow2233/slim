@@ -2,6 +2,9 @@ package com.zaka.shijuan.data
 
 import android.content.Context
 import android.content.SharedPreferences
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
 import org.json.JSONArray
 
 /** 本地存储：书架、进度、设置、搜索历史、书源开关 */
@@ -39,6 +42,8 @@ class Store(context: Context) {
         book: Book, chapterIndex: Int, chapterName: String,
         progress: Float, total: Int,
     ): List<ShelfItem> {
+        // 不管在不在书架，先把阅读记忆存下来
+        putRecord(book, chapterIndex, chapterName, progress, total)
         val list = shelf().toMutableList()
         val idx = list.indexOfFirst { it.book.url == book.url && it.book.sourceId == book.sourceId }
         if (idx >= 0) {
@@ -53,6 +58,57 @@ class Store(context: Context) {
             saveShelf(list)
         }
         return list
+    }
+
+    // ── 阅读记忆（小说） ──
+    fun records(): List<ReadingRecord> = ReadingRecord.listFrom(sp.getString("records", null))
+
+    fun recordOf(book: Book): ReadingRecord? =
+        records().firstOrNull { it.book.url == book.url && it.book.sourceId == book.sourceId }
+
+    fun putRecord(
+        book: Book, chapterIndex: Int, chapterName: String,
+        progress: Float, total: Int,
+    ) {
+        val list = records().toMutableList()
+        val idx = list.indexOfFirst { it.book.url == book.url && it.book.sourceId == book.sourceId }
+        val old = if (idx >= 0) list[idx] else null
+        val rec = ReadingRecord(
+            book = if (old != null && old.book.cover.isNotBlank()) old.book else book,
+            chapterIndex = chapterIndex,
+            chapterName = chapterName,
+            progress = progress,
+            total = if (total > 0) total else old?.total ?: 0,
+            lastReadAt = System.currentTimeMillis(),
+        )
+        if (idx >= 0) list[idx] = rec else list.add(0, rec)
+        val sorted = list.sortedByDescending { it.lastReadAt }.take(60)
+        sp.edit().putString("records", ReadingRecord.listToJson(sorted)).apply()
+    }
+
+    fun removeRecord(book: Book) {
+        val list = records().filterNot { it.book.url == book.url && it.book.sourceId == book.sourceId }
+        sp.edit().putString("records", ReadingRecord.listToJson(list)).apply()
+    }
+
+    /** 漫画记忆的版本号：改动后让界面自动刷新 */
+    var comicTick by mutableIntStateOf(0)
+        private set
+
+    // ── 漫画记忆 ──
+    fun comicRecords(): List<ComicRecord> = ComicRecord.listFrom(sp.getString("comic_records", null))
+
+    fun comicRecordOf(comic: Comic): ComicRecord? =
+        comicRecords().firstOrNull { it.comic.url == comic.url }
+
+    fun putComicRecord(comic: Comic, chapterIndex: Int, chapterName: String) {
+        val list = comicRecords().toMutableList()
+        val idx = list.indexOfFirst { it.comic.url == comic.url }
+        val rec = ComicRecord(comic, chapterIndex, chapterName, System.currentTimeMillis())
+        if (idx >= 0) list[idx] = rec else list.add(0, rec)
+        val sorted = list.sortedByDescending { it.lastReadAt }.take(40)
+        sp.edit().putString("comic_records", ComicRecord.listToJson(sorted)).apply()
+        comicTick++
     }
 
     // ── 章节目录缓存（避免每次进详情都重新抓） ──
