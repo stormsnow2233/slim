@@ -38,6 +38,7 @@ fun ShelfScreen(
     onRemoveRecord: (Book) -> Unit,
     onBrowse: () -> Unit,
     onOpenDrawer: () -> Unit = {},
+    offline: Boolean = false,
 ) {
     // 不在书架上的阅读记忆单独列出来
     val offShelf = records.filter { r ->
@@ -60,27 +61,56 @@ fun ShelfScreen(
             Column(Modifier.weight(1f)) {
                 Text("书架", style = MaterialTheme.typography.headlineLarge)
                 Text(
-                    if (shelf.isEmpty()) "还没有收藏" else "${shelf.size} 本在架上",
+                    when {
+                        offline && shelf.isEmpty() -> "离线模式 · 没有可离线读的书"
+                        offline -> "离线模式 · ${shelf.size} 本可离线读"
+                        shelf.isEmpty() -> "还没有收藏"
+                        else -> "${shelf.size} 本在架上"
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
-            FilledTonalIconButton(onClick = onBrowse) {
-                Icon(Icons.Rounded.Add, contentDescription = "找书")
+            if (!offline) {
+                FilledTonalIconButton(onClick = onBrowse) {
+                    Icon(Icons.Rounded.Add, contentDescription = "找书")
+                }
             }
+        }
+
+        if (offline) {
+            Row(
+                Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 16.dp, vertical = 2.dp)
+                    .background(
+                        MaterialTheme.colorScheme.secondaryContainer.copy(alpha = 0.55f),
+                        RoundedCornerShape(10.dp),
+                    )
+                    .padding(horizontal = 12.dp, vertical = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                Text(
+                    "当前没有网络，只显示本地缓存过的书",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSecondaryContainer,
+                )
+            }
+            Spacer(Modifier.height(6.dp))
         }
 
         if (shelf.isEmpty() && offShelf.isEmpty()) {
             EmptyState(
-                title = "书架空着",
-                subtitle = "去搜索页找一本，点「加入书架」就会出现在这里",
-                action = {
+                title = if (offline) "这里还没有能离线看的书" else "书架空着",
+                subtitle = if (offline) "联网后打开一本书读几章，正文就会存下来，断网时也能接着看"
+                else "去搜索页找一本，点「加入书架」就会出现在这里",
+                action = if (offline) null else ({
                     Button(onClick = onBrowse) {
                         Icon(Icons.Rounded.AutoStories, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(6.dp))
                         Text("去找书")
                     }
-                },
+                }),
             )
         } else {
             LazyVerticalGrid(

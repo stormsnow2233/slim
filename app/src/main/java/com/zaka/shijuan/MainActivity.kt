@@ -81,10 +81,20 @@ fun ShijuanApp() {
     val ctx = LocalContext.current
     val store = remember { Store(ctx) }
     remember { ComicDownloader.init(ctx.applicationContext, store); 0 }
+    remember { Offline.init(ctx.applicationContext) }
+    val online by Offline.online.collectAsState()
     var route by remember { mutableStateOf<Route>(Route.Tabs) }
     var shelf by remember { mutableStateOf(store.shelf()) }
     var enabled by remember { mutableStateOf(store.enabledSources()) }
     var records by remember { mutableStateOf(store.records()) }
+
+    // 离线：书架上只留本地有正文缓存的，最近读的也一样
+    val shelfShown = remember(online, shelf) {
+        if (online) shelf else shelf.filter { store.cachedChaptersOf(it.book) > 0 }
+    }
+    val recordsShown = remember(online, records) {
+        if (online) records else records.filter { store.cachedChaptersOf(it.book) > 0 }
+    }
 
     val refreshShelf = {
         shelf = store.shelf()
@@ -134,13 +144,15 @@ fun ShijuanApp() {
                     store = store,
                     onOpen = { route = Route.ComicDetail(it) },
                     onOpenDrawer = openDrawer,
+                    offline = !online,
                 )
             } else {
                 TabHost(
                     store = store,
-                    shelf = shelf,
-                    records = records,
+                    shelf = shelfShown,
+                    records = recordsShown,
                     enabled = enabled,
+                    online = online,
                     onOpenDrawer = openDrawer,
                     onOpenBook = { route = Route.Detail(it) },
                     onRemoveShelf = { item ->
@@ -286,6 +298,7 @@ private fun TabHost(
     shelf: List<ShelfItem>,
     records: List<ReadingRecord>,
     enabled: Set<String>,
+    online: Boolean = true,
     onOpenDrawer: () -> Unit,
     onOpenBook: (Book) -> Unit,
     onRemoveShelf: (ShelfItem) -> Unit,
@@ -294,6 +307,24 @@ private fun TabHost(
     onOpenComic: (Comic) -> Unit,
     onToggleSource: (String, Boolean) -> Unit,
 ) {
+    // 断网：只剩书架，别的都要联网，没必要摆着
+    if (!online) {
+        Box(Modifier.fillMaxSize()) {
+            ShelfScreen(
+                shelf = shelf,
+                records = records,
+                onOpen = { item -> onOpenBook(item.book) },
+                onRemove = { item -> onRemoveShelf(item) },
+                onOpenRecord = onOpenRecord,
+                onRemoveRecord = onRemoveRecord,
+                onBrowse = {},
+                onOpenDrawer = onOpenDrawer,
+                offline = true,
+            )
+        }
+        return
+    }
+
     val pager = rememberPagerState(pageCount = { Tab.entries.size })
     val scope = rememberCoroutineScope()
     val tabs = Tab.entries

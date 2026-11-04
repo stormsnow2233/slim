@@ -30,6 +30,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalConfiguration
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
@@ -67,6 +68,7 @@ fun ReaderScreen(
     var currentPage by remember { mutableIntStateOf(0) }
 
     val theme = ReaderThemes.getOrElse(prefs.themeIndex) { ReaderThemes[0] }
+    val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
     val tocState = rememberLazyListState()
@@ -95,7 +97,10 @@ fun ReaderScreen(
                         content = it
                         store.saveContent(ch.url, it.text)
                     }
-                    .onFailure { error = it.message ?: "加载失败" }
+                    .onFailure {
+                        error = if (!Offline.isOnline(ctx)) "离线模式：这一章没缓存过，联网后再看"
+                        else it.message ?: "加载失败"
+                    }
                 loading = false
             }
 

@@ -140,9 +140,45 @@ object ComicDownloader {
             ?: emptyList()
     }
 
+    /**
+     * 章节表跟着缓存一起存本地。
+     * 断网的时候开详情页，联网拉不到目录，就用这份，照样能进阅读器看已缓存的那些话。
+     */
+    private fun saveChapters(comic: Comic, chapters: List<ComicChapter>) {
+        runCatching {
+            val dir = dirOf(comic).apply { mkdirs() }
+            val arr = JSONArray()
+            chapters.forEach { c ->
+                arr.put(
+                    JSONObject().apply {
+                        put("n", c.name); put("u", c.url); put("i", c.index)
+                    },
+                )
+            }
+            File(dir, "chapters.json").writeText(arr.toString())
+        }
+    }
+
+    fun localChapters(comic: Comic): List<ComicChapter> = runCatching {
+        val f = File(dirOf(comic), "chapters.json")
+        if (!f.exists()) return emptyList()
+        val arr = JSONArray(f.readText())
+        (0 until arr.length()).mapNotNull { i ->
+            val o = arr.optJSONObject(i) ?: return@mapNotNull null
+            ComicChapter(
+                name = o.optString("n").ifBlank { "第 ${i + 1} 话" },
+                url = o.optString("u"),
+                index = o.optInt("i", i),
+                sourceId = comic.sourceId,
+                cover = comic.cover,
+            )
+        }
+    }.getOrDefault(emptyList())
+
     /** 开始缓存整本；已经在跑或已完成就不重复开 */
     fun start(comic: Comic, chapters: List<ComicChapter>) {
         if (chapters.isEmpty()) return
+        saveChapters(comic, chapters)
         val key = keyOf(comic)
         val exist = tasks.firstOrNull { it.key == key }
         if (exist != null && (exist.state == STATE_RUNNING || exist.state == STATE_DONE)) return

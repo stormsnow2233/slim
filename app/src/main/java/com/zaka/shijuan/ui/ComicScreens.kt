@@ -3,7 +3,11 @@ package com.zaka.shijuan.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.gestures.awaitEachGesture
+import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.calculatePan
+import androidx.compose.foundation.gestures.calculateZoom
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
@@ -48,12 +52,14 @@ import com.zaka.shijuan.data.ComicHit
 import com.zaka.shijuan.data.ComicDownloader
 import com.zaka.shijuan.data.ComicRepo
 import com.zaka.shijuan.data.DownloadTask
+import com.zaka.shijuan.data.Offline
 import com.zaka.shijuan.data.STATE_DONE
 import com.zaka.shijuan.data.STATE_ERROR
 import com.zaka.shijuan.data.STATE_PAUSED
 import com.zaka.shijuan.data.STATE_RUNNING
 import com.zaka.shijuan.data.Store
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
 
@@ -65,6 +71,7 @@ fun ComicScreen(
     store: Store,
     onOpen: (Comic) -> Unit,
     onOpenDrawer: () -> Unit = {},
+    offline: Boolean = false,
 ) {
     var query by remember { mutableStateOf("") }
     var list by remember { mutableStateOf<List<Comic>>(emptyList()) }
@@ -76,9 +83,13 @@ fun ComicScreen(
     val records = remember(tick, store.comicTick) { store.comicRecords() }
 
     // 顶部三个入口：探索 / 书架 / 缓存
-    var tab by remember { mutableStateOf(0) }
+    var tab by remember(offline) { mutableStateOf(if (offline) 1 else 0) }
     var shelfTick by remember { mutableStateOf(0) }
-    val shelfList = remember(tab, shelfTick, store.comicTick) { store.comicShelf() }
+    val shelfList = remember(tab, shelfTick, store.comicTick, offline) {
+        val all = store.comicShelf()
+        // 离线只留本地有图的：缓存过至少一话的才算
+        if (offline) all.filter { ComicDownloader.cachedChapters(it).isNotEmpty() } else all
+    }
     val dlTasks = ComicDownloader.tasks
     // 每个源各自拿回一批，选「全部」时合并去重，选单个源时只看它
     var hits by remember { mutableStateOf<List<ComicHit>>(emptyList()) }
@@ -87,6 +98,7 @@ fun ComicScreen(
     var coverToken by remember { mutableStateOf(0) }
 
     LaunchedEffect(tick, query.isNotBlank()) {
+        if (offline) return@LaunchedEffect
         if (query.isNotBlank()) return@LaunchedEffect
         loading = true
         error = ""
@@ -160,7 +172,8 @@ fun ComicScreen(
             Column(Modifier.weight(1f)) {
                 Text("漫画", style = MaterialTheme.typography.headlineLarge)
                 Text(
-                    ComicRepo.sources.joinToString(" · ") { it.name },
+                    if (offline) "离线模式 · 只显示缓存过的漫画"
+                    else ComicRepo.sources.joinToString(" · ") { it.name },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -174,14 +187,25 @@ fun ComicScreen(
             horizontalArrangement = Arrangement.spacedBy(8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            listOf("探索", "书架", "缓存").forEachIndexed { i, label ->
-                val selected = tab == i
+            if (!offline) {
                 FilterChip(
-                    selected = selected,
-                    onClick = { tab = i; shelfTick++ },
+                    selected = tab == 0,
+                    onClick = { tab = 0 },
+                    label = { Text("探索", fontSize = 12.sp) },
+                )
+            }
+            FilterChip(
+                selected = tab == 1,
+                onClick = { tab = 1; shelfTick++ },
+                label = { Text("书架", fontSize = 12.sp) },
+            )
+            if (!offline) {
+                FilterChip(
+                    selected = tab == 2,
+                    onClick = { tab = 2; shelfTick++ },
                     label = {
                         Text(
-                            if (i == 2 && dlTasks.isNotEmpty()) "$label ${dlTasks.size}" else label,
+                            if (dlTasks.isNotEmpty()) "缓存 ${dlTasks.size}" else "缓存",
                             fontSize = 12.sp,
                         )
                     },
@@ -376,6 +400,15 @@ fun ComicScreen(
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis,
                     )
+                    if (c.author.isNotBlank()) {
+                        Text(
+                            "作者：${c.author}",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
+                        )
+                    }
                     if (c.latest.isNotBlank()) {
                         Text(
                             c.latest,
@@ -402,6 +435,7 @@ fun ComicScreen(
                 store = store,
                 onOpen = onOpen,
                 onChanged = { shelfTick++ },
+                offline = offline,
             )
         } else {
             DownloadPanel(
@@ -420,14 +454,19 @@ private fun ComicShelfGrid(
     store: Store,
     onOpen: (Comic) -> Unit,
     onChanged: () -> Unit,
+    offline: Boolean = false,
 ) {
     if (items.isEmpty()) {
         Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
-                Text("漫画书架还空着", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Text(
+                    if (offline) "离线模式：没有缓存过的漫画" else "漫画书架还空着",
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "在详情页点「加入书架」，看过的也会自动进这里",
+                    if (offline) "联网后进漫画详情页点「缓存整本」，下载完断网也能看"
+                    else "在详情页点「加入书架」，看过的也会自动进这里",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -601,10 +640,23 @@ fun ComicDetailScreen(
     var error by remember { mutableStateOf("") }
     var tick by remember { mutableStateOf(0) }
     var shelfTick by remember { mutableStateOf(0) }
+    val ctx = LocalContext.current
 
     LaunchedEffect(comic.url, tick) {
         loading = true
         error = ""
+        // 离线：网络拉不动，本地缓存过就照常打开，没缓存就直说
+        if (!Offline.isOnline(ctx)) {
+            val local = ComicDownloader.localChapters(comic)
+            if (local.isNotEmpty()) {
+                chapters = local
+                error = ""
+            } else {
+                error = "离线模式：这本还没缓存过，联网后再试"
+            }
+            loading = false
+            return@LaunchedEffect
+        }
         runCatching {
             withContext(Dispatchers.IO) {
                 val d = ComicRepo.detail(comic)
@@ -615,7 +667,15 @@ fun ComicDetailScreen(
             full = d
             chapters = c
             if (c.isEmpty()) error = "没解析到话数，可能站点结构变了"
-        }.onFailure { error = it.message ?: "加载失败" }
+        }.onFailure {
+            val local = ComicDownloader.localChapters(comic)
+            if (local.isNotEmpty()) {
+                chapters = local
+                error = ""
+            } else {
+                error = it.message ?: "加载失败"
+            }
+        }
         loading = false
     }
 
@@ -824,17 +884,52 @@ fun ComicReaderScreen(
     var mode by remember { mutableStateOf(store.comicMode()) }
     var zoomable by remember { mutableStateOf(store.comicZoom()) }
     var fromCache by remember { mutableStateOf(false) }
+    // 整页缩放（PDF 阅读器那种），不是单张图各缩各的
+    var zoomScale by remember { mutableFloatStateOf(1f) }
+    var zoomOffset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
 
+    val scope = rememberCoroutineScope()
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { images.size })
     val headers = remember(comic.sourceId) { ComicRepo.imageHeaders(comic) }
 
     val chapter = chapters.getOrNull(index)
 
+    // 点屏幕：左边上一页、右边下一页，到头了才切话；中间叫出/隐藏工具栏
+    fun tapAt(x: Float, width: Int) {
+        if (width <= 0) { chrome = !chrome; return }
+        val f = x / width
+        if (mode == "page") {
+            when {
+                f < 0.30f -> when {
+                    pagerState.currentPage > 0 ->
+                        scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
+                    index > 0 -> index--
+                    else -> chrome = !chrome
+                }
+                f > 0.70f -> when {
+                    pagerState.currentPage < images.size - 1 ->
+                        scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
+                    index < chapters.size - 1 -> index++
+                    else -> chrome = !chrome
+                }
+                else -> chrome = !chrome
+            }
+        } else {
+            when {
+                f < 0.28f -> if (index > 0) index-- else chrome = !chrome
+                f > 0.72f -> if (index < chapters.size - 1) index++ else chrome = !chrome
+                else -> chrome = !chrome
+            }
+        }
+    }
+
     LaunchedEffect(index, attempt) {
         val ch = chapters.getOrNull(index) ?: return@LaunchedEffect
         loading = true
         error = ""
+        zoomScale = 1f
+        zoomOffset = androidx.compose.ui.geometry.Offset.Zero
         // 本地缓存优先：这一话整话存过就直接读文件，不走网络
         val local = runCatching { ComicDownloader.localPages(comic, index) }.getOrDefault(emptyList())
         if (local.size >= 2) {
@@ -843,6 +938,7 @@ fun ComicReaderScreen(
             loading = false
             store.putComicRecord(comic, index, ch.name)
             runCatching { listState.scrollToItem(0) }
+        runCatching { pagerState.scrollToPage(0) }
             return@LaunchedEffect
         }
         fromCache = false
@@ -854,9 +950,67 @@ fun ComicReaderScreen(
             .onFailure { error = it.message ?: "这一话加载失败" }
         loading = false
         runCatching { listState.scrollToItem(0) }
+        runCatching { pagerState.scrollToPage(0) }
     }
 
-    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.surface)) {
+    Box(
+        Modifier
+            .fillMaxSize()
+            .background(MaterialTheme.colorScheme.surface)
+            // 点击：左边上一页、右边下一页、中间开关工具栏
+            .pointerInput(mode, images.size, chapters.size, zoomable) {
+                val onDouble: ((androidx.compose.ui.geometry.Offset) -> Unit)? = if (zoomable) {
+                    { _: androidx.compose.ui.geometry.Offset ->
+                        if (zoomScale > 1f) {
+                            zoomScale = 1f
+                            zoomOffset = androidx.compose.ui.geometry.Offset.Zero
+                        } else {
+                            zoomScale = 2.2f
+                        }
+                    }
+                } else null
+                detectTapGestures(
+                    onTap = { o -> tapAt(o.x, size.width) },
+                    onDoubleTap = onDouble,
+                )
+            }
+            // 缩放：两指缩放整层；没放大时单指全部放行，翻页器/列表照常滑
+            .pointerInput(zoomable) {
+                if (!zoomable) return@pointerInput
+                awaitEachGesture {
+                    awaitFirstDown(requireUnconsumed = false)
+                    var twoFinger = false
+                    while (true) {
+                        val event = awaitPointerEvent()
+                        if (event.changes.none { it.pressed }) break
+                        if (event.changes.size >= 2) twoFinger = true
+                        if (twoFinger) {
+                            val zoom = event.calculateZoom()
+                            val pan = event.calculatePan()
+                            zoomScale = (zoomScale * zoom).coerceIn(1f, 4f)
+                            if (zoomScale <= 1.001f) {
+                                zoomScale = 1f
+                                zoomOffset = androidx.compose.ui.geometry.Offset.Zero
+                            } else {
+                                zoomOffset = clampPan(zoomOffset + pan, zoomScale, size)
+                            }
+                            event.changes.forEach { if (it.pressed) it.consume() }
+                        } else if (zoomScale > 1f) {
+                            // 放大后单指拖动 = 在页面里挪着看
+                            val dragged = event.changes.firstOrNull { it.pressed }
+                            if (dragged != null) {
+                                zoomOffset = clampPan(
+                                    zoomOffset + (dragged.position - dragged.previousPosition),
+                                    zoomScale,
+                                    size,
+                                )
+                                dragged.consume()
+                            }
+                        }
+                    }
+                }
+            }
+    ) {
         when {
             loading -> Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                 Column(horizontalAlignment = Alignment.CenterHorizontally) {
@@ -877,17 +1031,16 @@ fun ComicReaderScreen(
             }
 
             mode == "page" -> {
-                // 左右翻页：一屏一页，划屏翻页
+                // 左右翻页：一屏一页，划屏翻页。缩放作用在整页上（PDF 阅读器那种），
+                // 不是每张图各自在自己格子里放大
                 androidx.compose.foundation.pager.HorizontalPager(
                     state = pagerState,
-                    modifier = Modifier.fillMaxSize(),
+                    modifier = Modifier.fillMaxSize().canvasZoom(zoomScale, zoomOffset),
                     beyondViewportPageCount = 1,
                 ) { page ->
-                    ComicPageImage(
+                    ComicPage(
                         src = images.getOrNull(page).orEmpty(),
                         headers = headers,
-                        zoomable = zoomable,
-                        onTap = { chrome = !chrome },
                     )
                 }
                 // 页码
@@ -911,15 +1064,14 @@ fun ComicReaderScreen(
 
             else -> LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize(),
+                // 整列一起缩放、一起平移，页面之间不留缝，像看 PDF
+                modifier = Modifier.fillMaxSize().canvasZoom(zoomScale, zoomOffset),
             ) {
                 items(images.size) { i ->
-                    ComicPageImage(
+                    ComicPage(
                         src = images[i],
                         headers = headers,
-                        zoomable = zoomable,
                         fillWidth = true,
-                        onTap = { chrome = !chrome },
                     )
                 }
                 items(1) {
@@ -1048,84 +1200,47 @@ fun ComicReaderScreen(
     }
 }
 
-/** 一页漫画。zoomable 打开时可以双指缩放、双击放大，放大后能拖动看图 */
+/** 一页漫画。缩放和翻页手势统一在阅读器外层处理，这里只管把图画好 */
 @Composable
-private fun ComicPageImage(
+private fun ComicPage(
     src: String,
     headers: Map<String, String>,
-    zoomable: Boolean,
     fillWidth: Boolean = false,
-    onTap: () -> Unit = {},
 ) {
     val ctx = LocalContext.current
-    var scale by remember(src) { mutableFloatStateOf(1f) }
-    var offset by remember(src) { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+    AsyncImage(
+        model = ImageRequest.Builder(ctx)
+            .data(src)
+            .apply { headers.forEach { (k, v) -> addHeader(k, v) } }
+            .crossfade(true)
+            .build(),
+        contentDescription = null,
+        contentScale = if (fillWidth) ContentScale.FillWidth else ContentScale.Fit,
+        modifier = if (fillWidth) Modifier.fillMaxWidth() else Modifier.fillMaxSize(),
+    )
+}
 
-    val base = if (fillWidth) {
-        Modifier.fillMaxWidth().wrapContentHeight().heightIn(min = 160.dp)
-    } else {
-        Modifier.fillMaxSize()
-    }
+/** 整层缩放 + 平移，作用在翻页器 / 滚动列表上，跟 PDF 阅读器一样 */
+private fun Modifier.canvasZoom(
+    scale: Float,
+    offset: androidx.compose.ui.geometry.Offset,
+): Modifier = this.graphicsLayer {
+    scaleX = scale
+    scaleY = scale
+    translationX = offset.x
+    translationY = offset.y
+}
 
-    Box(
-        base
-            .clipToBounds()
-            .background(Color(0xFF101114))
-            .pointerInput(zoomable, src) {
-                if (!zoomable) {
-                    detectTapGestures { onTap() }
-                    return@pointerInput
-                }
-                detectTransformGestures { _, pan, zoom, _ ->
-                    val next = (scale * zoom).coerceIn(1f, 4f)
-                    scale = next
-                    offset = if (next > 1f) offset + pan else androidx.compose.ui.geometry.Offset.Zero
-                }
-            }
-            .pointerInput(zoomable, src) {
-                if (!zoomable) return@pointerInput
-                detectTapGestures(
-                    onTap = { onTap() },
-                    onDoubleTap = {
-                        if (scale > 1f) {
-                            scale = 1f
-                            offset = androidx.compose.ui.geometry.Offset.Zero
-                        } else {
-                            scale = 2.2f
-                        }
-                    },
-                )
-            },
-        contentAlignment = Alignment.Center,
-    ) {
-        AsyncImage(
-            model = ImageRequest.Builder(ctx)
-                .data(src)
-                .apply { headers.forEach { (k, v) -> addHeader(k, v) } }
-                .crossfade(true)
-                .build(),
-            contentDescription = null,
-            contentScale = if (fillWidth) ContentScale.FillWidth else ContentScale.Fit,
-            modifier = if (fillWidth) {
-                Modifier
-                    .fillMaxWidth()
-                    .wrapContentHeight()
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offset.x
-                        translationY = offset.y
-                    }
-            } else {
-                Modifier
-                    .fillMaxSize()
-                    .graphicsLayer {
-                        scaleX = scale
-                        scaleY = scale
-                        translationX = offset.x
-                        translationY = offset.y
-                    }
-            },
-        )
-    }
+/** 放大后拖动时别把图拖出屏幕外 */
+private fun clampPan(
+    o: androidx.compose.ui.geometry.Offset,
+    scale: Float,
+    size: androidx.compose.ui.unit.IntSize,
+): androidx.compose.ui.geometry.Offset {
+    val maxX = size.width * (scale - 1f) / 2f
+    val maxY = size.height * (scale - 1f) / 2f
+    return androidx.compose.ui.geometry.Offset(
+        o.x.coerceIn(-maxX, maxX),
+        o.y.coerceIn(-maxY, maxY),
+    )
 }

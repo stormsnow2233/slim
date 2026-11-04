@@ -191,6 +191,16 @@ class Store(context: Context) {
 
     fun loadContent(url: String): String? = sp.getString("c_${url.hashCode()}", null)
 
+    /**
+     * 这本书本地存了多少章正文（离线能直接读的章数）。
+     * 目录都没存过 = 从来没打开过这本书，正文自然也没有。
+     */
+    fun cachedChaptersOf(book: Book): Int {
+        val chs = loadToc(book.url)
+        if (chs.isEmpty()) return 0
+        return chs.count { sp.contains("c_${it.url.hashCode()}") }
+    }
+
     // ── 搜索历史 ──
     fun history(): MutableList<String> {
         val s = sp.getString("history", null) ?: return mutableListOf()
