@@ -80,6 +80,7 @@ sealed class Route {
 fun ShijuanApp() {
     val ctx = LocalContext.current
     val store = remember { Store(ctx) }
+    remember { ComicDownloader.init(ctx.applicationContext, store); 0 }
     var route by remember { mutableStateOf<Route>(Route.Tabs) }
     var shelf by remember { mutableStateOf(store.shelf()) }
     var enabled by remember { mutableStateOf(store.enabledSources()) }
@@ -271,6 +272,7 @@ private fun SectionDrawer(
                 }
             }
         }
+
     }
 }
 

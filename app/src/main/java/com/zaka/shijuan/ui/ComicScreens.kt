@@ -3,6 +3,12 @@ package com.zaka.shijuan.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
+import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.detectTransformGestures
+import androidx.compose.ui.draw.clipToBounds
+import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.runtime.mutableFloatStateOf
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -18,6 +24,7 @@ import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.*
@@ -38,7 +45,13 @@ import coil.request.ImageRequest
 import com.zaka.shijuan.data.Comic
 import com.zaka.shijuan.data.ComicChapter
 import com.zaka.shijuan.data.ComicHit
+import com.zaka.shijuan.data.ComicDownloader
 import com.zaka.shijuan.data.ComicRepo
+import com.zaka.shijuan.data.DownloadTask
+import com.zaka.shijuan.data.STATE_DONE
+import com.zaka.shijuan.data.STATE_ERROR
+import com.zaka.shijuan.data.STATE_PAUSED
+import com.zaka.shijuan.data.STATE_RUNNING
 import com.zaka.shijuan.data.Store
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -61,6 +74,12 @@ fun ComicScreen(
     var tick by remember { mutableStateOf(0) }
 
     val records = remember(tick, store.comicTick) { store.comicRecords() }
+
+    // 顶部三个入口：探索 / 书架 / 缓存
+    var tab by remember { mutableStateOf(0) }
+    var shelfTick by remember { mutableStateOf(0) }
+    val shelfList = remember(tab, shelfTick, store.comicTick) { store.comicShelf() }
+    val dlTasks = ComicDownloader.tasks
     // 每个源各自拿回一批，选「全部」时合并去重，选单个源时只看它
     var hits by remember { mutableStateOf<List<ComicHit>>(emptyList()) }
     var picked by remember { mutableStateOf("all") }
@@ -132,6 +151,31 @@ fun ComicScreen(
             }
         }
 
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 18.dp, vertical = 2.dp),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            listOf("探索", "书架", "缓存").forEachIndexed { i, label ->
+                val selected = tab == i
+                FilterChip(
+                    selected = selected,
+                    onClick = { tab = i; shelfTick++ },
+                    label = {
+                        Text(
+                            if (i == 2 && dlTasks.isNotEmpty()) "$label ${dlTasks.size}" else label,
+                            fontSize = 12.sp,
+                        )
+                    },
+                )
+            }
+        }
+
+        Spacer(Modifier.height(6.dp))
+
+        if (tab == 0) {
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
@@ -335,7 +379,194 @@ fun ComicScreen(
                 }
             }
         }
+        } else if (tab == 1) {
+            ComicShelfGrid(
+                items = shelfList,
+                store = store,
+                onOpen = onOpen,
+                onChanged = { shelfTick++ },
+            )
+        } else {
+            DownloadPanel(
+                tasks = dlTasks,
+                onOpenComic = onOpen,
+            )
+        }
     }
+}
+
+/* ──────────────────── 漫画书架 ──────────────────── */
+
+@Composable
+private fun ComicShelfGrid(
+    items: List<Comic>,
+    store: Store,
+    onOpen: (Comic) -> Unit,
+    onChanged: () -> Unit,
+) {
+    if (items.isEmpty()) {
+        Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("漫画书架还空着", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "在详情页点「加入书架」，看过的也会自动进这里",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        return
+    }
+    LazyVerticalGrid(
+        columns = GridCells.Fixed(3),
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 12.dp, bottom = 28.dp),
+        horizontalArrangement = Arrangement.spacedBy(12.dp),
+        verticalArrangement = Arrangement.spacedBy(16.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        itemsIndexed(items, key = { _, c -> c.sourceId + c.url }) { _, c ->
+            val cached = remember(c.url) { ComicDownloader.cachedChapters(c).size }
+            Column(Modifier.clickable { onOpen(c) }) {
+                Box {
+                    BookCover(
+                        cover = c.cover,
+                        name = c.name,
+                        modifier = Modifier.fillMaxWidth().aspectRatio(0.74f),
+                        corner = 10.dp,
+                    )
+                    if (cached > 0) {
+                        Box(
+                            Modifier
+                                .align(Alignment.BottomEnd)
+                                .padding(5.dp)
+                                .background(Color(0xCC000000), RoundedCornerShape(6.dp))
+                                .padding(horizontal = 5.dp, vertical = 2.dp)
+                        ) {
+                            Text("已存 $cached", fontSize = 9.sp, color = Color.White)
+                        }
+                    }
+                }
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    c.name,
+                    fontSize = 12.sp,
+                    fontWeight = FontWeight.Medium,
+                    maxLines = 2,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        c.sourceName,
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.75f),
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                    )
+                    Text(
+                        "移出",
+                        fontSize = 9.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.clickable {
+                            store.removeComicFromShelf(c)
+                            onChanged()
+                        },
+                    )
+                }
+            }
+        }
+    }
+}
+
+/* ──────────────────── 缓存下载管理 ──────────────────── */
+
+@Composable
+private fun DownloadPanel(
+    tasks: List<DownloadTask>,
+    onOpenComic: (Comic) -> Unit,
+) {
+    if (tasks.isEmpty()) {
+        Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text("还没有缓存任务", color = MaterialTheme.colorScheme.onSurfaceVariant)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "进漫画详情页，右上角 ⋮ → 缓存整本",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        return
+    }
+    LazyColumn(
+        contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 10.dp, bottom = 28.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+        modifier = Modifier.fillMaxSize(),
+    ) {
+        items(tasks, key = { it.key }) { t ->
+            Card(shape = RoundedCornerShape(14.dp)) {
+                Column(Modifier.padding(12.dp)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        BookCover(
+                            cover = t.comic.cover,
+                            name = t.comic.name,
+                            modifier = Modifier.width(46.dp).aspectRatio(0.74f),
+                            corner = 8.dp,
+                        )
+                        Spacer(Modifier.width(10.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text(t.comic.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                            Text(
+                                when (t.state) {
+                                    STATE_RUNNING -> t.currentChapter.ifBlank { "准备中…" }
+                                    STATE_PAUSED -> "已暂停"
+                                    STATE_DONE -> "已缓存完 · ${t.pagesDone} 张"
+                                    STATE_ERROR -> t.error.ifBlank { "出错了" }
+                                    else -> "等待中"
+                                },
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        when (t.state) {
+                            STATE_RUNNING -> TextButton(onClick = { ComicDownloader.pause(t.key) }) { Text("暂停", fontSize = 12.sp) }
+                            STATE_PAUSED, STATE_ERROR -> TextButton(onClick = { ComicDownloader.resume(t.key) }) { Text("继续", fontSize = 12.sp) }
+                            STATE_DONE -> TextButton(onClick = { onOpenComic(t.comic) }) { Text("去看", fontSize = 12.sp) }
+                        }
+                        IconButton(onClick = { ComicDownloader.remove(t.key) }) {
+                            Icon(Icons.Rounded.Delete, "删除", Modifier.size(18.dp))
+                        }
+                    }
+                    Spacer(Modifier.height(8.dp))
+                    LinearProgressIndicator(
+                        progress = { t.percent },
+                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
+                    )
+                    Spacer(Modifier.height(5.dp))
+                    Row {
+                        Text(
+                            "${t.doneChapters}/${t.total} 话 · ${t.pagesDone} 张" +
+                                if (t.bytes > 0) " · ${fmtSize(t.bytes)}" else "",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                        Spacer(Modifier.weight(1f))
+                        Text("${(t.percent * 100).toInt()}%", fontSize = 10.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun fmtSize(b: Long): String = when {
+    b >= 1024L * 1024 * 1024 -> "%.1fG".format(b / 1024.0 / 1024 / 1024)
+    b >= 1024L * 1024 -> "%.1fM".format(b / 1024.0 / 1024)
+    b >= 1024 -> "%.0fK".format(b / 1024.0)
+    else -> "${b}B"
 }
 
 /* ──────────────────────────── 漫画详情 ──────────────────────────── */
@@ -352,6 +583,7 @@ fun ComicDetailScreen(
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf("") }
     var tick by remember { mutableStateOf(0) }
+    var shelfTick by remember { mutableStateOf(0) }
 
     LaunchedEffect(comic.url, tick) {
         loading = true
@@ -450,6 +682,48 @@ fun ComicDetailScreen(
                                 overflow = TextOverflow.Ellipsis,
                             )
                         }
+                        Spacer(Modifier.height(8.dp))
+                        val inShelf = remember(full.url, shelfTick) { store.inComicShelf(full) }
+                        val dlTask = ComicDownloader.tasks.firstOrNull { it.key == ComicDownloader.keyOf(full) }
+                        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                            OutlinedButton(
+                                onClick = {
+                                    if (inShelf) store.removeComicFromShelf(full)
+                                    else store.addComicToShelf(full)
+                                    shelfTick++
+                                },
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp),
+                            ) {
+                                Text(if (inShelf) "已加入书架" else "加入书架", fontSize = 12.sp)
+                            }
+                            OutlinedButton(
+                                onClick = {
+                                    when (dlTask?.state) {
+                                        STATE_RUNNING -> ComicDownloader.pause(dlTask.key)
+                                        STATE_PAUSED, STATE_ERROR -> ComicDownloader.resume(dlTask.key)
+                                        STATE_DONE -> onRead(full, chapters, 0)
+                                        else -> ComicDownloader.start(full, chapters)
+                                    }
+                                },
+                                enabled = chapters.isNotEmpty() && !loading,
+                                shape = RoundedCornerShape(10.dp),
+                                contentPadding = PaddingValues(horizontal = 12.dp),
+                            ) {
+                                val label = when (dlTask?.state) {
+                                    STATE_RUNNING -> "暂停 ${dlTask.doneChapters}/${dlTask.total}"
+                                    STATE_PAUSED -> "继续缓存"
+                                    STATE_ERROR -> "重试缓存"
+                                    STATE_DONE -> "已缓存完"
+                                    else -> "缓存整本"
+                                }
+                                if (dlTask?.state == STATE_RUNNING) {
+                                    CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
+                                    Spacer(Modifier.width(5.dp))
+                                }
+                                Text(label, fontSize = 12.sp)
+                            }
+                        }
                     }
                 }
             }
@@ -514,6 +788,7 @@ fun ComicDetailScreen(
 
 /* ──────────────────────────── 漫画阅读器 ──────────────────────────── */
 
+@OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
 @Composable
 fun ComicReaderScreen(
     comic: Comic,
@@ -528,9 +803,14 @@ fun ComicReaderScreen(
     var error by remember { mutableStateOf("") }
     var attempt by remember { mutableStateOf(0) }
     var chrome by remember { mutableStateOf(true) }
+    var showSettings by remember { mutableStateOf(false) }
+    var mode by remember { mutableStateOf(store.comicMode()) }
+    var zoomable by remember { mutableStateOf(store.comicZoom()) }
+    var fromCache by remember { mutableStateOf(false) }
+
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
+    val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { images.size })
     val headers = remember(comic.sourceId) { ComicRepo.imageHeaders(comic) }
-    val ctx = LocalContext.current
 
     val chapter = chapters.getOrNull(index)
 
@@ -538,6 +818,17 @@ fun ComicReaderScreen(
         val ch = chapters.getOrNull(index) ?: return@LaunchedEffect
         loading = true
         error = ""
+        // 本地缓存优先：这一话整话存过就直接读文件，不走网络
+        val local = runCatching { ComicDownloader.localPages(comic, index) }.getOrDefault(emptyList())
+        if (local.size >= 2) {
+            images = local.map { "file://" + it.absolutePath }
+            fromCache = true
+            loading = false
+            store.putComicRecord(comic, index, ch.name)
+            runCatching { listState.scrollToItem(0) }
+            return@LaunchedEffect
+        }
+        fromCache = false
         runCatching { withContext(Dispatchers.IO) { ComicRepo.pages(comic, ch) } }
             .onSuccess {
                 images = it.images
@@ -568,27 +859,50 @@ fun ComicReaderScreen(
                 }
             }
 
+            mode == "page" -> {
+                // 左右翻页：一屏一页，划屏翻页
+                androidx.compose.foundation.pager.HorizontalPager(
+                    state = pagerState,
+                    modifier = Modifier.fillMaxSize(),
+                    beyondViewportPageCount = 1,
+                ) { page ->
+                    ComicPageImage(
+                        src = images.getOrNull(page).orEmpty(),
+                        headers = headers,
+                        zoomable = zoomable,
+                        onTap = { chrome = !chrome },
+                    )
+                }
+                // 页码
+                if (chrome && images.isNotEmpty()) {
+                    Box(
+                        Modifier
+                            .align(Alignment.BottomCenter)
+                            .navigationBarsPadding()
+                            .padding(bottom = 92.dp)
+                            .background(Color(0x99000000), RoundedCornerShape(20.dp))
+                            .padding(horizontal = 12.dp, vertical = 4.dp)
+                    ) {
+                        Text(
+                            "${pagerState.currentPage + 1} / ${images.size}",
+                            fontSize = 11.sp,
+                            color = Color.White,
+                        )
+                    }
+                }
+            }
+
             else -> LazyColumn(
                 state = listState,
-                modifier = Modifier.fillMaxSize().clickable(
-                    indication = null,
-                    interactionSource = remember { androidx.compose.foundation.interaction.MutableInteractionSource() },
-                ) { chrome = !chrome },
+                modifier = Modifier.fillMaxSize(),
             ) {
                 items(images.size) { i ->
-                    AsyncImage(
-                        model = ImageRequest.Builder(ctx)
-                            .data(images[i])
-                            .apply { headers.forEach { (k, v) -> addHeader(k, v) } }
-                            .crossfade(true)
-                            .build(),
-                        contentDescription = "第 ${i + 1} 页",
-                        contentScale = ContentScale.FillWidth,
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .wrapContentHeight()
-                            .heightIn(min = 160.dp)
-                            .background(Color(0xFF101114)),
+                    ComicPageImage(
+                        src = images[i],
+                        headers = headers,
+                        zoomable = zoomable,
+                        fillWidth = true,
+                        onTap = { chrome = !chrome },
                     )
                 }
                 items(1) {
@@ -615,9 +929,22 @@ fun ComicReaderScreen(
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回")
                 }
                 Column(Modifier.weight(1f)) {
-                    Text(comic.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                     Text(
-                        "${chapter?.name.orEmpty()} · ${index + 1}/${chapters.size}",
+                        comic.name,
+                        fontSize = 14.sp,
+                        fontWeight = FontWeight.Medium,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        buildString {
+                            append(chapter?.name.orEmpty())
+                            append(" · ")
+                            append(index + 1)
+                            append("/")
+                            append(chapters.size)
+                            if (fromCache) append(" · 本地")
+                        },
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
@@ -638,14 +965,19 @@ fun ComicReaderScreen(
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
                     .navigationBarsPadding()
-                    .padding(horizontal = 12.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    .padding(horizontal = 10.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
                 OutlinedButton(
                     onClick = { if (index > 0) index-- },
                     enabled = index > 0,
                     modifier = Modifier.weight(1f),
                 ) { Text("上一话") }
+                OutlinedButton(
+                    onClick = { showSettings = true },
+                    shape = RoundedCornerShape(10.dp),
+                ) { Text("设置", fontSize = 12.sp) }
                 Button(
                     onClick = { if (index < chapters.size - 1) index++ },
                     enabled = index < chapters.size - 1,
@@ -653,5 +985,130 @@ fun ComicReaderScreen(
                 ) { Text("下一话") }
             }
         }
+    }
+
+    if (showSettings) {
+        AlertDialog(
+            onDismissRequest = { showSettings = false },
+            title = { Text("阅读设置", fontSize = 16.sp) },
+            text = {
+                Column {
+                    Text("翻页方式", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(6.dp))
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        FilterChip(
+                            selected = mode == "page",
+                            onClick = { mode = "page"; store.setComicMode("page") },
+                            label = { Text("左右翻页", fontSize = 12.sp) },
+                        )
+                        FilterChip(
+                            selected = mode == "scroll",
+                            onClick = { mode = "scroll"; store.setComicMode("scroll") },
+                            label = { Text("上下滚动", fontSize = 12.sp) },
+                        )
+                    }
+                    Spacer(Modifier.height(16.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text("允许放大缩小", fontSize = 13.sp, fontWeight = FontWeight.Medium)
+                            Text(
+                                "双指缩放，双击放大 / 复位",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Switch(
+                            checked = zoomable,
+                            onCheckedChange = { zoomable = it; store.setComicZoom(it) },
+                        )
+                    }
+                }
+            },
+            confirmButton = {
+                TextButton(onClick = { showSettings = false }) { Text("好了") }
+            },
+        )
+    }
+}
+
+/** 一页漫画。zoomable 打开时可以双指缩放、双击放大，放大后能拖动看图 */
+@Composable
+private fun ComicPageImage(
+    src: String,
+    headers: Map<String, String>,
+    zoomable: Boolean,
+    fillWidth: Boolean = false,
+    onTap: () -> Unit = {},
+) {
+    val ctx = LocalContext.current
+    var scale by remember(src) { mutableFloatStateOf(1f) }
+    var offset by remember(src) { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
+
+    val base = if (fillWidth) {
+        Modifier.fillMaxWidth().wrapContentHeight().heightIn(min = 160.dp)
+    } else {
+        Modifier.fillMaxSize()
+    }
+
+    Box(
+        base
+            .clipToBounds()
+            .background(Color(0xFF101114))
+            .pointerInput(zoomable, src) {
+                if (!zoomable) {
+                    detectTapGestures { onTap() }
+                    return@pointerInput
+                }
+                detectTransformGestures { _, pan, zoom, _ ->
+                    val next = (scale * zoom).coerceIn(1f, 4f)
+                    scale = next
+                    offset = if (next > 1f) offset + pan else androidx.compose.ui.geometry.Offset.Zero
+                }
+            }
+            .pointerInput(zoomable, src) {
+                if (!zoomable) return@pointerInput
+                detectTapGestures(
+                    onTap = { onTap() },
+                    onDoubleTap = {
+                        if (scale > 1f) {
+                            scale = 1f
+                            offset = androidx.compose.ui.geometry.Offset.Zero
+                        } else {
+                            scale = 2.2f
+                        }
+                    },
+                )
+            },
+        contentAlignment = Alignment.Center,
+    ) {
+        AsyncImage(
+            model = ImageRequest.Builder(ctx)
+                .data(src)
+                .apply { headers.forEach { (k, v) -> addHeader(k, v) } }
+                .crossfade(true)
+                .build(),
+            contentDescription = null,
+            contentScale = if (fillWidth) ContentScale.FillWidth else ContentScale.Fit,
+            modifier = if (fillWidth) {
+                Modifier
+                    .fillMaxWidth()
+                    .wrapContentHeight()
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offset.x
+                        translationY = offset.y
+                    }
+            } else {
+                Modifier
+                    .fillMaxSize()
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        translationX = offset.x
+                        translationY = offset.y
+                    }
+            },
+        )
     }
 }

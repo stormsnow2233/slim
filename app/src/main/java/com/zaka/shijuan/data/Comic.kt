@@ -50,6 +50,8 @@ data class ComicChapter(
     val url: String,
     val index: Int = 0,
     val sourceId: String = "dm5",
+    /** 这一话的封面图。栗子这种站可以直接从封面所在目录推出整话的图片 */
+    val cover: String = "",
 )
 
 /** 一话的图片列表 */
@@ -393,89 +395,256 @@ class CopymangaSource : ComicSource {
 /**
  * 栗子漫画（Flutter 版）。
  *
- * 接口是从 APK 里挖出来的：官方把接口主机写在一个加密配置里，
- * 解开后是 ai.qsmm.fun，路径前缀 /app/api/。
- *   /app/api/home/data            首页
- *   /app/api/rank/list            榜单
- *   /app/api/search/full?q=       搜索
- *   /app/api/v2/detail/{id}       详情
- *   /app/api/chapter/v3/{id}      章节 + 图片
+ * 它的接口主机藏在一份加密配置里（AES-256-ECB，密钥在官方包里），配置会换域名，
+ * 旧域名随时可能被下线。这里把已出现过的两台主机轮着探，哪台通就记下来。
  *
- * 它没有公开文档，返回结构按字段名做了兼容解析（name/title、cover/img 都认），
- * 所以万一官方改字段，这里还能兜住大部分。
+ * 接口全部要签名，不带一定 403：
+ *   lzsign = md5(signPrefix + path + t)，t 十位秒时间戳，signPrefix 是官方包的协议常量。
+ *   /app/api/home/data 和 /app/api/configv2 还要补 packname、appsign256。
+ *
+ *   /app/api/home/data          首页（多区块）
+ *   /app/api/rank/list          榜单
+ *   /app/api/search/full?q=     搜索
+ *   /app/api/v2/detail/{id}     详情 + 话数（每话带 cover）
+ *   /app/api/chapter/v3/{id}    官方图片顺序（要带 chapter_id）
+ *
+ * 图片：话数里的 cover 形如 https://图床/目录/1.jpg，同一目录下 1..N.jpg 就是这一话的全部页，
+ * 所以没有官方 pics 也能靠这个规律把整话拿全。
  */
 class LiziSource : ComicSource {
     override val id = "lizi"
     override val name = "栗子漫画"
 
-    private val base = "http://ai.qsmm.fun"
+    /** 已知接口主机，按顺序探活 */
+    private val knownHosts = listOf("http://ai.qsmm.fun", "http://ai.xajtl.com")
 
-    private fun get(path: String): JSONObject? {
-        val r = Net.get(
-            base + path,
-            headers = mapOf("Accept" to "application/json"),
-            useCache = true,
-        )
+    /** 官方换域名后，通常会把新地址写进这份配置，这里跟着走 */
+    private val configUrl =
+        "https://lz-1382057604.cos.ap-hongkong.myqcloud.com/" +
+            "5A6F4D2B7E9A1C3D8F0B2E4A6C8E0D2F4B6A8C0E2D4F6A8B0C2E4D6F8A0C2E4B.json"
+
+    @Volatile
+    private var remoteHost: String? = null
+
+    @Volatile
+    private var probed = false
+
+    @Volatile
+    private var base: String = knownHosts.first()
+
+    /** 候选主机：远程配置的域名排最前，其次内置的几台 */
+    private fun hosts(): List<String> {
+        if (!probed) {
+            probed = true
+            remoteHost = runCatching { readConfigHost() }.getOrNull()
+        }
+        return (listOfNotNull(remoteHost) + knownHosts).distinct()
+    }
+
+    /** 官方配置是 AES-256-ECB 加密的 JSON，密钥在官方包里，解出来只有一个 domain */
+    private fun readConfigHost(): String? {
+        val r = Net.get(configUrl, headers = mapOf("Accept" to "application/json"))
         if (!r.ok) return null
-        return runCatching { JSONObject(r.body) }.getOrNull()
+        val raw = android.util.Base64.decode(r.body.trim(), android.util.Base64.DEFAULT)
+        val cipher = javax.crypto.Cipher.getInstance("AES/ECB/PKCS5Padding")
+        val key = javax.crypto.spec.SecretKeySpec(
+            "f8d992c74b29491d8a3e3fd5f07389d8".toByteArray(Charsets.UTF_8), "AES"
+        )
+        cipher.init(javax.crypto.Cipher.DECRYPT_MODE, key)
+        val plain = String(cipher.doFinal(raw), Charsets.UTF_8)
+        val m = Regex("\"domain\"\\s*:\\s*\"([^\"]+)\"").find(plain) ?: return null
+        val host = m.groupValues[1].trim().trimEnd('/')
+        return host.takeIf { it.startsWith("http") }
+    }
+
+    /** 官方包的协议常量，不是谁的账号凭证 */
+    private val signPrefix = "q2sIObYXCp2uBZgCNBlY93J3z67hK0wS"
+
+    /** 图片线路，detail 里的 cover 一般已经带好了，探测兜底用 */
+    private val imgLines = listOf(
+        "https://cdn.lzimg.xyz",
+        "https://i.lzimg.xyz",
+        "https://cf-1.imgio.club",
+        "https://t1.imge.store",
+    )
+
+    private fun md5(s: String): String =
+        java.security.MessageDigest.getInstance("MD5")
+            .digest(s.toByteArray(Charsets.UTF_8))
+            .joinToString("") { "%02x".format(it) }
+
+    /** 拼签名：官方要求 path + 时间戳 + 协议常量的 md5 */
+    private fun signed(path: String): String {
+        val cut = path.split("?", limit = 2)
+        val p = cut[0]
+        val query = ArrayList<String>(cut.getOrNull(1)?.split("&")?.filter { it.isNotBlank() } ?: emptyList())
+        fun addDefault(k: String, v: String) {
+            if (query.none { it.substringBefore("=") == k }) {
+                query.add("$k=" + URLEncoder.encode(v, "UTF-8"))
+            }
+        }
+        if (p == "/app/api/home/data" || p == "/app/api/configv2") {
+            addDefault("packname", "com.jy.zyds")
+            addDefault("appsign256", "")
+        }
+        if (p == "/app/api/configv2") addDefault("platform", "ios")
+        val t = (System.currentTimeMillis() / 1000).toString()
+        query.add("lzsign=" + md5(signPrefix + p + t))
+        query.add("t=$t")
+        return p + "?" + query.joinToString("&")
+    }
+
+    private fun apiHeaders(): Map<String, String> = mapOf(
+        "Accept" to "application/json",
+        "User-Agent" to "Dart/3.5 (dart:io)",
+        "Referer" to "$base/",
+    )
+
+    /** 拉接口：两台主机轮着试，code 必须是 201，返回 data */
+    private fun api(path: String): JSONObject? {
+        val all = hosts()
+        val order = listOf(base) + all.filter { it != base }
+        for (b in order) {
+            val r = runCatching {
+                Net.get(b + signed(path), headers = apiHeaders() + ("Referer" to "$b/"))
+            }.getOrNull() ?: continue
+            if (!r.ok) continue
+            val o = runCatching { JSONObject(r.body) }.getOrNull() ?: continue
+            val code = o.optInt("code", -1)
+            if (code != 201 && code != 200) continue
+            base = b
+            return o.optJSONObject("data") ?: o
+        }
+        return null
     }
 
     override fun home(): List<Comic> {
-        val o = get("/app/api/rank/list") ?: get("/app/api/home/data") ?: return emptyList()
-        return comics(o).take(60)
+        api("/app/api/home/data")?.let { d ->
+            val list = comics(d)
+            if (list.isNotEmpty()) return list.take(80)
+        }
+        api("/app/api/rank/list")?.let { return comics(it).take(80) }
+        return emptyList()
     }
 
     override fun search(keyword: String): List<Comic> {
         val enc = URLEncoder.encode(keyword, "UTF-8")
-        val o = get("/app/api/search/full?q=$enc")
+        val d = api("/app/api/search/full?q=$enc")
             ?: throw IllegalStateException("栗子漫画连不上，换个源试试")
-        return comics(o)
+        return comics(d)
     }
 
     override fun detail(comic: Comic): Comic {
-        val o = get("/app/api/v2/detail/${comic.pathWord}") ?: return comic
-        val c = comics(o).firstOrNull() ?: return comic
+        val d = api("/app/api/v2/detail/${comic.pathWord}") ?: return comic
+        val one = comics(d).firstOrNull() ?: return comic
         return comic.copy(
-            name = c.name.ifBlank { comic.name },
-            cover = c.cover.ifBlank { comic.cover },
-            author = c.author.ifBlank { comic.author },
-            intro = c.intro.ifBlank { comic.intro },
-            status = c.status.ifBlank { comic.status },
+            name = one.name.ifBlank { comic.name },
+            cover = one.cover.ifBlank { comic.cover },
+            author = one.author.ifBlank { comic.author },
+            intro = one.intro.ifBlank { comic.intro },
+            status = one.status.ifBlank { comic.status },
+            latest = one.latest.ifBlank { comic.latest },
             detailed = true,
         )
     }
 
     override fun chapters(comic: Comic): List<ComicChapter> {
-        val o = get("/app/api/chapter/v3/${comic.pathWord}")
+        val d = api("/app/api/v2/detail/${comic.pathWord}")
             ?: throw IllegalStateException("栗子漫画章节拉不到")
-        val arr = arrays(o)
-            .filter { it.length() > 0 && it.optJSONObject(0)?.let { o1 -> nameOf(o1).isNotBlank() } == true }
-            .maxByOrNull { it.length() }
-            ?: throw IllegalStateException("没解析到话数，接口可能改了")
-        val out = (0 until arr.length()).mapNotNull { i ->
-            val it = arr.optJSONObject(i) ?: return@mapNotNull null
-            val cid = idOf(it)
-            val nm = nameOf(it)
-            if (nm.isBlank()) return@mapNotNull null
-            ComicChapter(nm, cid.ifBlank { i.toString() }, i, id)
+        val arr = d.optJSONArray("chapters") ?: findArray(d) { o ->
+            s(o, "id", "chapter_id", "cid").isNotBlank() && s(o, "name", "title").isNotBlank()
+        } ?: throw IllegalStateException("没解析到话数，接口可能改了")
+        val out = ArrayList<ComicChapter>(arr.length())
+        for (i in 0 until arr.length()) {
+            val o = arr.optJSONObject(i) ?: continue
+            val cid = s(o, "id", "chapter_id", "cid")
+            val nm = s(o, "name", "title", "chapter_name")
+            if (nm.isBlank()) continue
+            out.add(ComicChapter(nm, cid, i, id, s(o, "cover", "cover_url", "img", "image")))
         }
+        // 官方顺序是按 id 排的，接口本身已经排好，保持原序
         return out
     }
 
     override fun pages(comic: Comic, chapter: ComicChapter): ComicPages {
-        // 官方没文档，这几种路径形状都试一遍，哪条能出图用哪条
-        val tries = listOf(
-            "/app/api/chapter/v3/${comic.pathWord}?chapter_id=${chapter.url}",
-            "/app/api/chapter/v3/${comic.pathWord}/${chapter.url}",
-            "/app/api/chapter/v3/${chapter.url}",
-            "/app/api/chapter/v3/${comic.pathWord}",
-        )
-        for (p in tries) {
-            val o = get(p) ?: continue
-            val imgs = imageList(o)
-            if (imgs.isNotEmpty()) return ComicPages(chapter.name, imgs, "$base/", headers())
+        // ① 先要官方顺序（有 chapter_id 就带上，能拿到真实页序）
+        val v3q = "/app/api/chapter/v3/${comic.pathWord}?chapter_id=${chapter.url}"
+        api(v3q)?.let { d ->
+            val pics = d.optJSONArray("pics")
+            if (pics != null && pics.length() > 0) {
+                val out = ArrayList<String>(pics.length())
+                for (i in 0 until pics.length()) {
+                    val raw = pics.optString(i)
+                    if (raw.isNotBlank()) absPic(raw)?.let { out.add(it) }
+                }
+                if (out.isNotEmpty()) return ComicPages(chapter.name, out, "$base/", headers())
+            }
+        }
+        // ② 退回 cover 目录推导：同目录 1..N
+        val cover = chapter.cover
+        if (cover.isNotBlank()) {
+            val m = Regex("^(.*)/(\\d+)(\\.[A-Za-z0-9]+)$").find(cover)
+            if (m != null) {
+                val dir = m.groupValues[1]
+                val ext = m.groupValues[3]
+                val list = probePages(dir, ext)
+                if (list.isNotEmpty()) return ComicPages(chapter.name, list, "$base/", headers())
+            }
         }
         throw IllegalStateException("这一话没解出图片，可能要在官方 App 里看")
+    }
+
+    /** 官方 pics 可能是完整地址、站内路径，或者带 $jp$ 标记 */
+    private fun absPic(raw: String): String? {
+        var t = raw.trim()
+        if (t.isBlank()) return null
+        if (t.startsWith("\$jp\$")) {
+            t = t.removePrefix("\$jp\$").removePrefix("cf")
+        }
+        if (t.startsWith("http://") || t.startsWith("https://")) return t
+        if (t.startsWith("//")) return "https:" + t
+        if (t.startsWith("/")) return imgLines.first() + t
+        return null
+    }
+
+    /**
+     * 目录探测：同目录 1..N 按批并发探，连续三次没有就收。
+     * CDN 对不存在的页会回 200 + 一张 82 字节的占位图，所以要按大小判，不能只看状态码。
+     */
+    private fun probePages(dir: String, ext: String, max: Int = 150): List<String> {
+        val found = java.util.Collections.synchronizedList(ArrayList<String>())
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(6)
+        var start = 1
+        var misses = 0
+        try {
+            while (start <= max && misses < 3) {
+                val end = minOf(start + 11, max)
+                val tasks = (start..end).map { i ->
+                    val u = "$dir/$i$ext"
+                    pool.submit(java.util.concurrent.Callable { if (exists(u)) u else null })
+                }
+                for (f in tasks) {
+                    val u = runCatching { f.get() }.getOrNull()
+                    if (u != null) {
+                        found.add(u)
+                        misses = 0
+                    } else {
+                        misses++
+                    }
+                }
+                start = end + 1
+            }
+        } finally {
+            pool.shutdown()
+        }
+        return found.sortedBy { it.substringAfterLast('/').substringBefore('.').toIntOrNull() ?: 0 }
+    }
+
+    private fun exists(url: String): Boolean {
+        val (code, len) = Net.probe(url, headers())
+        if (code == 206) return true
+        if (code != 200) return false
+        return len < 0 || len >= 1024
     }
 
     override fun headers(): Map<String, String> = mapOf(
@@ -484,23 +653,7 @@ class LiziSource : ComicSource {
             "(KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
     )
 
-    // ── 兼容解析：不认识的字段名也尽量认出来 ──
-
-    private fun arrays(node: Any?): List<JSONArray> {
-        val out = ArrayList<JSONArray>()
-        fun walk(v: Any?, depth: Int) {
-            if (depth > 6) return
-            when (v) {
-                is JSONObject -> v.keys().forEach { k -> walk(v.opt(k), depth + 1) }
-                is JSONArray -> {
-                    out.add(v)
-                    for (i in 0 until minOf(v.length(), 3)) walk(v.opt(i), depth + 1)
-                }
-            }
-        }
-        walk(node, 0)
-        return out
-    }
+    // ── 兼容解析 ──
 
     private fun s(o: JSONObject, vararg keys: String): String {
         for (k in keys) {
@@ -510,25 +663,39 @@ class LiziSource : ComicSource {
         return ""
     }
 
-    private fun idOf(o: JSONObject): String = s(o, "id", "comic_id", "comicId", "cid", "book_id")
-    private fun nameOf(o: JSONObject): String = s(o, "name", "title", "comic_name", "comicName", "book_name")
-    private fun coverOf(o: JSONObject): String =
-        s(o, "cover", "cover_url", "coverUrl", "img", "image", "thumb", "pic", "pic_url")
+    private fun findArray(root: JSONObject, ok: (JSONObject) -> Boolean): JSONArray? {
+        var best: JSONArray? = null
+        fun walk(v: Any?, depth: Int) {
+            if (depth > 5) return
+            when (v) {
+                is JSONObject -> v.keys().forEach { k -> walk(v.opt(k), depth + 1) }
+                is JSONArray -> {
+                    if (v.length() > 0) {
+                        val sample = (0 until minOf(v.length(), 3)).mapNotNull { v.optJSONObject(it) }
+                        if (sample.isNotEmpty() && sample.any(ok) && (best == null || v.length() > best!!.length())) {
+                            best = v
+                        }
+                    }
+                    for (i in 0 until minOf(v.length(), 2)) walk(v.opt(i), depth + 1)
+                }
+            }
+        }
+        walk(root, 0)
+        return best
+    }
 
     private fun comics(root: JSONObject): List<Comic> {
-        val best = arrays(root)
-            .filter { a -> a.length() > 0 && (0 until minOf(a.length(), 3)).any { nameOf(a.optJSONObject(it) ?: JSONObject()).isNotBlank() } }
-            .maxByOrNull { it.length() } ?: return emptyList()
+        val best = findArray(root) { o -> s(o, "name", "title", "comic_name").isNotBlank() } ?: return emptyList()
         val out = ArrayList<Comic>(best.length())
         for (i in 0 until best.length()) {
             val o = best.optJSONObject(i) ?: continue
-            val nm = nameOf(o)
-            val cid = idOf(o)
-            if (nm.isBlank()) continue
+            val nm = s(o, "name", "title", "comic_name")
+            val cid = s(o, "id", "comic_id", "comicId", "cid")
+            if (nm.isBlank() || cid.isBlank()) continue
             out.add(
                 Comic(
                     name = nm,
-                    cover = coverOf(o),
+                    cover = s(o, "cover", "cover_url", "img", "image", "thumb", "pic"),
                     author = s(o, "author", "author_name", "authors"),
                     intro = s(o, "intro", "description", "brief", "desc", "summary"),
                     latest = s(o, "last_chapter", "lastChapter", "new_chapter", "latest"),
@@ -539,25 +706,6 @@ class LiziSource : ComicSource {
                     pathWord = cid,
                 )
             )
-        }
-        return out
-    }
-
-    private fun imageList(root: JSONObject): List<String> {
-        val out = ArrayList<String>()
-        // 先找「数组里是字符串」的，再找「数组里是对象且带图地址」的
-        for (a in arrays(root)) {
-            if (a.length() == 0) continue
-            val first = a.opt(0)
-            if (first is String && first.startsWith("http")) {
-                for (i in 0 until a.length()) a.optString(i).takeIf { it.startsWith("http") }?.let { out.add(it) }
-            } else if (first is JSONObject) {
-                val urls = (0 until a.length()).mapNotNull { i ->
-                    val o = a.optJSONObject(i) ?: return@mapNotNull null
-                    s(o, "url", "img", "image", "src", "path", "pic", "picture").takeIf { it.startsWith("http") }
-                }
-                if (urls.size > out.size) { out.clear(); out.addAll(urls) }
-            }
         }
         return out
     }

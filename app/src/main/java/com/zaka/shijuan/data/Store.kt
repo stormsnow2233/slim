@@ -95,6 +95,59 @@ class Store(context: Context) {
     var comicTick by mutableIntStateOf(0)
         private set
 
+    // ── 漫画书架 ──
+    fun comicShelf(): List<Comic> {
+        val s = sp.getString("comic_shelf_v1", null) ?: return emptyList()
+        return runCatching {
+            val arr = JSONArray(s)
+            (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let { o -> Comic.from(o) } }
+        }.getOrDefault(emptyList())
+    }
+
+    fun saveComicShelf(items: List<Comic>) {
+        val arr = JSONArray()
+        items.forEach { arr.put(it.toJson()) }
+        sp.edit().putString("comic_shelf_v1", arr.toString()).apply()
+    }
+
+    fun inComicShelf(comic: Comic): Boolean =
+        comicShelf().any { it.url == comic.url && it.sourceId == comic.sourceId }
+
+    fun addComicToShelf(comic: Comic): List<Comic> {
+        val list = comicShelf().toMutableList()
+        if (list.none { it.url == comic.url && it.sourceId == comic.sourceId }) list.add(0, comic)
+        saveComicShelf(list)
+        return list
+    }
+
+    fun removeComicFromShelf(comic: Comic): List<Comic> {
+        val list = comicShelf().filterNot { it.url == comic.url && it.sourceId == comic.sourceId }
+        saveComicShelf(list)
+        return list
+    }
+
+    // ── 漫画阅读设置 ──
+    /** scroll = 上下滚动；page = 左右翻页（章内） */
+    fun comicMode(): String = sp.getString("comic_mode", "page") ?: "page"
+
+    fun setComicMode(mode: String) {
+        sp.edit().putString("comic_mode", mode).apply()
+    }
+
+    /** 是否允许双指缩放 / 双击放大 */
+    fun comicZoom(): Boolean = sp.getBoolean("comic_zoom", true)
+
+    fun setComicZoom(on: Boolean) {
+        sp.edit().putBoolean("comic_zoom", on).apply()
+    }
+
+    // ── 漫画缓存任务（下载进度持久化，App 重开还在） ──
+    fun loadDownloadTasks(): String? = sp.getString("comic_downloads_v1", null)
+
+    fun saveDownloadTasks(json: String) {
+        sp.edit().putString("comic_downloads_v1", json).apply()
+    }
+
     // ── 漫画记忆 ──
     fun comicRecords(): List<ComicRecord> = ComicRecord.listFrom(sp.getString("comic_records", null))
 

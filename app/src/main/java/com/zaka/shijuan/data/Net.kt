@@ -133,6 +133,45 @@ object Net {
         }
     }.getOrNull()
 
+    /**
+     * 只取 1 字节探资源在不在：返回（状态码，总大小）。
+     * 有些图床对不存在的页回 200 + 一张几十字节的占位图，所以必须拿到大小。
+     */
+    fun probe(url: String, headers: Map<String, String> = emptyMap(), referer: String = ""): Pair<Int, Long> =
+        runCatching {
+            val b = Request.Builder().url(safeUrl(url)).get()
+                .header("User-Agent", UA)
+                .header("Range", "bytes=0-0")
+            if (referer.isNotBlank()) b.header("Referer", referer)
+            headers.forEach { (k, v) -> b.header(k, v) }
+            client.newCall(b.build()).execute().use { r ->
+                val len = r.header("Content-Range")?.substringAfterLast('/')?.toLongOrNull()
+                    ?: r.header("Content-Length")?.toLongOrNull()
+                    ?: -1L
+                r.code to len
+            }
+        }.getOrDefault(0 to -1L)
+
+    /** 下载二进制到本地文件，返回字节数（-1 表示失败） */
+    fun downloadTo(url: String, dest: java.io.File, headers: Map<String, String> = emptyMap(), referer: String = ""): Long =
+        runCatching {
+            dest.parentFile?.mkdirs()
+            val b = Request.Builder().url(safeUrl(url)).get().header("User-Agent", UA)
+            if (referer.isNotBlank()) b.header("Referer", referer)
+            headers.forEach { (k, v) -> b.header(k, v) }
+            client.newCall(b.build()).execute().use { r ->
+                if (!r.isSuccessful) return -1L
+                val body = r.body ?: return -1L
+                val len = body.contentLength()
+                body.byteStream().use { input ->
+                    dest.outputStream().use { out -> input.copyTo(out, 64 * 1024) }
+                }
+                if (len > 0 && dest.length() != len) return -1L
+                if (dest.length() < 512) return -1L
+                dest.length()
+            }
+        }.getOrDefault(-1L)
+
     /** 预连接：点开书籍前先把到该站的 TCP/TLS 握手做掉，省掉首包那一两百毫秒 */
     fun warmUp(url: String) {
         runCatching {

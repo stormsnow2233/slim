@@ -1,5 +1,6 @@
 package com.zaka.shijuan.ui
 
+import androidx.compose.animation.core.Animatable
 import androidx.compose.animation.core.LinearEasing
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
@@ -13,7 +14,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Menu
 import androidx.compose.ui.graphics.graphicsLayer
@@ -43,6 +44,7 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlinx.coroutines.launch
 import kotlin.math.roundToInt
 
 /**
@@ -73,6 +75,20 @@ fun LiquidGlassBar(
 
     var barSize by remember { mutableStateOf(Size.Zero) }
     var pillDrag by remember { mutableFloatStateOf(0f) }
+
+    // 点击时的「啵」一下：胶囊瞬间撑大再弹回，酷安那种手感。
+    val pillScale = remember { Animatable(1f) }
+    // 被点中的那一格额外弹一下（同一格连点也会弹）
+    var bumped by remember { mutableIntStateOf(-1) }
+    val scope = rememberCoroutineScope()
+    val bumpPill: (Int) -> Unit = { idx ->
+        bumped = idx
+        scope.launch {
+            pillScale.snapTo(1f)
+            pillScale.animateTo(1.10f, tween(90, easing = LinearEasing))
+            pillScale.animateTo(1f, spring(dampingRatio = 0.42f, stiffness = 900f))
+        }
+    }
 
     val trans = rememberInfiniteTransition(label = "sheen")
     val sweep by trans.animateFloat(
@@ -131,7 +147,7 @@ fun LiquidGlassBar(
                 )
         )
 
-        BoxWithConstraints(Modifier.fillMaxWidth().padding(5.dp)) {
+        BoxWithConstraints(Modifier.fillMaxWidth().padding(horizontal = 5.dp, vertical = 7.dp)) {
             val count = labels.size.coerceAtLeast(1)
             val cell = maxWidth / count
             val cellPx = with(density) { cell.toPx() }
@@ -150,7 +166,11 @@ fun LiquidGlassBar(
                 Modifier
                     .offset { IntOffset((pillX + insetPx).roundToInt(), 0) }
                     .width(cell - inset * 2)
-                    .height(48.dp)
+                    .height(46.dp)
+                    .graphicsLayer {
+                        scaleX = pillScale.value
+                        scaleY = pillScale.value
+                    }
                     .clip(RoundedCornerShape(21.dp))
                     .background(
                         Brush.verticalGradient(
@@ -167,10 +187,21 @@ fun LiquidGlassBar(
             Row(
                 Modifier
                     .fillMaxWidth()
-                    .height(48.dp)
+                    .height(46.dp)
             ) {
                 labels.forEachIndexed { i, label ->
                     val on = i == selected
+                    // 选中项图标弹起来一点，跟胶囊同步
+                    val iconScale by animateFloatAsState(
+                        targetValue = if (on) 1.18f else 1f,
+                        animationSpec = spring(dampingRatio = 0.48f, stiffness = 620f),
+                        label = "icon-$i",
+                    )
+                    val labelScale by animateFloatAsState(
+                        targetValue = if (on) 1f else 0.94f,
+                        animationSpec = spring(dampingRatio = 0.7f, stiffness = 700f),
+                        label = "label-$i",
+                    )
                     Column(
                         modifier = Modifier
                             .weight(1f)
@@ -179,11 +210,22 @@ fun LiquidGlassBar(
                             .clickable(
                                 interactionSource = remember { MutableInteractionSource() },
                                 indication = ripple(bounded = true, color = accent),
-                            ) { onSelect(i) },
+                            ) {
+                                bumpPill(i)
+                                onSelect(i)
+                            },
                         horizontalAlignment = Alignment.CenterHorizontally,
                         verticalArrangement = Arrangement.Center,
                     ) {
-                        Box(Modifier.size(22.dp), contentAlignment = Alignment.Center) {
+                        Box(
+                            Modifier
+                                .size(22.dp)
+                                .graphicsLayer {
+                                    scaleX = iconScale
+                                    scaleY = iconScale
+                                },
+                            contentAlignment = Alignment.Center,
+                        ) {
                             Icon(
                                 imageVector = if (on) iconsOn[i] else iconsOff[i],
                                 contentDescription = label,
@@ -194,13 +236,18 @@ fun LiquidGlassBar(
                         Spacer(Modifier.height(2.dp))
                         Text(
                             text = label,
-                            fontSize = 10.sp,
+                            fontSize = if (on) 10.5.sp else 10.sp,
                             lineHeight = 12.sp,
-                            fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
+                            fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
                             textAlign = TextAlign.Center,
                             maxLines = 1,
                             color = if (on) accent else ink.copy(alpha = 0.52f),
-                            modifier = Modifier.height(13.dp),
+                            modifier = Modifier
+                                .height(13.dp)
+                                .graphicsLayer {
+                                    scaleX = labelScale
+                                    scaleY = labelScale
+                                },
                         )
                     }
                 }
@@ -215,7 +262,7 @@ fun LiquidGlassBar(
                 Modifier
                     .offset { IntOffset((pillX + insetPx).roundToInt(), 0) }
                     .width(cell - inset * 2)
-                    .height(48.dp)
+                    .height(46.dp)
                     .pointerInput(count, cellPx) {
                         detectHorizontalDragGestures(
                             onDragEnd = {
@@ -265,9 +312,13 @@ fun animatedScale(pressed: Boolean): Float {
 fun DrawerButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val accent = MaterialTheme.colorScheme.primary
     val ink = MaterialTheme.colorScheme.onSurface
-    var pressed by remember { mutableStateOf(false) }
+    // 按压状态直接从 clickable 的 interactionSource 读。
+    // （之前这里另外挂了一层 detectTapGestures，它会把 down/up 事件消费掉，
+    //  导致 clickable 收不到点击 —— 按下去有回弹，抽屉却打不开。）
+    val interaction = remember { MutableInteractionSource() }
+    val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
-        targetValue = if (pressed) 0.92f else 1f,
+        targetValue = if (pressed) 0.90f else 1f,
         animationSpec = spring(dampingRatio = 0.55f, stiffness = 780f),
         label = "drawer-press",
     )
@@ -279,21 +330,10 @@ fun DrawerButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
             .background(ink.copy(alpha = 0.07f))
             .border(1.dp, ink.copy(alpha = 0.08f), RoundedCornerShape(13.dp))
             .clickable(
-                interactionSource = remember { MutableInteractionSource() },
+                interactionSource = interaction,
                 indication = ripple(bounded = true, color = accent),
-            ) {
-                pressed = false
-                onClick()
-            }
-            .pointerInput(Unit) {
-                detectTapGestures(
-                    onPress = {
-                        pressed = true
-                        tryAwaitRelease()
-                        pressed = false
-                    },
-                )
-            },
+                onClick = onClick,
+            ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
