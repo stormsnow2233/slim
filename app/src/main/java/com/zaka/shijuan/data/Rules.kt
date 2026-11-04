@@ -178,19 +178,30 @@ object Rules {
     fun autoContent(doc: Document): String {
         var best: Element? = null
         var bestScore = 0
-        for (el in doc.select("div, article, section, td")) {
-            if (el.selectFirst("div, article, section") != null) continue
+        for (el in doc.select("div, article, section, td, main")) {
             val text = el.text().replace(Regex("\\s+"), "")
-            if (text.length < 300) continue
+            if (text.length < 200) continue
             val linkLen = el.select("a").sumOf { it.text().length }
+            // 链接字占比高的多半是目录/导航
+            if (linkLen * 4 > text.length) continue
             val pCount = el.select("p").size
-            val score = text.length - linkLen * 6 + pCount * 40
+            val brCount = el.select("br").size
+            // 同样文字量下取更靠内层的容器（内层 div 少）
+            val score = text.length + pCount * 30 + brCount * 10 - el.select("div").size * 8
             if (score > bestScore) { bestScore = score; best = el }
         }
         val b = best ?: return ""
+        b.select("script, style, iframe").remove()
         val ps = b.select("p")
         if (ps.size >= 3) return ps.joinToString("") { "<p>${it.html()}</p>" }
-        return b.html().replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "</p><p>")
+        val text = b.html()
+        // 没有 <p> 的站，正文是一整段用 <br> 分行的
+        return if (text.contains(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE))) {
+            text.replace(Regex("<br\\s*/?>", RegexOption.IGNORE_CASE), "</p><p>")
+                .let { "<p>$it</p>" }
+        } else {
+            text
+        }
     }
 
     fun cleanText(html: String): String {

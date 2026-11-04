@@ -59,7 +59,11 @@ import com.zaka.shijuan.data.STATE_PAUSED
 import com.zaka.shijuan.data.STATE_RUNNING
 import com.zaka.shijuan.data.Store
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeoutOrNull
 import kotlinx.coroutines.withContext
 
 
@@ -103,17 +107,22 @@ fun ComicScreen(
         loading = true
         error = ""
         hits = withContext(Dispatchers.IO) {
-            ComicRepo.sources.map { src ->
-                val t0 = System.currentTimeMillis()
-                runCatching { src.home() }.fold(
-                    onSuccess = { ComicHit(src.id, src.name, it, true, System.currentTimeMillis() - t0) },
-                    onFailure = {
-                        ComicHit(
-                            src.id, src.name, emptyList(), false,
-                            System.currentTimeMillis() - t0, it.message ?: "失败",
+            // 四个源同时打，谁先回谁先上；单个源挂了不拖累其它源
+            coroutineScope {
+                ComicRepo.sources.map { src ->
+                    async {
+                        val t0 = System.currentTimeMillis()
+                        runCatching { withTimeoutOrNull(12_000) { src.home() } ?: emptyList() }.fold(
+                            onSuccess = { ComicHit(src.id, src.name, it, true, System.currentTimeMillis() - t0) },
+                            onFailure = {
+                                ComicHit(
+                                    src.id, src.name, emptyList(), false,
+                                    System.currentTimeMillis() - t0, it.message ?: "失败",
+                                )
+                            },
                         )
-                    },
-                )
+                    }
+                }.awaitAll()
             }
         }
         list = ComicRepo.merge(hits)
@@ -141,16 +150,24 @@ fun ComicScreen(
         coverToken++
     }
 
-    // 封面按源一个个补，补好一个就地刷新，不影响已经显示出来的列表
+    // 封面按源并发补，补好一个就地刷新，不影响已经显示出来的列表
     LaunchedEffect(coverToken) {
         if (coverToken == 0) return@LaunchedEffect
         val snapshot = hits
-        for (h in snapshot) {
-            if (!h.ok || h.list.none { it.cover.isBlank() }) continue
-            val src = ComicRepo.byIdOrNull(h.sourceId) ?: continue
-            val filled = withContext(Dispatchers.IO) { src.fillCovers(h.list) }
-            hits = hits.map { if (it.sourceId == h.sourceId) it.copy(list = filled) else it }
+        val pend = snapshot.filter { it.ok && it.list.any { c -> c.cover.isBlank() } }
+        if (pend.isEmpty()) return@LaunchedEffect
+        val filled = withContext(Dispatchers.IO) {
+            coroutineScope {
+                pend.map { h ->
+                    async {
+                        val src = ComicRepo.byIdOrNull(h.sourceId) ?: return@async h
+                        val got = runCatching { withTimeoutOrNull(10_000) { src.fillCovers(h.list) } }.getOrNull()
+                        if (got == null) h else h.copy(list = got)
+                    }
+                }.awaitAll()
+            }
         }
+        hits = hits.map { old -> filled.firstOrNull { it.sourceId == old.sourceId } ?: old }
     }
 
     // 当前选中源要展示的列表
@@ -893,6 +910,36 @@ fun ComicReaderScreen(
     val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { images.size })
     val headers = remember(comic.sourceId) { ComicRepo.imageHeaders(comic) }
 
+    // 预取：进话先抓前几张，翻到哪就把后面两张也抓下来，翻页基本不用等
+    val ctx = LocalContext.current
+    val cfg = androidx.compose.ui.platform.LocalConfiguration.current
+    val screenW = with(androidx.compose.ui.platform.LocalDensity.current) {
+        cfg.screenWidthDp.dp.roundToPx()
+    }
+    val screenH = with(androidx.compose.ui.platform.LocalDensity.current) {
+        cfg.screenHeightDp.dp.roundToPx()
+    }
+
+    LaunchedEffect(images) {
+        if (images.isEmpty()) return@LaunchedEffect
+        withContext(Dispatchers.IO) {
+            images.take(4).forEach { u -> ComicImages.prefetch(ctx, u, headers, screenW, screenH) }
+        }
+        // 下一话的图地址也顺手要回来
+        ComicRepo.prefetchPages(comic, chapters.getOrNull(index + 1))
+    }
+
+    LaunchedEffect(images.size, mode) {
+        if (images.isEmpty()) return@LaunchedEffect
+        snapshotFlow { pagerState.currentPage }.collect { p ->
+            withContext(Dispatchers.IO) {
+                for (i in (p + 1)..(p + 3)) {
+                    images.getOrNull(i)?.let { ComicImages.prefetch(ctx, it, headers, screenW, screenH) }
+                }
+            }
+        }
+    }
+
     val chapter = chapters.getOrNull(index)
 
     // 点屏幕：左边上一页、右边下一页，到头了才切话；中间叫出/隐藏工具栏
@@ -1212,7 +1259,8 @@ private fun ComicPage(
         model = ImageRequest.Builder(ctx)
             .data(src)
             .apply { headers.forEach { (k, v) -> addHeader(k, v) } }
-            .crossfade(true)
+            .memoryCacheKey(src)
+            .diskCacheKey(src)
             .build(),
         contentDescription = null,
         contentScale = if (fillWidth) ContentScale.FillWidth else ContentScale.Fit,

@@ -152,8 +152,8 @@ object Sources {
                 cover = ".book-img img@src || .cover img@src",
                 intro = ".book-dec@text || .intro@text",
             ),
-            toc = TocRule(list = ".module-row-text", name = "span@text || @text", url = "@href"),
-            content = ContentRule(body = ".article-content@html"),
+            toc = TocRule(list = "#list-chapterAll a, .module-row-text, .module-volume-list a", name = "@text", url = "@href"),
+            content = ContentRule(body = "#mlfy_main_text@html || .article-content@html"),
         ),
 
         Source(
@@ -285,7 +285,10 @@ object Sources {
                 cover = ".book-img img@src || .book-layout img@src",
                 intro = ".book-intro@text || #intro@text || .book-dec@text",
             ),
-            toc = TocRule(list = ".catalog ul li a, .chapter-list a, #vol_1 a", name = "@text", url = "@href"),
+            toc = TocRule(
+                list = "#vol_1 a, ul.catalogul a, .catalog a, .chapter-list a, .catalog ul li a",
+                name = "@text", url = "@href",
+            ),
             content = ContentRule(body = "#acontent@html || .read-content@html || #content@html"),
         ),
 

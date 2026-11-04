@@ -926,20 +926,34 @@ object ComicRepo {
      */
     fun searchAll(keyword: String, ids: List<String>): List<ComicHit> {
         val picked = sources.filter { it.id in ids }.ifEmpty { sources }
-        return picked.map { src ->
-            val t0 = System.currentTimeMillis()
-            runCatching { src.search(keyword) }
-                .fold(
-                    onSuccess = { ComicHit(src.id, src.name, it, true, System.currentTimeMillis() - t0) },
-                    onFailure = {
-                        ComicHit(
-                            src.id, src.name, emptyList(), false,
-                            System.currentTimeMillis() - t0,
-                            it.message ?: "失败",
+        // 几个源一起打，别排队等；每个源最多等 12 秒，不让慢源拖住整屏
+        val pool = Executors.newFixedThreadPool(picked.size.coerceAtLeast(1))
+        return try {
+            val jobs = picked.map { src ->
+                val t0 = System.currentTimeMillis()
+                pool.submit(Callable {
+                    runCatching { src.search(keyword) }
+                        .fold(
+                            onSuccess = { ComicHit(src.id, src.name, it, true, System.currentTimeMillis() - t0) },
+                            onFailure = {
+                                ComicHit(
+                                    src.id, src.name, emptyList(), false,
+                                    System.currentTimeMillis() - t0,
+                                    it.message ?: "失败",
+                                )
+                            },
                         )
-                    },
-                )
-        }.sortedByDescending { it.list.size }
+                })
+            }
+            jobs.map { f ->
+                runCatching { f.get(14, TimeUnit.SECONDS) }.getOrElse { e ->
+                    val i = jobs.indexOf(f)
+                    ComicHit(picked[i].id, picked[i].name, emptyList(), false, 14000, "超时")
+                }
+            }.sortedByDescending { it.list.size }
+        } finally {
+            pool.shutdown()
+        }
     }
 
     /** 把多个源的结果合并去重（同名取先到的，标注来源） */
@@ -960,8 +974,28 @@ object ComicRepo {
 
     fun chapters(comic: Comic): List<ComicChapter> = source(comic.sourceId).chapters(comic)
 
-    fun pages(comic: Comic, chapter: ComicChapter): ComicPages =
-        source(comic.sourceId).pages(comic, chapter)
+    /** 这一话的图地址列表：留几话在内存里，来回翻话不用重新请求 */
+    private val pagesCache = object : LinkedHashMap<String, ComicPages>(8, 0.75f, true) {
+        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, ComicPages>?): Boolean = size > 8
+    }
+
+    private val prefetchPool = Executors.newFixedThreadPool(2)
+
+    fun pages(comic: Comic, chapter: ComicChapter): ComicPages {
+        val key = comic.sourceId + "|" + comic.url + "|" + chapter.url
+        synchronized(pagesCache) { pagesCache[key] }?.let { return it }
+        val got = source(comic.sourceId).pages(comic, chapter)
+        synchronized(pagesCache) { pagesCache[key] = got }
+        return got
+    }
+
+    /** 后台把下一话的图地址先拿回来，翻页时就少等一次往返 */
+    fun prefetchPages(comic: Comic, chapter: ComicChapter?) {
+        chapter ?: return
+        val key = comic.sourceId + "|" + comic.url + "|" + chapter.url
+        synchronized(pagesCache) { if (pagesCache.containsKey(key)) return }
+        runCatching { prefetchPool.execute { runCatching { pages(comic, chapter) } } }
+    }
 
     fun imageHeaders(comic: Comic? = null): Map<String, String> =
         if (comic == null) sources.first().headers() else source(comic.sourceId).headers()

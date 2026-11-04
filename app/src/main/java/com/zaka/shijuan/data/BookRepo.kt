@@ -255,6 +255,10 @@ object BookRepo {
             }
         }
         if (list.size < 2) {
+            val guess = guessToc(doc, pageUrl)
+            if (guess.size >= 2) list = guess
+        }
+        if (list.size < 2) {
             val auto = Rules.autoList(doc, pageUrl, chapterMode = true)
             if (auto.size >= 2) list = auto.mapIndexed { i, b -> Chapter(b.name, b.url, i) }
         }
@@ -314,7 +318,12 @@ object BookRepo {
                 }
             }
         }
-        if (html.isBlank()) html = Rules.autoContent(doc)
+        if (html.isBlank()) html = guessContent(doc)
+        // 规则命中的东西太短，多半抓到的是导航/提示条，换成整页里最像正文的那块
+        if (html.replace(Regex("\\s"), "").length < 180) {
+            val guess = guessContent(doc)
+            if (guess.replace(Regex("\\s"), "").length > html.replace(Regex("\\s"), "").length) html = guess
+        }
         // 有的站免费章节正常给正文，付费章节只给一段购买提示——这时别报"被拦截"，要报准
         if (html.replace(Regex("\\s"), "").length < 120) {
             val page = doc.text()
@@ -354,11 +363,89 @@ object BookRepo {
         return Result.success(Content(title, text, cleaned))
     }
 
+    // ─────────── 目录 / 正文的兜底识别 ───────────
+    // 站点改版后规则选择器往往整套失效，这里用「候选清单 + 打分」硬认出目录和正文，
+    // 只要页面结构别太离谱，就不用等发新版才能看。
+
+    private val TOC_SELECTORS = listOf(
+        "#list dl dd a", "#list dd a", "dl dd a", "#chapterlist a", "#chapter-list a",
+        "#list-chapterAll a", ".listmain a", "#catalog a", ".catalog a", "ul.catalogul a",
+        "#vol_1 a", ".volume a", ".dirlist a", ".chapter a", ".section-list a",
+        ".book_list a", "#booklist a", "#newlist a", "#content table td a",
+        ".module-row-text", ".chapter-list a", ".mulu_list a", "a[href*=chapter]",
+        "a[href*=/read/]", "dd a[href$='.html']", ".list-chapter a",
+    )
+
+    private fun guessToc(doc: org.jsoup.nodes.Document, pageUrl: String): List<Chapter> {
+        var best: List<Pair<String, String>> = emptyList()
+        var bestScore = 0
+        for (sel in TOC_SELECTORS) {
+            val anchors = runCatching { doc.select(sel) }.getOrDefault(emptyList())
+            if (anchors.size < 2) continue
+            val items = anchors.mapNotNull { a ->
+                val name = a.text().replace(Regex("\\s+"), " ").trim()
+                val href = a.attr("href").trim()
+                if (name.isEmpty() || href.isEmpty()) return@mapNotNull null
+                if (href.startsWith("#") || href.startsWith("javascript")) return@mapNotNull null
+                val abs = Rules.absUrl(pageUrl, href)
+                if (!abs.startsWith("http")) return@mapNotNull null
+                name to abs
+            }.distinctBy { it.second }
+            if (items.size < 2) continue
+            var score = items.size
+            if (sel.contains("chapter") || sel.contains("catalog") || sel.contains("volume") ||
+                sel.contains("list") || sel.contains("read") || sel.contains("mulu")
+            ) score += 8
+            if (items.size > 400) score -= 60      // 整站链接堆，不是目录
+            if (score > bestScore) { bestScore = score; best = items }
+        }
+        return best.mapIndexed { i, (n, u) -> Chapter(n, u, i) }
+    }
+
+    private val CONTENT_SELECTORS = listOf(
+        "#content", "#chaptercontent", "#acontent", "#booktext", "#txtContent",
+        "#nr1", "#nr", "#mlfy_main_text", "#zjny", "#contentbox", "#booktxt",
+        "#htmlContent", "#chapter-content", "#article-content", "#BookText",
+        ".read-content", ".article-content", ".readbox .content", ".showtxt",
+        ".yd_text2", ".content", ".text", "article",
+    )
+
+    private fun guessContent(doc: org.jsoup.nodes.Document): String {
+        var bestHtml = ""
+        var bestLen = 0
+        for (sel in CONTENT_SELECTORS) {
+            val el = runCatching { doc.selectFirst(sel) }.getOrNull() ?: continue
+            val len = el.text().replace(Regex("\\s"), "").length
+            if (len >= 180 && len > bestLen) { bestLen = len; bestHtml = el.html() }
+        }
+        if (bestHtml.isNotBlank()) return bestHtml
+        return Rules.autoContent(doc)
+    }
+
     /** 书源体检 */
     fun health(src: Source): SourceResult {
         // SF 是日本轻小说站,拿玄幻书名去体检只会显示"没搜到",换个它站内确实有的词
         val key = if (src.apiKind == "sfacg") "牧师" else "斗破苍穹"
         return searchSource(src, key)
+    }
+
+    /**
+     * 分段体检：搜索 → 目录 → 正文，哪一步断了直接说哪一步断的。
+     * 以前只有「搜索通/不通」，看不出后面两步，排查全靠猜。
+     */
+    fun healthDeep(src: Source): Triple<Boolean, String, String> {
+        val s = health(src)
+        if (!s.ok || s.books.isEmpty()) return Triple(false, "搜索：${s.error.ifBlank { "没结果" }}", "")
+        val book = s.books.first()
+        val toc = runCatching { getToc(src, book) }
+            .getOrElse { return Triple(true, "目录：${it.message}", "") }
+        val list = toc.getOrElse { return Triple(true, "目录：${it.message}", "") }
+        if (list.chapters.size < 2) return Triple(true, "目录：只认出 ${list.chapters.size} 章", "")
+        val ch = runCatching { getChapter(src, list.chapters.first()) }
+            .getOrElse { return Triple(true, "目录 ${list.chapters.size} 章 · 正文：${it.message}", "") }
+        val c = ch.getOrElse { return Triple(true, "目录 ${list.chapters.size} 章 · 正文：${it.message}", "") }
+        val n = c.text.count { !it.isWhitespace() }
+        return Triple(true, "目录 ${list.chapters.size} 章 · 正文 ${n} 字", "")
     }
 
     /** 并发多源搜索，边出结果边回调 */

@@ -215,15 +215,23 @@ object Net {
         Resp(false, 0, "", friendlyError(e))
     }
 
-    /** 识别「文档已移动」「http-equiv=refresh」「location.href=」这类跳转 */
+    /**
+     * 识别「文档已移动」这类真跳转。
+     * 只认明确声明跳转的三处：meta refresh、location.href / location.replace、window.location。
+     * 以前还顺手匹配页面里第一个 href / url=，结果章节页里只要有条导航链接
+     * 就会被当成跳转目标跟过去，正文自然就抓不到了——这个坑要堵死。
+     */
     private fun findMetaRedirect(html: String): String? {
-        Regex("(?i)http-equiv=[\"']?refresh[\"']?[^>]*content=[\"'][^;\"']*;\\s*url=([^\"']+)"  )
-            .find(html)?.let { return it.groupValues[1].trim() }
-        Regex("(?i)url=([^\"'&>]+)").find(html)?.let {
+        Regex(
+            "(?i)http-equiv=[\"']?refresh[\"']?[^>]{0,200}?content=[\"'][^;\"'>]*;\\s*url=([^\"'>]+)",
+        ).find(html)?.let { return it.groupValues[1].trim() }
+
+        Regex(
+            "(?i)(?:location\\.href\\s*=|location\\.replace\\s*\\(\\s*|window\\.location(?:\\.href)?\\s*=\\s*)[\"']([^\"']+)[\"']",
+        ).find(html)?.let {
             val v = it.groupValues[1].trim()
             if (v.startsWith("http") || v.startsWith("/")) return v
         }
-        Regex("(?i)href=[\"']([^\"']+)[\"']").find(html)?.let { return it.groupValues[1] }
         return null
     }
 

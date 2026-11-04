@@ -24,6 +24,9 @@ import com.zaka.shijuan.data.Source
 import com.zaka.shijuan.data.SourceResult
 import com.zaka.shijuan.data.Sources
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -62,14 +65,19 @@ fun SourcesScreen(
                     if (checking) return@FilledTonalButton
                     checking = true
                     scope.launch {
-                        val acc = HashMap<String, SourceResult>()
-                        withContext(Dispatchers.IO) {
-                            Sources.ALL.filter { it.apiKind != "zlib" }.forEach { s ->
-                                val r = BookRepo.health(s)
-                                synchronized(acc) { acc[s.id] = r }
-                                checks = acc.toMap()
+                        val targets = Sources.ALL.filter { it.apiKind != "zlib" }
+                        val got = withContext(Dispatchers.IO) {
+                            coroutineScope {
+                                targets.map { s ->
+                                    async {
+                                        val (ok, detail, _) = runCatching { BookRepo.healthDeep(s) }
+                                            .getOrElse { Triple(false, "检测异常：${it.message}", "") }
+                                        s.id to SourceResult(s.id, s.name, ok, emptyList(), detail)
+                                    }
+                                }.awaitAll()
                             }
                         }
+                        checks = got.toMap()
                         checking = false
                     }
                 },
