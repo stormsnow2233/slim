@@ -3,6 +3,9 @@ package com.zaka.shijuan.data
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.URLEncoder
+import java.util.concurrent.Callable
+import java.util.concurrent.Executors
+import java.util.concurrent.TimeUnit
 
 /** 漫画条目 */
 data class Comic(
@@ -86,6 +89,9 @@ interface ComicSource {
 
     fun detail(comic: Comic): Comic = comic
 
+    /** 搜索结果里补封面；默认什么都不做（接口自带封面的源不用管） */
+    fun fillCovers(list: List<Comic>): List<Comic> = list
+
     fun chapters(comic: Comic): List<ComicChapter>
 
     fun pages(comic: Comic, chapter: ComicChapter): ComicPages
@@ -107,45 +113,131 @@ class Dm5FamilySource(
     override val id: String,
     override val name: String,
     private val base: String,
-    /** 搜索路径模板，{kw} 会被替换 */
+    /** HTML 搜索页模板（JSON 接口挂了才用） */
     private val searchPath: String,
-    /** 首页 / 排行页；为空就用站点首页 */
+    /** 首页 / 榜单页 */
     private val homePath: String = "",
+    /** 列表页模板：dm5（动漫屋 / 漫画人）用 <li>，漫画 BZ 用 manga-i-list-item */
+    private val listStyle: String = "dm5",
+    /** JSON 搜索接口，这一类站点共用；留空就只走 HTML */
+    private val jsonSearchPath: String = "/search.ashx",
+    /** 备用域名：主域名在部分地区解析不到 / 被拦，就挨个换 */
+    private val altBases: List<String> = emptyList(),
 ) : ComicSource {
 
-    private val origin: String = base
+    /** 所有可用域名，主域名排第一 */
+    private val bases: List<String> = (listOf(base) + altBases).distinct()
+
+    /** 当前用得通的那个域名，成功后记住，后面直接走它 */
+    @Volatile
+    private var liveBase: String = base
+
+    private val origin: String get() = liveBase
+
+    /** 依次试域名，谁通用谁 */
+    private fun fetch(path: String, referer: String = ""): Net.Resp {
+        val order = listOf(liveBase) + bases.filter { it != liveBase }
+        var last = Net.Resp(false, 0, "", "网络不通")
+        for (b in order) {
+            val r = Net.get(b + path, referer = referer.ifBlank { "$b/" }, useCache = true)
+            if (r.ok) { liveBase = b; return r }
+            last = r
+        }
+        return last
+    }
+
+    /** 详情 / 章节这类页面地址，只取路径部分，域名用当前能用的那个 */
+    private fun pathOf(url: String): String =
+        Regex("""^https?://[^/]+(/.*)$""").find(url)?.groupValues?.get(1) ?: url
+
+    /** 搜索结果里补封面的上限：每个源最多补这么多，免得搜一次打几十个详情页 */
+    private val coverFillLimit = 12
 
     override fun home(): List<Comic> {
-        val paths = listOfNotNull(homePath.ifBlank { null }, "/")
+        val paths = buildList {
+            if (homePath.isNotBlank()) add(homePath)
+            add(if (listStyle == "bz") "/manga-list/" else "/manhua-list/")
+        }
         for (p in paths) {
-            val r = Net.get(base + p, referer = "$origin/", useCache = true)
+            val r = fetch(p)
             if (!r.ok) continue
-            val out = parseList(r.body)
+            val out = parseListPage(r.body)
             if (out.isNotEmpty()) return out
         }
         return emptyList()
     }
 
+    /**
+     * 搜索走 JSON 接口 search.ashx。
+     *
+     * 以前是抓搜索页 HTML，那几个站点的页面里塞满了前端框架的英文单词
+     * （list / original / jpkr 之类），正则一松就把它们当书名抓出来了，
+     * 出来一堆垃圾条目。接口返回的是干净 JSON，字段就四个：
+     * Title / Url / LastPartName / LastPartUrl。
+     */
     override fun search(keyword: String): List<Comic> {
         val kw = URLEncoder.encode(keyword, "UTF-8")
-        val r = Net.get(base + searchPath.replace("{kw}", kw), referer = "$origin/", useCache = true)
-        if (!r.ok) throw IllegalStateException(Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })))
-        return parseList(r.body)
+        if (jsonSearchPath.isNotBlank()) {
+            val r = fetch("$jsonSearchPath?t=$kw&language=1&isremovehtml=1")
+            // 接口本身都打不开：直接报错，别再去抓搜索页重复等一轮超时
+            if (!r.ok) {
+                throw IllegalStateException(
+                    Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })),
+                )
+            }
+            val arr = runCatching { JSONArray(r.body.trim()) }.getOrNull()
+            if (arr != null && arr.length() > 0) {
+                val out = (0 until arr.length()).mapNotNull { i ->
+                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val title = o.optString("Title").trim()
+                    val url = o.optString("Url").trim()
+                    if (title.isBlank() || url.isBlank()) return@mapNotNull null
+                    val latest = o.optString("LastPartName").trim()
+                    Comic(
+                        name = title,
+                        url = abs("$url/"),
+                        latest = if (latest == "暂无章节") "" else latest,
+                        sourceId = id,
+                        sourceName = name,
+                    )
+                }.distinctBy { it.url }
+                if (out.isNotEmpty()) return out
+            }
+        }
+        // 接口没这个关键词（或这个站没接口），退回抓搜索页
+        val r = fetch(searchPath.replace("{kw}", kw))
+        if (!r.ok) {
+            throw IllegalStateException(
+                Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })),
+            )
+        }
+        return parseListPage(r.body)
     }
 
     override fun detail(comic: Comic): Comic {
-        val r = Net.get(comic.url, referer = "$origin/", useCache = true)
+        val r = fetch(pathOf(comic.url))
         if (!r.ok) return comic
         val s = r.body
         val name = TITLE.find(s)?.groupValues?.get(1)?.trim().orEmpty()
+            .ifBlank {
+                TITLE_TAG.find(s)?.groupValues?.get(1)?.trim()
+                    ?.removeSuffix("漫畫")?.removeSuffix("漫画")?.trim().orEmpty()
+            }
+            .ifBlank { comic.name }
         val cover = COVER.find(s)?.groupValues?.get(1)?.trim().orEmpty()
+            .ifBlank { COVER_BZ.find(s)?.groupValues?.get(1)?.trim().orEmpty() }
+            .ifBlank { srcNear(s, "detail-main-cover") }
+            .ifBlank { comic.cover }
         val author = AUTHOR.find(s)?.groupValues?.get(1)?.trim().orEmpty()
         val intro = INTRO.find(s)?.groupValues?.get(1)?.trim().orEmpty()
+            .ifBlank { DESC.find(s)?.groupValues?.get(1)?.trim().orEmpty() }
         val latest = LATEST.find(s)?.groupValues?.get(1)?.trim().orEmpty()
-        val status = STATUS.find(s)?.groupValues?.get(1)?.trim().orEmpty()
+        val status = STATUS.findAll(s).mapNotNull { m ->
+            (m.groupValues.getOrNull(1) ?: "").ifBlank { m.groupValues.getOrNull(2) ?: "" }.trim()
+        }.firstOrNull { it.isNotBlank() }.orEmpty()
         return comic.copy(
-            name = name.ifBlank { comic.name },
-            cover = abs(cover).ifBlank { comic.cover },
+            name = name,
+            cover = abs(cover),
             author = author.ifBlank { comic.author },
             intro = intro.ifBlank { comic.intro },
             latest = latest.ifBlank { comic.latest },
@@ -156,21 +248,27 @@ class Dm5FamilySource(
 
     override fun chapters(comic: Comic): List<ComicChapter> {
         val r = Net.get(comic.url, referer = "$origin/", useCache = true)
-        if (!r.ok) throw IllegalStateException(Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })))
-        val list = CHAP_BLOCK.findAll(r.body).mapNotNull { m ->
+        if (!r.ok) {
+            throw IllegalStateException(
+                Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })),
+            )
+        }
+        val list = CHAP.findAll(r.body).mapNotNull { m ->
             val href = m.groupValues[1]
             val attrs = m.groupValues[2]
             val inner = m.groupValues[3]
-            // 只认目录项：class 里有 chapteritem，或内部带详情标题节点
-            val isItem = attrs.contains("chapteritem") || inner.contains("detail-list-2-info")
+            // 只认目录项：class 里有 chapteritem，或内部带详情标题节点，或正文就是个话数
+            var title = stripTags(inner).trim()
+            // 漫画 BZ 的目录项是 <div class="detail-list-item"><a/></div>，
+            // class 在 a 外面，括号里只剩个话数（1151），所以纯数字也算目录项
+            val digitOnly = title.matches(Regex("""\d{1,5}"""))
+            val isItem = attrs.contains("chapteritem") || inner.contains("detail-list-2-info") ||
+                inner.contains("detail-list-item") || digitOnly
             if (!isItem) return@mapNotNull null
-            // 站点的 title 属性常常是「试看版」这种备注，正文文字才是「第123话」，优先用正文
-            val innerText = stripTags(inner).trim()
-            val name = innerText.ifBlank {
-                TITLE_ATTR.find(attrs)?.groupValues?.get(1)?.trim().orEmpty()
-            }
+            if (digitOnly) title = "第${title}话"
+            if (title.isBlank()) title = TITLE_ATTR.find(attrs)?.groupValues?.get(1)?.trim().orEmpty()
             ComicChapter(
-                name = name.ifBlank { href.trim('/') },
+                name = title.ifBlank { href.trim('/') },
                 url = abs(href),
                 index = 0,
                 sourceId = id,
@@ -180,11 +278,36 @@ class Dm5FamilySource(
     }
 
     override fun pages(comic: Comic, chapter: ComicChapter): ComicPages {
-        val r = Net.get(chapter.url, referer = "$origin/", useCache = true)
-        if (!r.ok) throw IllegalStateException(Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })))
+        val r = fetch(pathOf(chapter.url))
+        if (!r.ok) {
+            throw IllegalStateException(
+                Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })),
+            )
+        }
         val imgs = JsPacker.imagesFromHtml(r.body)
         if (imgs.isEmpty()) throw IllegalStateException("这一话没解出图片，可能要先在浏览器里看")
         return ComicPages(chapter.name, imgs, "$origin/", headers())
+    }
+
+    /**
+     * 搜索结果本身不带封面，这里并行去详情页把封面捞回来。
+     * 只补前 12 个，剩下的保持占位图，靠用户点进去看详情。
+     */
+    override fun fillCovers(list: List<Comic>): List<Comic> {
+        val need = list.withIndex().filter { it.value.cover.isBlank() }.take(coverFillLimit)
+        if (need.isEmpty()) return list
+        val out = list.toMutableList()
+        val pool = Executors.newFixedThreadPool(6)
+        try {
+            val jobs = need.map { (idx, c) -> idx to pool.submit(Callable { c to detail(c) }) }
+            for ((idx, f) in jobs) {
+                val got = runCatching { f.get(15, TimeUnit.SECONDS) }.getOrNull() ?: continue
+                if (got.second.cover.isNotBlank()) out[idx] = got.second
+            }
+        } finally {
+            pool.shutdownNow()
+        }
+        return out
     }
 
     override fun headers(): Map<String, String> = mapOf(
@@ -195,27 +318,65 @@ class Dm5FamilySource(
 
     // ── 解析 ──
 
-    private fun parseList(html: String): List<Comic> {
+    private fun parseListPage(html: String): List<Comic> =
+        if (listStyle == "bz") parseBzList(html) else parseDm5List(html)
+
+    private fun parseDm5List(html: String): List<Comic> {
         val out = ArrayList<Comic>(40)
         val seen = HashSet<String>()
-        for (m in BOOK.findAll(html)) {
-            val path = m.groupValues[1]
-            val title = m.groupValues[2].trim()
-            val cover = m.groupValues[3].trim()
-            if (path in seen) continue
-            if (title.isBlank() && cover.isBlank()) continue
-            seen.add(path)
+        for (part in html.split("<li")) {
+            val block = part.take(1400)
+            val href = HREF_COMIC.find(block)?.groupValues?.get(1) ?: continue
+            if (!seen.add(href)) continue
+            val cover = IMG_SRC.find(block)?.groupValues?.get(1).orEmpty()
+            val title = (DM5_TITLE.find(block) ?: BZ_TITLE.find(block) ?: ANY_TITLE.find(block))
+                ?.groupValues?.get(1)?.trim().orEmpty()
+            if (title.isBlank()) continue
+            val latest = LATEST_TIP.find(block)?.groupValues?.get(1)?.trim().orEmpty()
             out.add(
                 Comic(
-                    name = title.ifBlank { path.trim('/').removePrefix("manhua-") },
+                    name = title,
                     cover = abs(cover),
-                    url = abs(path),
+                    url = abs(href),
+                    latest = latest,
                     sourceId = id,
                     sourceName = name,
-                )
+                ),
             )
         }
         return out
+    }
+
+    private fun parseBzList(html: String): List<Comic> {
+        val out = ArrayList<Comic>(40)
+        val seen = HashSet<String>()
+        for (part in html.split("class=\"manga-i-list-item\"").drop(1)) {
+            val block = part.take(1600)
+            val href = BZ_HREF.find(block)?.groupValues?.get(1) ?: continue
+            if (!seen.add(href)) continue
+            val cover = IMG_SRC.find(block)?.groupValues?.get(1).orEmpty()
+            val title = BZ_TITLE.find(block)?.groupValues?.get(1)?.trim().orEmpty()
+            val sub = BZ_SUB.find(block)?.groupValues?.get(1)?.trim().orEmpty()
+            if (title.isBlank()) continue
+            out.add(
+                Comic(
+                    name = title,
+                    cover = abs(cover),
+                    url = abs(href),
+                    intro = sub,
+                    sourceId = id,
+                    sourceName = name,
+                ),
+            )
+        }
+        return out
+    }
+
+    private fun srcNear(html: String, marker: String, window: Int = 220): String {
+        val i = html.indexOf(marker)
+        if (i < 0) return ""
+        val seg = html.substring(maxOf(0, i - window), minOf(html.length, i + marker.length + window))
+        return IMG_SRC.find(seg)?.groupValues?.get(1)?.trim().orEmpty()
     }
 
     private fun stripTags(s: String): String =
@@ -229,24 +390,30 @@ class Dm5FamilySource(
         else -> "$origin/$path"
     }
 
-    private val BOOK = Regex(
-        """<a href="(/manhua-[^"]+/)"(?:\s+title="([^"]*)")?[^>]*>\s*""" +
-            """(?:<li>[\s\S]{0,400}?)?<img[^>]*src="([^"]+\.(?:jpg|jpeg|png|webp))"""",
-        RegexOption.IGNORE_CASE,
-    )
+    private val IMG_SRC = Regex("""<img[^>]+src="([^"]+)"""", RegexOption.IGNORE_CASE)
+    private val HREF_COMIC = Regex("""href="(/(?:manhua-[\w\-]+|\d+bz)/)(?:\?[^"]*)?""")
+    private val BZ_HREF = Regex("""href="(/[\w\-]+/)"""")
+    private val DM5_TITLE = Regex("""manga-list-2-title"[^>]*>\s*<a[^>]*>([^<]+)<""")
+    private val BZ_TITLE = Regex("""manga-i-list-title"[^>]*>([^<]+)<""")
+    private val ANY_TITLE = Regex("""title="([^"]+)"""")
+    private val LATEST_TIP = Regex("""manga-list-2-tip"[^>]*>\s*<a[^>]*>([^<]+)<""")
+    private val BZ_SUB = Regex("""manga-i-list-subtitle"[^>]*>([^<]+)<""")
 
-    private val CHAP_BLOCK = Regex(
-        """<a\s+href="(/m\d+/)"([^>]*)>([\s\S]{0,900}?)</a>""",
+    private val CHAP = Regex(
+        """<a\s+href="(/m\d+/)"([^>]*)>([\s\S]{0,1500}?)</a>""",
         RegexOption.IGNORE_CASE,
     )
     private val TITLE_ATTR = Regex("""title="([^"]*)"""")
 
     private val TITLE = Regex("""detail-main-info-title">([^<]*)<""")
+    private val TITLE_TAG = Regex("""<title>\s*([^<_（(]+)""")
     private val COVER = Regex("""detail-main-cover"><img[^>]*src="([^"]+)"""")
+    private val COVER_BZ = Regex("""<img[^>]+src="([^"]+)"[^>]*class="detail-bar-(?:bg|img)"""")
     private val AUTHOR = Regex("""detail-main-info-author">\s*作者[：:]\s*<a[^>]*>([^<]*)<""")
     private val INTRO = Regex("""class="detail-desc"\s*>([^<]*)<""")
+    private val DESC = Regex("""<meta[^>]+name="[Dd]escription"[^>]+content="([^"]{0,400})"""")
     private val LATEST = Regex("""detail-list-title-2"[^>]*>([^<]*)<""")
-    private val STATUS = Regex("""detail-list-title-1">([^<]*)<""")
+    private val STATUS = Regex("""detail-list-title-1">([^<]*)<|detail-list-left">([^<]*)<""")
 }
 
 /* ─────────────────────── 拷贝漫画 ─────────────────────── */
@@ -267,9 +434,9 @@ class CopymangaSource : ComicSource {
     override val name = "拷贝漫画"
 
     private val hosts = listOf(
+        "https://api.mangacopy.com",
         "https://api.copymanga.site",
         "https://api.copymanga.tv",
-        "https://api.mangacopy.com",
     )
 
     private fun api(path: String, cache: Boolean = false): JSONObject? {
@@ -279,9 +446,10 @@ class CopymangaSource : ComicSource {
                 referer = "https://www.copymanga.site/",
                 headers = mapOf(
                     "region" to "1",
-                    "platform" to "1",
-                    "version" to "2.2.0",
+                    "platform" to "3",
+                    "version" to "3.0.0",
                     "webp" to "1",
+                    "Accept" to "application/json",
                 ),
                 useCache = cache,
             )
@@ -384,7 +552,7 @@ class CopymangaSource : ComicSource {
     }
 
     override fun headers(): Map<String, String> = mapOf(
-        "Referer" to "https://www.copymanga.site/",
+        "Referer" to "https://www.mangacopy.com/",
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
     )
@@ -721,17 +889,27 @@ object ComicRepo {
             name = "动漫屋",
             base = "https://m.dm5.com",
             searchPath = "/search?title={kw}",
-            homePath = "/manhua-rank/",
+            homePath = "/manhua-list/",
+            altBases = listOf("https://www.dm5.com"),
         ),
         Dm5FamilySource(
             id = "manhuaren",
             name = "漫画人",
             base = "https://www.manhuaren.com",
             searchPath = "/search/?keywords={kw}",
-            homePath = "", // 首页推荐位就是榜单
+            homePath = "/manhua-new/",
+            altBases = listOf("https://m.manhuaren.com"),
+        ),
+        Dm5FamilySource(
+            id = "mangabz",
+            name = "漫画BZ",
+            base = "https://www.mangabz.com",
+            searchPath = "/search?title={kw}",
+            homePath = "/manga-list/",
+            altBases = listOf("https://m.mangabz.com"),
+            listStyle = "bz",
         ),
         CopymangaSource(),
-        LiziSource(),
     )
 
     fun source(id: String): ComicSource =

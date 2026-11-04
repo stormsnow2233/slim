@@ -83,6 +83,8 @@ fun ComicScreen(
     // 每个源各自拿回一批，选「全部」时合并去重，选单个源时只看它
     var hits by remember { mutableStateOf<List<ComicHit>>(emptyList()) }
     var picked by remember { mutableStateOf("all") }
+    // 封面补全的触发器：列表先出来，封面随后一批批填上
+    var coverToken by remember { mutableStateOf(0) }
 
     LaunchedEffect(tick, query.isNotBlank()) {
         if (query.isNotBlank()) return@LaunchedEffect
@@ -106,6 +108,7 @@ fun ComicScreen(
         fromRank = true
         if (list.isEmpty()) error = "榜单没解析出内容，换个时间再试"
         loading = false
+        coverToken++
     }
 
     // 搜索触发：用一个 token 驱动
@@ -123,6 +126,19 @@ fun ComicScreen(
             error = if (hits.all { !it.ok }) "几个源都连不上，检查一下网络" else "没搜到「$kw」，换个关键词"
         }
         loading = false
+        coverToken++
+    }
+
+    // 封面按源一个个补，补好一个就地刷新，不影响已经显示出来的列表
+    LaunchedEffect(coverToken) {
+        if (coverToken == 0) return@LaunchedEffect
+        val snapshot = hits
+        for (h in snapshot) {
+            if (!h.ok || h.list.none { it.cover.isBlank() }) continue
+            val src = ComicRepo.byIdOrNull(h.sourceId) ?: continue
+            val filled = withContext(Dispatchers.IO) { src.fillCovers(h.list) }
+            hits = hits.map { if (it.sourceId == h.sourceId) it.copy(list = filled) else it }
+        }
     }
 
     // 当前选中源要展示的列表
@@ -263,7 +279,8 @@ fun ComicScreen(
         if (hits.isNotEmpty()) {
             Text(
                 hits.joinToString("   ") { h ->
-                    if (h.ok) "${h.sourceName} ${h.list.size}本/${h.ms}ms" else "${h.sourceName} 连不上"
+                    if (h.ok) "${h.sourceName} ${h.list.size}本/${h.ms}ms"
+                    else "${h.sourceName} ${h.error.take(10).ifBlank { "连不上" }}"
                 },
                 fontSize = 10.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
