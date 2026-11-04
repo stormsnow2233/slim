@@ -1,5 +1,9 @@
 package com.zaka.shijuan.data
 
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.setValue
+
 /**
  * 书源定义。
  * 规则语法（简化版「阅读」规则）：
@@ -60,6 +64,7 @@ data class Source(
 
 object Sources {
 
+    /** 内置源 */
     val ALL: List<Source> = listOf(
 
         // ─────────── 已实测可用 ───────────
@@ -413,7 +418,27 @@ object Sources {
         ),
     )
 
-    fun byId(id: String): Source? = ALL.find { it.id == id }
+    fun byId(id: String): Source? = all.firstOrNull { it.id == id }
+
+    // ─────────── 自定义源（用户自己加的，运行时注册） ───────────
+
+    /** 用户添加的源。改了之后 ++version，界面会跟着刷新 */
+    @Volatile
+    private var customs: List<Source> = emptyList()
+
+    /** Compose 里读它，自定义源增删改都能自动重组 */
+    var customVersion by mutableIntStateOf(0)
+        private set
+
+    val custom: List<Source> get() = customs
+
+    /** 内置 + 自定义，搜索、详情、阅读全都走这个 */
+    val all: List<Source> get() = if (customs.isEmpty()) ALL else ALL + customs
+
+    fun installCustom(list: List<Source>) {
+        customs = list
+        customVersion++
+    }
 
     /** 默认启用的源 id */
     val defaultEnabled: Set<String> = ALL.filter { it.enabledByDefault }.map { it.id }.toSet()

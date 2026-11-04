@@ -64,4 +64,10 @@ object Offline {
             ?: return true
         return probe(cm)
     }
+
+    /** 重新问一次系统，给提示条上的「重新检测」用 */
+    fun refresh(ctx: Context) {
+        val cm = ctx.getSystemService(Context.CONNECTIVITY_SERVICE) as? ConnectivityManager ?: return
+        _online.value = probe(cm)
+    }
 }

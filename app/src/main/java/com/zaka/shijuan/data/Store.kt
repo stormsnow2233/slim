@@ -165,24 +165,137 @@ class Store(context: Context) {
     }
 
     // ── 章节目录缓存（避免每次进详情都重新抓） ──
+    // 注意：key 带版本号。老版本解析规则有问题时存进来的「假目录」（比如把书页上的
+    // 推荐书单当章节）会一直命中缓存，改规则也修不好，只能换 key 让它自然失效。
+    private fun tocKey(bookUrl: String) = "toc_v2_${bookUrl.hashCode()}"
+
     fun saveToc(bookUrl: String, chapters: List<Chapter>) {
+        if (!tocSane(bookUrl, chapters)) return
         val arr = JSONArray()
         chapters.forEach {
             arr.put(JSONArray().apply { put(it.name); put(it.url) })
         }
-        sp.edit().putString("toc_${bookUrl.hashCode()}", arr.toString()).apply()
+        sp.edit().putString(tocKey(bookUrl), arr.toString()).apply()
+        // 章节 URL 单独留一份，删缓存时才知道该删哪些正文（目录丢了也能删干净）
+        sp.edit().putString(
+            "tocu_${bookUrl.hashCode()}",
+            JSONArray(chapters.map { it.url }).toString(),
+        ).apply()
+    }
+
+    // ── 书籍元数据（缓存管理要显示书名） ──
+    fun rememberBook(book: Book) {
+        if (book.url.isBlank()) return
+        runCatching {
+            sp.edit().putString("bm_${book.url.hashCode()}", book.toJson().toString()).apply()
+        }
+    }
+
+    /** 本地存过东西的书：元数据 + 书架 + 阅读记录，三处合起来 */
+    fun cachedNovelBooks(): List<Book> {
+        val out = LinkedHashMap<String, Book>()
+        sp.all.keys.filter { it.startsWith("bm_") }.forEach { k ->
+            val raw = sp.getString(k, null) ?: return@forEach
+            runCatching { Book.from(org.json.JSONObject(raw)) }.getOrNull()
+                ?.let { if (it.url.isNotBlank()) out[it.url] = it }
+        }
+        (shelf().map { it.book } + records().map { it.book }).forEach {
+            if (it.url.isNotBlank()) out.putIfAbsent(it.url, it)
+        }
+        return out.values.toList()
+    }
+
+    /** 一本书的正文缓存体检：存了几章、缺几章、有几章是空的、大约占多少 */
+    fun novelCacheEntry(book: Book): NovelCacheEntry {
+        val chs = loadToc(book.url)
+        val missing = ArrayList<Int>()
+        val broken = ArrayList<Int>()
+        var cached = 0
+        var bytes = 0L
+        chs.forEachIndexed { i, ch ->
+            val text = loadContent(ch.url)
+            when {
+                text == null -> missing += i
+                text.trim().length < 120 -> broken += i
+                else -> {
+                    cached++
+                    bytes += text.length.toLong()
+                }
+            }
+        }
+        return NovelCacheEntry(book, chs.size, cached, missing, broken, bytes)
+    }
+
+    /** 删掉一本书的全部本地内容：目录、正文、元数据 */
+    fun deleteNovelCache(book: Book) {
+        val e = sp.edit()
+        val urls = LinkedHashSet<String>()
+        urls += loadToc(book.url).map { it.url }
+        runCatching {
+            val raw = sp.getString("tocu_${book.url.hashCode()}", null)
+            if (!raw.isNullOrBlank()) {
+                val arr = JSONArray(raw)
+                (0 until arr.length()).forEach { urls += arr.getString(it) }
+            }
+        }
+        urls.filter { it.isNotBlank() }.forEach { e.remove("c_${it.hashCode()}") }
+        e.remove(tocKey(book.url))
+        e.remove("toc_${book.url.hashCode()}")
+        e.remove("tocu_${book.url.hashCode()}")
+        e.remove("bm_${book.url.hashCode()}")
+        e.apply()
+    }
+
+    /** 清空所有小说正文缓存（连目录和元数据一起） */
+    fun clearNovelCaches() {
+        val e = sp.edit()
+        sp.all.keys.filter {
+            it.startsWith("c_") || it.startsWith("bm_") || it.startsWith("toc_") ||
+                it.startsWith("tocu_") || it.startsWith("toc_v2_")
+        }.forEach { e.remove(it) }
+        e.apply()
     }
 
     fun loadToc(bookUrl: String): List<Chapter> {
-        val s = sp.getString("toc_${bookUrl.hashCode()}", null) ?: return emptyList()
+        decodeToc(sp.getString(tocKey(bookUrl), null))?.let {
+            if (tocSane(bookUrl, it)) return it
+        }
+        // 老版本的缓存：内容靠谱就顺手迁移过来，省得升级后离线书架被清空；
+        // 不靠谱（推荐书单当章节那种）就丢掉，让它重新抓。
+        val legacy = decodeToc(sp.getString("toc_${bookUrl.hashCode()}", null)) ?: return emptyList()
+        return if (tocSane(bookUrl, legacy)) {
+            saveToc(bookUrl, legacy)
+            legacy
+        } else emptyList()
+    }
+
+    private fun decodeToc(s: String?): List<Chapter>? {
+        if (s.isNullOrBlank()) return null
         return runCatching {
             val arr = JSONArray(s)
             (0 until arr.length()).map {
                 val a = arr.getJSONArray(it)
                 Chapter(a.getString(0), a.getString(1), it)
             }
-        }.getOrDefault(emptyList())
+        }.getOrNull()
     }
+
+    /**
+     * 目录是否像话：章节地址不能跟书籍页长一个样。
+     * 「书页 -> /b/123/，章节 -> /b/456/」这种就是把推荐书单当章节了，
+     * 打开当然看到的是别的书的简介。数字统一抹成 N 再比形态。
+     */
+    private fun tocSane(bookUrl: String, chapters: List<Chapter>): Boolean {
+        if (chapters.isEmpty()) return false
+        val bookShape = shapeOf(bookUrl)
+        if (bookShape.isBlank()) return true
+        val same = chapters.count { shapeOf(it.url) == bookShape }
+        return same * 2 < chapters.size
+    }
+
+    private fun shapeOf(url: String): String = runCatching {
+        java.net.URI(url).path.orEmpty().replace(Regex("\\d+"), "N").lowercase()
+    }.getOrDefault("")
 
     // ── 正文缓存（离线看过的章节） ──
     fun saveContent(url: String, text: String) {
@@ -235,6 +348,28 @@ class Store(context: Context) {
         if (on) cur.add(id) else cur.remove(id)
         sp.edit().putString("enabled_sources", JSONArray(cur.toList()).toString()).apply()
         return cur
+    }
+
+    // ── 网络代理 ──
+    fun proxy(): Net.ProxyCfg = Net.ProxyCfg(
+        enabled = sp.getBoolean("proxy_on", false),
+        socks = sp.getBoolean("proxy_socks", false),
+        host = sp.getString("proxy_host", "") ?: "",
+        port = sp.getInt("proxy_port", 0),
+        user = sp.getString("proxy_user", "") ?: "",
+        pass = sp.getString("proxy_pass", "") ?: "",
+    )
+
+    fun saveProxy(cfg: Net.ProxyCfg) {
+        sp.edit()
+            .putBoolean("proxy_on", cfg.enabled)
+            .putBoolean("proxy_socks", cfg.socks)
+            .putString("proxy_host", cfg.host.trim())
+            .putInt("proxy_port", cfg.port)
+            .putString("proxy_user", cfg.user)
+            .putString("proxy_pass", cfg.pass)
+            .apply()
+        Net.setProxy(cfg.copy(host = cfg.host.trim()))
     }
 
     // ── 阅读设置 ──

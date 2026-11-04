@@ -107,6 +107,10 @@ object Rules {
         return out
     }
 
+    /** 只数列表项有多少个 —— 用来区分「站点改版导致取不到字段」和「本来就搜不到」 */
+    fun countList(root: Element, listSel: String): Int =
+        if (listSel.isBlank()) 0 else runCatching { pickAll(root, listSel).size }.getOrDefault(0)
+
     fun absUrl(base: String, url: String): String {
         if (url.isBlank()) return ""
         if (url.startsWith("http://") || url.startsWith("https://")) return url

@@ -87,6 +87,12 @@ const val STATE_PAUSED = "paused"
 const val STATE_DONE = "done"
 const val STATE_ERROR = "error"
 
+/** 一话完整下完的标记文件（存在即代表这一话页数齐了） */
+const val DONE_MARK = ".done"
+
+/** 缓存目录里存漫画信息的文件名 */
+const val META_FILE = "meta.json"
+
 /**
  * 漫画整本缓存。
  *
@@ -117,6 +123,9 @@ object ComicDownloader {
 
     fun dirOf(comic: Comic): File = File(ctx?.filesDir ?: File("."), "comics/" + keyOf(comic))
 
+    /** 所有漫画缓存的根目录 */
+    fun rootDir(): File = File(ctx?.filesDir ?: File("."), "comics")
+
     fun taskOf(comic: Comic): DownloadTask? = tasks.firstOrNull { it.key == keyOf(comic) }
 
     fun isRunning(comic: Comic): Boolean = taskOf(comic)?.state == STATE_RUNNING
@@ -135,10 +144,21 @@ object ComicDownloader {
         val dir = File(dirOf(comic), "ch$chapterIndex")
         if (!dir.exists()) return emptyList()
         return dir.listFiles()
-            ?.filter { it.isFile && it.length() > 1024 }
+            ?.filter { it.isFile && it.length() > 256 && it.nameWithoutExtension.toIntOrNull() != null }
             ?.sortedBy { it.nameWithoutExtension.toIntOrNull() ?: 0 }
             ?: emptyList()
     }
+
+    /** 这一话是不是完整下完过（有完成标记）。没标记但有图，说明是断在半路的老缓存 */
+    fun isChapterComplete(comic: Comic, chapterIndex: Int): Boolean =
+        File(File(dirOf(comic), "ch$chapterIndex"), DONE_MARK).exists()
+
+    /** 本地这一话存了几张有效图 */
+    fun pageCount(comic: Comic, chapterIndex: Int): Int = localPages(comic, chapterIndex).size
+
+    /** 缓存目录里所有存过图片的话（下标集合） */
+    fun cachedIndexes(comic: Comic): Set<Int> =
+        cachedChapters(comic)
 
     /**
      * 章节表跟着缓存一起存本地。
@@ -156,8 +176,17 @@ object ComicDownloader {
                 )
             }
             File(dir, "chapters.json").writeText(arr.toString())
+            // 书名、封面、来源一起存下来：离线时详情页、缓存管理不联网也知道这是哪本
+            runCatching { File(dir, META_FILE).writeText(comic.toJson().toString()) }
         }
     }
+
+    /** 从缓存目录里的 meta.json 还原 Comic；老缓存没存过就返回 null */
+    fun comicOfDir(dir: File): Comic? = runCatching {
+        val f = File(dir, META_FILE)
+        if (!f.exists()) return null
+        Comic.from(JSONObject(f.readText()))
+    }.getOrNull()
 
     fun localChapters(comic: Comic): List<ComicChapter> = runCatching {
         val f = File(dirOf(comic), "chapters.json")
@@ -175,13 +204,17 @@ object ComicDownloader {
         }
     }.getOrDefault(emptyList())
 
-    /** 开始缓存整本；已经在跑或已完成就不重复开 */
-    fun start(comic: Comic, chapters: List<ComicChapter>) {
+    /**
+     * 开始缓存整本；已经在跑或已完成就不重复开。
+     * force = 重新检查补齐：已完成的话有完成标记会秒过，只补缺的那些。
+     */
+    fun start(comic: Comic, chapters: List<ComicChapter>, force: Boolean = false) {
         if (chapters.isEmpty()) return
         saveChapters(comic, chapters)
         val key = keyOf(comic)
         val exist = tasks.firstOrNull { it.key == key }
-        if (exist != null && (exist.state == STATE_RUNNING || exist.state == STATE_DONE)) return
+        if (exist != null && exist.state == STATE_RUNNING) return
+        if (!force && exist != null && exist.state == STATE_DONE) return
 
         paused[key] = false
         cancelled[key] = false
@@ -190,9 +223,10 @@ object ComicDownloader {
             comic = comic,
             chapters = chapters,
             state = STATE_RUNNING,
-            doneChapters = 0,
-            pagesDone = 0,
-            createdAt = System.currentTimeMillis(),
+            doneChapters = if (force) 0 else 0,
+            pagesDone = if (force) 0 else exist?.pagesDone ?: 0,
+            bytes = exist?.bytes ?: 0,
+            createdAt = exist?.createdAt ?: System.currentTimeMillis(),
         )
         upsert(task)
         launchWorker(task)
@@ -225,6 +259,18 @@ object ComicDownloader {
     /** 删掉缓存但保留任务记录 */
     fun clearFiles(comic: Comic) {
         runCatching { dirOf(comic).deleteRecursively() }
+    }
+
+    /** 清空所有漫画缓存和任务记录（缓存管理里的「全部删除」） */
+    fun clearAll() {
+        jobs.keys.toList().forEach { k ->
+            cancelled[k] = true
+            jobs[k]?.cancel()
+            jobs.remove(k)
+        }
+        runCatching { rootDir().deleteRecursively() }
+        tasks = emptyList()
+        persist()
     }
 
     private fun launchWorker(task: DownloadTask) {
@@ -274,10 +320,20 @@ object ComicDownloader {
             persist()
         }
 
+        // 补齐时秒过的话不会回调进度，完成时按磁盘实际数量校正一次
+        val realPages = runCatching {
+            task.chapters.indices.sumOf { idx -> localPages(comic, idx).size }
+        }.getOrDefault(pages)
+        val realBytes = runCatching {
+            dirOf(comic).walkTopDown().filter { it.isFile }.sumOf { it.length() }
+        }.getOrDefault(bytes)
+
         update(task.key) {
             it.copy(
                 state = STATE_DONE,
                 doneChapters = task.chapters.size,
+                pagesDone = realPages,
+                bytes = realBytes,
                 currentChapter = "",
             )
         }
@@ -293,6 +349,10 @@ object ComicDownloader {
         taskKey: String,
         onProgress: (bytes: Long, pages: Int) -> Unit,
     ): Int {
+        // 这一话完整下过、带完成标记 → 直接跳过，补齐时不用再走一次网络
+        val doneMark = File(File(dirOf(comic), "ch$chapterIndex"), DONE_MARK)
+        if (doneMark.exists()) return doneMark.readText().toIntOrNull()?.coerceAtLeast(1) ?: 1
+
         val pages = runCatching { ComicRepo.pages(comic, chapter) }.getOrNull() ?: return 0
         if (pages.images.isEmpty()) return 0
         val dir = File(dirOf(comic), "ch$chapterIndex")
@@ -319,6 +379,10 @@ object ComicDownloader {
         }
         // 一页都没下下来的话，把空目录收掉，免得显示成已缓存
         if (ok == 0) runCatching { dir.deleteRecursively() }
+        // 整话的图都齐了才盖完成章，断在半路的留着下次补
+        if (ok > 0 && ok >= pages.images.size) {
+            runCatching { File(dir, DONE_MARK).writeText(ok.toString()) }
+        }
         return ok
     }
 

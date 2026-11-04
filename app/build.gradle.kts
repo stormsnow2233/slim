@@ -7,13 +7,14 @@ plugins {
 android {
     namespace = "com.zaka.shijuan"
     compileSdk = 35
+    buildToolsVersion = "35.0.0"
 
     defaultConfig {
         applicationId = "com.zaka.shijuan"
         minSdk = 24
         targetSdk = 35
-        versionCode = 28
-        versionName = "2.8"
+        versionCode = 32
+        versionName = "2.12"
         resourceConfigurations += listOf("zh", "zh-rCN")
     }
 
@@ -74,4 +75,6 @@ dependencies {
     implementation("io.coil-kt:coil-compose:2.7.0")
     debugImplementation("androidx.compose.ui:ui-tooling")
     testImplementation("junit:junit:4.13.2")
+    // 单元测试跑在 JVM 上，Android 自带的 org.json 是空壳，这里补一份真实现
+    testImplementation("org.json:json:20240303")
 }

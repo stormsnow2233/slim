@@ -51,6 +51,7 @@ fun ReaderScreen(
     startIndex: Int,
     store: Store,
     onBack: () -> Unit,
+    onSwitchBook: (Book) -> Unit = {},
     onProgress: (Int, String, Float, Int) -> Unit,
 ) {
     var index by remember { mutableIntStateOf(startIndex.coerceIn(0, maxOf(0, chapters.size - 1))) }
@@ -60,6 +61,9 @@ fun ReaderScreen(
     var showBar by remember { mutableStateOf(false) }
     var showSettings by remember { mutableStateOf(false) }
     var showToc by remember { mutableStateOf(false) }
+    // 源站这本看不了时（章节页出错/收费），一键搜同名书换源
+    var altLoading by remember { mutableStateOf(false) }
+    var altBooks by remember { mutableStateOf<List<Book>>(emptyList()) }
     var prefs by remember { mutableStateOf(store.readerPrefs()) }
 
     // 章内分页状态
@@ -90,7 +94,7 @@ fun ReaderScreen(
                 content = Content(ch.name, cached)
                 loading = false
             } else if (src == null) {
-                error = "书源不存在"; loading = false
+                error = "这个书源已被删除或停用，换个源看这本"; loading = false
             } else {
                 BookRepo.getChapter(src, ch)
                     .onSuccess {
@@ -226,6 +230,41 @@ fun ReaderScreen(
                     Spacer(Modifier.height(12.dp))
                     OutlinedButton(onClick = { if (index < chapters.size - 1) index++ }) {
                         Text("换下一章")
+                    }
+                    Spacer(Modifier.height(12.dp))
+                    if (altBooks.isEmpty()) {
+                        TextButton(enabled = !altLoading, onClick = {
+                            altLoading = true
+                            scope.launch {
+                                val key = book.name.trim().take(24)
+                                val found = withContext(Dispatchers.IO) {
+                                    val on = store.enabledSources()
+                                    val srcs = Sources.all.filter { it.id in on && it.id != book.sourceId }
+                                    val got = mutableListOf<Book>()
+                                    BookRepo.searchAll(srcs, key) { r ->
+                                        if (r.ok) r.books
+                                            .filter { it.name.replace(Regex("\\s"), "").contains(key.take(6).replace(Regex("\\s"), ""), true) }
+                                            .take(2).let { got.addAll(it) }
+                                    }
+                                    got.distinctBy { it.sourceId + it.url }.take(5)
+                                }
+                                altBooks = found
+                                altLoading = false
+                            }
+                        }) {
+                            Text(if (altLoading) "正在找其它源…" else "换个源看这本", fontSize = 12.sp)
+                        }
+                    } else {
+                        Text("别的源也收着这本：", color = theme.text.copy(alpha = 0.5f), fontSize = 11.sp)
+                        Spacer(Modifier.height(6.dp))
+                        altBooks.forEach { b ->
+                            TextButton(onClick = { onSwitchBook(b) }) {
+                                Text(
+                                    "《${b.name}》· ${Sources.byId(b.sourceId)?.name ?: b.sourceId}",
+                                    fontSize = 12.sp, maxLines = 1,
+                                )
+                            }
+                        }
                     }
                 }
 

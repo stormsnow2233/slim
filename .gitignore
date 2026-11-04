@@ -7,3 +7,9 @@ build/
 captures/
 .externalNativeBuild
 .cxx
+
+# 构建产物与安装包不进版本库
+*.apk
+*.apk.idsig
+*.aab
+output/

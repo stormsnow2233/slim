@@ -59,7 +59,7 @@ fun SearchScreen(
     val focusRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
 
-    val activeSources = remember(enabled) { Sources.ALL.filter { it.id in enabled } }
+    val activeSources = remember(enabled, Sources.customVersion) { Sources.all.filter { it.id in enabled } }
 
     fun doSearch(k: String) {
         val key = k.trim()
@@ -84,6 +84,20 @@ fun SearchScreen(
         }
     }
 
+    /** 单个源单独重搜：哪个不通点哪个，不用整轮重来 */
+    fun retrySource(src: Source) {
+        if (running || searched.isBlank()) return
+        running = true
+        scope.launch {
+            val r = withContext(Dispatchers.IO) {
+                runCatching { BookRepo.searchSource(src, searched) }
+                    .getOrElse { SourceResult(src.id, src.name, false, error = Net.friendlyError(it)) }
+            }
+            results = results + (src.id to r)
+            running = false
+        }
+    }
+
     // 聚合
     val merged = remember(results, filterSource) {
         val pool = results.values
@@ -103,6 +117,8 @@ fun SearchScreen(
 
     val okCount = results.values.count { it.ok }
     val failCount = results.values.count { !it.ok }
+    val noHitCount = results.values.count { !it.ok && isNoHit(it.error) }
+    val errCount = failCount - noHitCount
     val totalBooks = results.values.filter { it.ok }.sumOf { it.books.size }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
@@ -186,7 +202,8 @@ fun SearchScreen(
                     Text(
                         buildString {
                             append("$totalBooks 个结果 · 聚合 ${merged.size} 本")
-                            if (failCount > 0) append(" · $failCount 源无响应")
+                            if (noHitCount > 0) append(" · $noHitCount 源没这本书")
+                            if (errCount > 0) append(" · $errCount 源没连上")
                         },
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -215,6 +232,8 @@ fun SearchScreen(
                 ) {
                     activeSources.forEach { src ->
                         val st = results[src.id]
+                        val failed = st != null && !st.ok
+                        val noHit = failed && isNoHit(st!!.error)
                         Row(
                             Modifier.fillMaxWidth().padding(vertical = 3.dp),
                             verticalAlignment = Alignment.CenterVertically,
@@ -227,6 +246,7 @@ fun SearchScreen(
                                         when {
                                             st == null -> MaterialTheme.colorScheme.outline
                                             st.ok -> Color_OK
+                                            noHit -> MaterialTheme.colorScheme.outline
                                             else -> MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
                                         }
                                     )
@@ -240,11 +260,23 @@ fun SearchScreen(
                                     else -> st.error
                                 },
                                 style = MaterialTheme.typography.labelMedium,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                color = if (failed && !noHit) MaterialTheme.colorScheme.error
+                                else MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f),
                             )
+                            if (failed) {
+                                Text(
+                                    "重试",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { retrySource(src) }
+                                        .padding(horizontal = 8.dp, vertical = 2.dp),
+                                )
+                            }
                         }
                     }
                 }
@@ -421,4 +453,8 @@ private fun normName(s: String): String =
         .replace(Regex("[《》\"'·]"), "")
         .lowercase()
 
-private fun srcOrder(id: String): Int = Sources.ALL.indexOfFirst { it.id == id }.let { if (it < 0) 99 else it }
+private fun srcOrder(id: String): Int = Sources.all.indexOfFirst { it.id == id }.let { if (it < 0) 99 else it }
+
+/** 「这个站没这本书」不算故障，别跟连不上混成一个红叉 */
+private fun isNoHit(err: String): Boolean =
+    err.contains("没搜到") || err.contains("没有这本书")

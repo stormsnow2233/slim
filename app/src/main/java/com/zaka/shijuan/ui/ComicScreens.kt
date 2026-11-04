@@ -76,6 +76,7 @@ fun ComicScreen(
     onOpen: (Comic) -> Unit,
     onOpenDrawer: () -> Unit = {},
     offline: Boolean = false,
+    onOpenCache: () -> Unit = {},
 ) {
     var query by remember { mutableStateOf("") }
     var list by remember { mutableStateOf<List<Comic>>(emptyList()) }
@@ -84,7 +85,11 @@ fun ComicScreen(
     var error by remember { mutableStateOf("") }
     var tick by remember { mutableStateOf(0) }
 
-    val records = remember(tick, store.comicTick) { store.comicRecords() }
+    val records = remember(tick, store.comicTick, offline) {
+        val all = store.comicRecords()
+        // 离线时「继续看」只留本地有图的，点进去别白屏
+        if (offline) all.filter { ComicDownloader.cachedChapters(it.comic).isNotEmpty() } else all
+    }
 
     // 顶部三个入口：探索 / 书架 / 缓存
     var tab by remember(offline) { mutableStateOf(if (offline) 1 else 0) }
@@ -226,6 +231,12 @@ fun ComicScreen(
                             fontSize = 12.sp,
                         )
                     },
+                )
+            } else {
+                FilterChip(
+                    selected = tab == 2,
+                    onClick = { tab = 2; shelfTick++ },
+                    label = { Text("缓存管理", fontSize = 12.sp) },
                 )
             }
         }
@@ -458,6 +469,7 @@ fun ComicScreen(
             DownloadPanel(
                 tasks = dlTasks,
                 onOpenComic = onOpen,
+                onOpenCache = onOpenCache,
             )
         }
     }
@@ -557,6 +569,7 @@ private fun ComicShelfGrid(
 private fun DownloadPanel(
     tasks: List<DownloadTask>,
     onOpenComic: (Comic) -> Unit,
+    onOpenCache: () -> Unit = {},
 ) {
     if (tasks.isEmpty()) {
         Box(Modifier.fillMaxSize().padding(32.dp), contentAlignment = Alignment.Center) {
@@ -568,6 +581,8 @@ private fun DownloadPanel(
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
+                Spacer(Modifier.height(14.dp))
+                OutlinedButton(onClick = onOpenCache) { Text("缓存管理 · 看磁盘上存了什么", fontSize = 12.sp) }
             }
         }
         return
@@ -577,6 +592,15 @@ private fun DownloadPanel(
         verticalArrangement = Arrangement.spacedBy(10.dp),
         modifier = Modifier.fillMaxSize(),
     ) {
+        item {
+            OutlinedButton(
+                onClick = onOpenCache,
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp),
+            ) {
+                Text("缓存管理 · 占用 / 体检 / 删除", fontSize = 12.sp)
+            }
+        }
         items(tasks, key = { it.key }) { t ->
             Card(shape = RoundedCornerShape(14.dp)) {
                 Column(Modifier.padding(12.dp)) {
@@ -655,6 +679,7 @@ fun ComicDetailScreen(
     var chapters by remember { mutableStateOf<List<ComicChapter>>(emptyList()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf("") }
+    var offlineNote by remember { mutableStateOf("") }
     var tick by remember { mutableStateOf(0) }
     var shelfTick by remember { mutableStateOf(0) }
     val ctx = LocalContext.current
@@ -662,14 +687,18 @@ fun ComicDetailScreen(
     LaunchedEffect(comic.url, tick) {
         loading = true
         error = ""
-        // 离线：网络拉不动，本地缓存过就照常打开，没缓存就直说
+        offlineNote = ""
+        // 先把本地目录摆出来：断网、站点抽风都能马上点进去看存过的话
+        val local = withContext(Dispatchers.IO) { ComicDownloader.localChapters(comic) }
+        if (local.isNotEmpty()) {
+            chapters = local
+            loading = false
+        }
         if (!Offline.isOnline(ctx)) {
-            val local = ComicDownloader.localChapters(comic)
-            if (local.isNotEmpty()) {
-                chapters = local
-                error = ""
-            } else {
+            if (local.isEmpty()) {
                 error = "离线模式：这本还没缓存过，联网后再试"
+            } else {
+                offlineNote = "离线模式 · 用的是本地存下来的话数目录"
             }
             loading = false
             return@LaunchedEffect
@@ -682,22 +711,37 @@ fun ComicDetailScreen(
             }
         }.onSuccess { (d, c) ->
             full = d
-            chapters = c
-            if (c.isEmpty()) error = "没解析到话数，可能站点结构变了"
-        }.onFailure {
-            val local = ComicDownloader.localChapters(comic)
-            if (local.isNotEmpty()) {
-                chapters = local
+            if (c.isNotEmpty()) {
+                chapters = c
                 error = ""
+                offlineNote = ""
+            } else if (local.isEmpty()) {
+                error = "没解析到话数，可能站点结构变了"
             } else {
+                offlineNote = "站点这次没给出目录，先用本地存下来的话数"
+            }
+        }.onFailure {
+            if (local.isEmpty()) {
                 error = it.message ?: "加载失败"
+            } else {
+                offlineNote = "网络没通，先用本地存下来的话数"
             }
         }
         loading = false
     }
 
+    // 哪几话本地真的有图（离线能直接看）
+    val cachedSet = remember(comic.url, chapters.size, tick) {
+        runCatching { ComicDownloader.cachedChapters(full) }.getOrDefault(emptySet())
+    }
+
     val record = remember(comic.url, chapters.size, tick) { store.comicRecordOf(comic) }
-    val startIdx = (record?.chapterIndex ?: 0).coerceIn(0, (chapters.size - 1).coerceAtLeast(0))
+    val startIdx = run {
+        val base = (record?.chapterIndex ?: 0).coerceIn(0, (chapters.size - 1).coerceAtLeast(0))
+        // 离线时上次看到的那话要是没存过，就近落到已缓存的话上，别点进去空欢喜
+        if (Offline.isOnline(ctx) || cachedSet.isEmpty() || base in cachedSet) base
+        else cachedSet.filter { it <= base }.maxOrNull() ?: cachedSet.min()
+    }
 
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
@@ -800,16 +844,20 @@ fun ComicDetailScreen(
                                         else -> ComicDownloader.start(full, chapters)
                                     }
                                 },
-                                enabled = chapters.isNotEmpty() && !loading,
+                                enabled = chapters.isNotEmpty() && !loading && Offline.isOnline(ctx),
                                 shape = RoundedCornerShape(10.dp),
                                 contentPadding = PaddingValues(horizontal = 12.dp),
                             ) {
-                                val label = when (dlTask?.state) {
-                                    STATE_RUNNING -> "暂停 ${dlTask.doneChapters}/${dlTask.total}"
-                                    STATE_PAUSED -> "继续缓存"
-                                    STATE_ERROR -> "重试缓存"
-                                    STATE_DONE -> "已缓存完"
-                                    else -> "缓存整本"
+                                val online = Offline.isOnline(ctx)
+                                val label = when {
+                                    !online -> "离线不能缓存"
+                                    else -> when (dlTask?.state) {
+                                        STATE_RUNNING -> "暂停 ${dlTask.doneChapters}/${dlTask.total}"
+                                        STATE_PAUSED -> "继续缓存"
+                                        STATE_ERROR -> "重试缓存"
+                                        STATE_DONE -> "已缓存完"
+                                        else -> "缓存整本"
+                                    }
                                 }
                                 if (dlTask?.state == STATE_RUNNING) {
                                     CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
@@ -846,6 +894,16 @@ fun ComicDetailScreen(
                     if (loading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
                 }
             }
+            if (offlineNote.isNotBlank()) {
+                item {
+                    Text(
+                        offlineNote,
+                        fontSize = 11.sp,
+                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                        modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
+                    )
+                }
+            }
             if (error.isNotBlank()) {
                 item {
                     Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
@@ -857,10 +915,22 @@ fun ComicDetailScreen(
             }
             items(chapters, key = { it.url }) { ch ->
                 val cur = ch.index == startIdx && record != null
+                val saved = ch.index in cachedSet
                 Row(
                     Modifier
                         .fillMaxWidth()
-                        .clickable { onRead(full, chapters, ch.index) }
+                        .clickable {
+                            val online = Offline.isOnline(ctx)
+                            if (!online && !saved) {
+                                android.widget.Toast.makeText(
+                                    ctx,
+                                    "离线模式：这一话没缓存过，联网后再看",
+                                    android.widget.Toast.LENGTH_SHORT,
+                                ).show()
+                            } else {
+                                onRead(full, chapters, ch.index)
+                            }
+                        }
                         .padding(horizontal = 20.dp, vertical = 13.dp),
                     verticalAlignment = Alignment.CenterVertically,
                 ) {
@@ -871,8 +941,17 @@ fun ComicDetailScreen(
                         overflow = TextOverflow.Ellipsis,
                         color = if (cur) MaterialTheme.colorScheme.primary
                         else MaterialTheme.colorScheme.onBackground,
+                        modifier = Modifier.weight(1f, fill = false),
                     )
                     Spacer(Modifier.weight(1f))
+                    if (saved) {
+                        Text(
+                            "已存",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.primary.copy(alpha = 0.8f),
+                            modifier = Modifier.padding(start = 6.dp),
+                        )
+                    }
                     if (cur) TinyTag("看到这")
                 }
             }
@@ -977,15 +1056,24 @@ fun ComicReaderScreen(
         error = ""
         zoomScale = 1f
         zoomOffset = androidx.compose.ui.geometry.Offset.Zero
-        // 本地缓存优先：这一话整话存过就直接读文件，不走网络
+        // 本地缓存优先：这一话存过就直接读文件，不碰网络
         val local = runCatching { ComicDownloader.localPages(comic, index) }.getOrDefault(emptyList())
-        if (local.size >= 2) {
+        val online = Offline.isOnline(ctx)
+        val completeLocal = local.isNotEmpty() && ComicDownloader.isChapterComplete(comic, index)
+        if (local.isNotEmpty() && (completeLocal || !online)) {
             images = local.map { "file://" + it.absolutePath }
             fromCache = true
             loading = false
             store.putComicRecord(comic, index, ch.name)
             runCatching { listState.scrollToItem(0) }
-        runCatching { pagerState.scrollToPage(0) }
+            runCatching { pagerState.scrollToPage(0) }
+            return@LaunchedEffect
+        }
+        if (!online) {
+            // 断网又没存过：别去撞网络，直接说清楚
+            images = emptyList()
+            error = "离线模式：这一话没缓存过，联网后再看"
+            loading = false
             return@LaunchedEffect
         }
         fromCache = false
@@ -994,7 +1082,15 @@ fun ComicReaderScreen(
                 images = it.images
                 if (it.images.isNotEmpty()) store.putComicRecord(comic, index, ch.name)
             }
-            .onFailure { error = it.message ?: "这一话加载失败" }
+            .onFailure {
+                // 网络没拿到但本地有半话的图：先给用户看，别白屏
+                if (local.isNotEmpty()) {
+                    images = local.map { f -> "file://" + f.absolutePath }
+                    fromCache = true
+                } else {
+                    error = it.message ?: "这一话加载失败"
+                }
+            }
         loading = false
         runCatching { listState.scrollToItem(0) }
         runCatching { pagerState.scrollToPage(0) }

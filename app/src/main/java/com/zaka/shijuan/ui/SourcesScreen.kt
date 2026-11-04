@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.NetworkCheck
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -36,12 +37,23 @@ fun SourcesScreen(
     enabled: Set<String>,
     onToggle: (String, Boolean) -> Unit,
     onOpenDrawer: () -> Unit = {},
+    onAddSource: () -> Unit = {},
+    onEditSource: (Source) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
     var checks by remember { mutableStateOf<Map<String, SourceResult>>(emptyMap()) }
     var checking by remember { mutableStateOf(false) }
 
-    val groups = remember { Sources.ALL.groupBy { it.group } }
+    // 自定义源增删改后要跟着刷新
+    val customVersion = Sources.customVersion
+    val allSources = remember(customVersion) { Sources.all }
+    val customCount = remember(customVersion) { Sources.custom.size }
+
+    val groups = remember(customVersion) {
+        val builtin = Sources.ALL.groupBy { it.group }
+        if (Sources.custom.isEmpty()) builtin
+        else linkedMapOf("我的书源" to Sources.custom) + builtin
+    }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
         Row(
@@ -55,9 +67,16 @@ fun SourcesScreen(
             Column(Modifier.weight(1f)) {
                 Text("书源", style = MaterialTheme.typography.headlineLarge)
                 Text(
-                    "已启用 ${enabled.size} / ${Sources.ALL.size}",
+                    "已启用 ${enabled.size} / ${allSources.size}",
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            IconButton(onClick = onAddSource) {
+                Icon(
+                    Icons.Rounded.Add,
+                    contentDescription = "添加书源",
+                    tint = MaterialTheme.colorScheme.primary,
                 )
             }
             FilledTonalButton(
@@ -65,7 +84,7 @@ fun SourcesScreen(
                     if (checking) return@FilledTonalButton
                     checking = true
                     scope.launch {
-                        val targets = Sources.ALL.filter { it.apiKind != "zlib" }
+                        val targets = allSources.filter { it.apiKind != "zlib" }
                         val got = withContext(Dispatchers.IO) {
                             coroutineScope {
                                 targets.map { s ->
@@ -112,6 +131,7 @@ fun SourcesScreen(
                         on = src.id in enabled,
                         check = checks[src.id],
                         onToggle = { onToggle(src.id, it) },
+                        onEdit = if (src.status == "custom") ({ onEditSource(src) }) else null,
                     )
                 }
             }
@@ -119,7 +139,8 @@ fun SourcesScreen(
                 Spacer(Modifier.height(8.dp))
                 Text(
                     "提示：标「已实测」的源在当前网络下验证过可用；标「国内直连」的源只对中国大陆网络开放，" +
-                        "海外网络会打不开。点「全部体检」可以自己测一遍，哪张卡转圈失败就换别的源。",
+                        "海外网络会打不开。点「全部体检」可以自己测一遍，哪张卡转圈失败就换别的源。\n" +
+                        "右上角「+」可以自己加源：只填名称和网址也行，认不出来会自动按通用结构识别。",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 18.sp,
@@ -136,6 +157,7 @@ private fun SourceCard(
     on: Boolean,
     check: SourceResult?,
     onToggle: (Boolean) -> Unit,
+    onEdit: (() -> Unit)? = null,
 ) {
     Surface(
         shape = RoundedCornerShape(14.dp),
@@ -154,6 +176,7 @@ private fun SourceCard(
                         "verified" -> TinyTag("已实测", androidx.compose.ui.graphics.Color(0xFF4C7A54))
                         "local" -> TinyTag("国内直连", MaterialTheme.colorScheme.primary)
                         "api" -> TinyTag("接口", androidx.compose.ui.graphics.Color(0xFF456B8A))
+                        "custom" -> TinyTag("自定义", androidx.compose.ui.graphics.Color(0xFF8A5A2B))
                         else -> {}
                     }
                 }
@@ -185,6 +208,12 @@ private fun SourceCard(
                         )
                     }
                 }
+            }
+            if (onEdit != null) {
+                TextButton(
+                    onClick = onEdit,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                ) { Text("编辑", fontSize = 12.sp) }
             }
             Switch(checked = on, onCheckedChange = onToggle)
         }

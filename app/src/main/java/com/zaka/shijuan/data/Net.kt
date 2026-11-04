@@ -1,12 +1,17 @@
 package com.zaka.shijuan.data
 
+import okhttp3.Authenticator
 import okhttp3.ConnectionPool
+import okhttp3.Credentials
 import okhttp3.Dispatcher
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
+import okhttp3.Route
 import java.io.ByteArrayOutputStream
+import java.net.InetSocketAddress
+import java.net.Proxy
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.TimeUnit
 
@@ -26,22 +31,75 @@ object Net {
         maxRequestsPerHost = 8
     }
 
-    private val client: OkHttpClient = OkHttpClient.Builder()
-        .dispatcher(dispatcher)
-        .connectionPool(ConnectionPool(28, 6, TimeUnit.MINUTES))
-        .connectTimeout(5, TimeUnit.SECONDS)
-        .readTimeout(12, TimeUnit.SECONDS)
-        .writeTimeout(10, TimeUnit.SECONDS)
-        .callTimeout(16, TimeUnit.SECONDS)
-        .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
-        .followRedirects(true)
-        .followSslRedirects(true)
-        .retryOnConnectionFailure(true)
-        .build()
+    /** 代理配置：填了就走它，没填就直连 */
+    data class ProxyCfg(
+        val enabled: Boolean = false,
+        val socks: Boolean = false,
+        val host: String = "",
+        val port: Int = 0,
+        val user: String = "",
+        val pass: String = "",
+    ) {
+        val usable: Boolean get() = enabled && host.isNotBlank() && port in 1..65535
+    }
 
+    @Volatile private var proxyCfg = ProxyCfg()
+
+    @Volatile private var client: OkHttpClient = buildClient(ProxyCfg())
+
+    /** 改了代理立刻换新连接，不用重启 App */
+    fun setProxy(cfg: ProxyCfg) {
+        if (cfg == proxyCfg) return
+        proxyCfg = cfg
+        client = buildClient(cfg)
+        pageCache.clear()
+        bestBase.clear()
+    }
+
+    fun proxy(): ProxyCfg = proxyCfg
+
+    private fun buildClient(cfg: ProxyCfg): OkHttpClient {
+        val b = OkHttpClient.Builder()
+            .dispatcher(dispatcher)
+            .connectionPool(ConnectionPool(28, 6, TimeUnit.MINUTES))
+            .connectTimeout(6, TimeUnit.SECONDS)
+            .readTimeout(14, TimeUnit.SECONDS)
+            .writeTimeout(10, TimeUnit.SECONDS)
+            .callTimeout(20, TimeUnit.SECONDS)
+            .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .retryOnConnectionFailure(true)
+        if (cfg.usable) {
+            val type = if (cfg.socks) Proxy.Type.SOCKS else Proxy.Type.HTTP
+            b.proxy(Proxy(type, InetSocketAddress.createUnresolved(cfg.host, cfg.port)))
+            if (cfg.user.isNotBlank() && !cfg.socks) {
+                val cred = Credentials.basic(cfg.user, cfg.pass)
+                b.proxyAuthenticator(object : Authenticator {
+                    override fun authenticate(route: Route?, response: okhttp3.Response): Request? =
+                        if (response.request.header("Proxy-Authorization") != null) null
+                        else response.request.newBuilder()
+                            .header("Proxy-Authorization", cred).build()
+                })
+            }
+        }
+        return b.build()
+    }
+
+    /** 桌面 UA：Cloudflare 对移动 UA 打分更低，很多站会直接 403 */
     private const val UA =
-        "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
-            "Chrome/122.0.0.0 Mobile Safari/537.36"
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
+            "Chrome/122.0.0.0 Safari/537.36"
+
+    private val baseHeaders = linkedMapOf(
+        "User-Agent" to UA,
+        "Accept" to "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
+        "Accept-Language" to "zh-CN,zh;q=0.9,en;q=0.8",
+        "sec-ch-ua" to "\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\"",
+        "sec-ch-ua-mobile" to "?0",
+        "sec-ch-ua-platform" to "\"Windows\"",
+        "Upgrade-Insecure-Requests" to "1",
+    )
 
     data class Resp(val ok: Boolean, val code: Int, val body: String, val error: String = "", val via: String = "")
 
@@ -94,10 +152,14 @@ object Net {
     ): Resp {
         val key = "G|$url|$charset"
         if (useCache) pageCache[key]?.let { return it }
-        val builder = Request.Builder().url(safeUrl(url)).header("User-Agent", UA)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-            .header("Connection", "keep-alive")
+        val builder = Request.Builder().url(safeUrl(url))
+        baseHeaders.forEach { (k, v) -> builder.header(k, v) }
+        builder.header("Connection", "keep-alive")
+        // 这几个头是 Cloudflare 判「真人浏览器」的重要依据，缺了容易被 403
+        builder.header("Sec-Fetch-Dest", "document")
+        builder.header("Sec-Fetch-Mode", "navigate")
+        builder.header("Sec-Fetch-Site", if (referer.isBlank()) "none" else "same-origin")
+        builder.header("Sec-Fetch-User", "?1")
         if (referer.isNotBlank()) builder.header("Referer", referer)
         headers.forEach { (k, v) -> builder.header(k, v) }
         val resp = exec(builder.build(), charset)
@@ -115,11 +177,13 @@ object Net {
         val fb = FormBody.Builder()
         body.forEach { (k, v) -> fb.add(k, v) }
         val builder = Request.Builder().url(safeUrl(url))
-            .header("User-Agent", UA)
-            .header("Accept", "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8")
-            .header("Accept-Language", "zh-CN,zh;q=0.9,en;q=0.8")
-            .header("Content-Type", "application/x-www-form-urlencoded")
-            .post(fb.build())
+        baseHeaders.forEach { (k, v) -> builder.header(k, v) }
+        builder.header("Content-Type", "application/x-www-form-urlencoded")
+        builder.header("Sec-Fetch-Dest", "document")
+        builder.header("Sec-Fetch-Mode", "navigate")
+        builder.header("Sec-Fetch-Site", if (referer.isBlank()) "none" else "same-origin")
+        builder.header("Origin", referer.trimEnd('/'))
+        builder.post(fb.build())
         if (referer.isNotBlank()) builder.header("Referer", referer)
         headers.forEach { (k, v) -> builder.header(k, v) }
         return exec(builder.build(), charset)
@@ -187,15 +251,51 @@ object Net {
         }
     }
 
-    private fun exec(request: Request, charset: String, depth: Int = 0): Resp = try {
+    /**
+     * 请求外壳：失败时做两级补救。
+     *  1. https 被 403 / 握手失败 → 换 http 再打一次（同人小说这类站 https 挂 CF 拦截、http 反而通）
+     *  2. 连接重置 / 超时这类偶发错误 → 稍等重打一次
+     * 只在第一层生效，跳转之后不再重试，避免放大请求。
+     */
+    private fun exec(request: Request, charset: String, depth: Int = 0): Resp {
+        var r = once(request, charset, depth)
+        if (r.ok) return r
+        if (depth == 0 && r.code == 403) {
+            val httpReq = toHttp(request)
+            if (httpReq != null) {
+                val r2 = once(httpReq, charset, depth)
+                if (r2.ok) return r2
+                r = r2
+            }
+        }
+        if (depth == 0 && r.code == 0) {
+            runCatching { Thread.sleep(220) }
+            val r3 = once(request, charset, depth)
+            if (r3.ok || r3.code != 0) return r3
+            r = r3
+        }
+        return r
+    }
+
+    /** https://x → http://x，已经是 http 的返回 null（别来回打） */
+    private fun toHttp(request: Request): Request? {
+        val u = request.url
+        if (!u.isHttps) return null
+        val httpUrl = u.newBuilder().scheme("http").port(80).build()
+        return request.newBuilder().url(httpUrl).build()
+    }
+
+    private fun once(request: Request, charset: String, depth: Int = 0): Resp = try {
         client.newCall(request).execute().use { r ->
             val bytes = r.body?.bytes() ?: ByteArray(0)
             val text = decode(bytes, charset, r.header("Content-Type"))
             val finalUrl = r.request.url.toString()
-            if (!r.isSuccessful) return Resp(false, r.code, text, "HTTP ${r.code}", finalUrl)
+            if (!r.isSuccessful) return Resp(false, r.code, text, friendlyCode(r.code), finalUrl)
 
-            // 有些站用 meta / JS 做跳转，普通 HTTP 客户端不会跟，这里手动跟一层
-            if (depth < 2 && text.length < 3000) {
+            // 有些站用 meta / JS 做跳转，普通 HTTP 客户端不会跟，这里手动跟一层。
+            // 只对「几乎没内容的空壳页」生效：正常章节页里常有一段
+            // `location.href = "下载APP"` 之类的脚本，跟着它跳就再也抓不到正文了。
+            if (depth < 2 && text.length < 1200) {
                 val jump = findMetaRedirect(text)
                 if (jump != null && jump != finalUrl) {
                     val abs = Rules.absUrl(finalUrl, jump)
@@ -235,15 +335,30 @@ object Net {
         return null
     }
 
+    /** HTTP 状态码翻译成用户看得懂的短句 */
+    private fun friendlyCode(code: Int): String = when {
+        code == 403 -> "被站点拦截 403"
+        code == 401 -> "要登录 401"
+        code == 404 -> "页面不存在 404"
+        code == 429 -> "请求太频繁 429"
+        code == 451 -> "站点拒绝访问 451"
+        code in 500..599 -> "站点自己出错 $code"
+        else -> "HTTP $code"
+    }
+
     fun friendlyError(e: Throwable): String {
         val msg = (e.message ?: "").lowercase()
+        val name = e.javaClass.simpleName
         return when {
-            msg.contains("timeout") || msg.contains("timed out") -> "连接超时"
-            msg.contains("unable to resolve") || msg.contains("nodename") -> "域名解析失败"
-            msg.contains("ssl") || msg.contains("certificate") -> "证书错误"
+            msg.contains("timeout") || msg.contains("timed out") || name.contains("Timeout") -> "连接超时"
+            msg.contains("unable to resolve") || msg.contains("nodename") ||
+                name.contains("UnknownHost") -> "域名解析失败"
+            msg.contains("ssl") || msg.contains("certificate") || name.contains("SSL") -> "TLS 握手被拦"
             msg.contains("refused") -> "连接被拒绝"
             msg.contains("reset") -> "连接被重置"
-            else -> e.javaClass.simpleName
+            msg.contains("econnaborted") || msg.contains("closed") -> "连接被中断"
+            proxyCfg.usable -> "连代理失败（检查代理地址和端口）"
+            else -> name
         }
     }
 

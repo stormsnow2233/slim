@@ -74,12 +74,18 @@ fun DetailScreen(
 
     fun loadToc(force: Boolean = false) {
         scope.launch {
+            // 离线：本地有目录就直接用，不去撞网络；本地没有就直说
+            if (!force && !Offline.isOnline(ctx)) {
+                if (toc.isEmpty()) error = "离线模式：这本的目录没存过，联网后再进"
+                loading = false
+                return@launch
+            }
             loading = true
             error = ""
             withContext(Dispatchers.IO) {
                 val src = Sources.byId(book.sourceId)
                 if (src == null) {
-                    error = "书源不存在"; loading = false; return@withContext
+                    error = "这个书源已被删除或停用，点「换个源」再找一次"; loading = false; return@withContext
                 }
                 val (det, tocRes) = BookRepo.getDetailAndToc(src, full)
                 full = det
@@ -92,6 +98,7 @@ fun DetailScreen(
                         author = full.author.ifBlank { it.author },
                     )
                     if (it.chapters.isEmpty()) error = "目录为空"
+                    store.rememberBook(full)
                 }.onFailure { error = it.message ?: "目录加载失败" }
                 loading = false
             }

@@ -77,7 +77,14 @@ object BookRepo {
                     ActiveBases[src.id] = base
                     return SourceResult(src.id, src.name, true, books, "", System.currentTimeMillis() - t0)
                 }
-                lastErr = "页面打开了但没认出书籍列表"
+                // 失败要分清楚：站点上真没这本书 ≠ 站点改版解析不出来。
+                // 以前两种情况都甩一句「没认出书籍列表」，看着就像源死了。
+                val rows = Rules.countList(Rules.parse(resp.body).body(), rule.list)
+                lastErr = when {
+                    rows > 0 -> "站点改版，列表 ${rows} 项但取不到书名"
+                    looksLikeNoResult(resp.body) -> "这个站没有这本书"
+                    else -> "没搜到这本书"
+                }
             }
         }
         return SourceResult(src.id, src.name, false, emptyList(), lastErr, System.currentTimeMillis() - t0)
@@ -137,6 +144,16 @@ object BookRepo {
         val id = Regex("/(?:b|Novel|book|info)/(\\d+)").find(bookUrl)?.groupValues?.get(1)
             ?: Regex("(\\d{3,})").find(bookUrl)?.groupValues?.get(1).orEmpty()
         return tpl.replace("{book}", bookUrl).replace("{id}", id)
+    }
+
+    /** 页面里明确写了「没有结果」这类话，就说明是站点上没这本书，不是我们解析坏了 */
+    private fun looksLikeNoResult(html: String): Boolean {
+        if (html.length > 200_000) return false
+        val heads = html.substring(0, minOf(html.length, 20_000))
+        return listOf(
+            "没有找到", "未找到", "无搜索结果", "没有搜索结果", "暂无结果", "抱歉",
+            "没有相关", "找不到相关", "no result", "0 条结果", "0条结果",
+        ).any { heads.contains(it, ignoreCase = true) }
     }
 
     private fun parseSearchPage(src: Source, html: String, pageUrl: String, rule: SearchRule): List<Book> {
@@ -230,18 +247,8 @@ object BookRepo {
         }
     }
 
-    /** 目录 */
-    fun getToc(src: Source, book: Book): Result<Toc> {
-        val base = ActiveBases[src.id] ?: src.base
-        val t = src.toc
-        // 有的站书页和目录页是分开的两页（SF 手机站就是），规则里可以单独给目录页模板
-        val tocTpl = t?.page.orEmpty()
-        val tocUrl = if (tocTpl.isBlank()) book.url
-        else Rules.absUrl(base + "/", fillTocPage(tocTpl, book.url))
-        val resp = Net.get(tocUrl, src.charset, base + "/", useCache = true)
-        if (!resp.ok) return Result.failure(Exception(resp.error))
-        val doc = Rules.parse(resp.body)
-        val pageUrl = resp.via.ifBlank { tocUrl }
+    /** 从一张页面上按规则 / 兜底认出章节列表 */
+    private fun parseTocList(doc: org.jsoup.nodes.Document, pageUrl: String, t: TocRule?): List<Chapter> {
         var list: List<Chapter> = emptyList()
 
         if (t != null && t.list.isNotBlank()) {
@@ -265,18 +272,55 @@ object BookRepo {
         // 去重 + 去导航
         val nav = setOf("上一页", "下一页", "首页", "尾页", "目录", "返回", "加入书签", "上一章", "下一章")
         val seen = HashSet<String>()
-        list = list.filter { c ->
+        return list.filter { c ->
             if (c.name in nav) return@filter false
             if (!seen.add(c.url)) return@filter false
             true
         }
+    }
+
+    /** 目录 */
+    fun getToc(src: Source, book: Book): Result<Toc> {
+        val base = ActiveBases[src.id] ?: src.base
+        val t = src.toc
+        // 有的站书页和目录页是分开的两页（SF 手机站就是），规则里可以单独给目录页模板
+        val tocTpl = t?.page.orEmpty()
+        val tocUrl = if (tocTpl.isBlank()) book.url
+        else Rules.absUrl(base + "/", fillTocPage(tocTpl, book.url))
+        var resp = Net.get(tocUrl, src.charset, base + "/", useCache = true)
+        // 目录页偶发挂了（限流/换版），回书页再试一次，别直接判死
+        if (!resp.ok && tocUrl != book.url) {
+            val alt = Net.get(book.url, src.charset, base + "/", useCache = true)
+            if (alt.ok) resp = alt
+        }
+        if (!resp.ok) return Result.failure(Exception(resp.error))
+        var doc = Rules.parse(resp.body)
+        var pageUrl = resp.via.ifBlank { tocUrl }
+        var list = parseTocList(doc, pageUrl, t)
+
+        // 目录页认不出来（页面换版 / 认成推荐书单），换书页再认一遍
+        if ((list.size < 2 || !tocLooksReal(book.url, list)) && pageUrl != book.url) {
+            val r2 = Net.get(book.url, src.charset, base + "/", useCache = true)
+            if (r2.ok) {
+                val d2 = Rules.parse(r2.body)
+                val p2 = r2.via.ifBlank { book.url }
+                val l2 = parseTocList(d2, p2, t)
+                if (l2.size > list.size && tocLooksReal(book.url, l2)) {
+                    doc = d2; pageUrl = p2; list = l2
+                }
+            }
+        }
         if (list.isEmpty()) return Result.failure(Exception("没认出章节目录，可能这站改版了"))
+        // 认出来的东西跟书籍页同形（/b/123/ 对 /b/456/）说明抓的是书页上的推荐书单，不是章节
+        if (!tocLooksReal(book.url, list))
+            return Result.failure(Exception("这页上认不出章节目录（抓到的是书籍列表），可能这站改版了"))
+        val tocUrlReal = pageUrl
 
         var cover = book.cover
         var intro = book.intro
         var author = book.author
         // 目录页和书页分成两页的站点，详情要回书页再拿一次（有页面缓存，一般不额外耗时）
-        val detailDoc = if (tocUrl == book.url) doc else {
+        val detailDoc = if (tocUrlReal == book.url) doc else {
             val r = Net.get(book.url, src.charset, base + "/", useCache = true)
             if (r.ok) Rules.parse(r.body) else doc
         }
@@ -332,7 +376,11 @@ object BookRepo {
             if (vipMark != null)
                 return Result.failure(Exception("这章是源站的付费/VIP 章节，得先在源站登录购买才能看，建议换个源搜同名书"))
         }
-        if (html.isBlank()) return Result.failure(Exception("正文没取到（可能这章要登录或要付费）"))
+        if (html.isBlank()) {
+            if (isErrorPage(doc))
+                return Result.failure(Exception("源站这一章打不开（它返回的是「页面无法访问」），这本书在网页版多半被限制了，换个源搜同名书试试"))
+            return Result.failure(Exception("正文没取到（可能这章要登录或要付费）"))
+        }
 
         // 分页拼接
         if (c != null && c.next.isNotBlank()) {
@@ -358,14 +406,48 @@ object BookRepo {
         val cleaned = Rules.stripAds(html)
         val text = Rules.htmlToParagraphs(cleaned)
         val title = doc.selectFirst("h1")?.text()?.trim().orEmpty().ifBlank { chapter.name }
-        if (text.replace(Regex("\\s"), "").length < 50)
-            return Result.failure(Exception("正文太短，可能被站点拦截了"))
+        val len = text.replace(Regex("\\s"), "").length
+        // 一百字以下基本不是正文：要么被拦，要么抓到的是书页/推荐列表那几行字
+        if (len < 120) {
+            if (isErrorPage(doc))
+                return Result.failure(Exception("源站这一章打不开（它返回的是「页面无法访问」），这本书在网页版多半被限制了，换个源搜同名书试试"))
+            if (doc.select("a[href]").size >= 12)
+                return Result.failure(Exception("抓到的这页是书籍页/目录页，不是正文，可能这站改版了"))
+            return Result.failure(Exception("正文太短（${len} 字），可能被站点拦截了"))
+        }
         return Result.success(Content(title, text, cleaned))
     }
 
     // ─────────── 目录 / 正文的兜底识别 ───────────
     // 站点改版后规则选择器往往整套失效，这里用「候选清单 + 打分」硬认出目录和正文，
     // 只要页面结构别太离谱，就不用等发新版才能看。
+
+    /** 源站自己吐的出错页（不是我们解析失败），提示要说准，别让人以为软件坏了 */
+    private fun isErrorPage(doc: org.jsoup.nodes.Document): Boolean {
+        val t = runCatching { doc.title() }.getOrDefault("")
+        if (t.contains("出错") || t.contains("无法访问") || t.contains("页面找不到") || t.contains("404")) return true
+        val body = runCatching { doc.body()?.text().orEmpty() }.getOrDefault("")
+        return body.contains("您访问的页面暂时无法访问") || body.contains("页面找不到了") ||
+            body.contains("页面不存在") || body.contains("出错啦")
+    }
+
+    /** 地址形态：数字统一抹成 N。/b/785881/ 和 /b/142354/ 是同形，/c/9958959/ 不是 */
+    private fun shapeOf(url: String): String = runCatching {
+        java.net.URI(url).path.orEmpty().replace(Regex("\\d+"), "N").lowercase()
+    }.getOrDefault("")
+
+    /**
+     * 目录真不真：章节地址不能和书籍页同形。
+     * 兜底识别在书页上跑时，最容易把「猜你喜欢」那几个推荐书链接当章节，
+     * 结果目录只有 3、4 条，点进去看到的是别人的简介。
+     */
+    fun tocLooksReal(bookUrl: String, chapters: List<Chapter>): Boolean {
+        if (chapters.isEmpty()) return false
+        val bookShape = shapeOf(bookUrl)
+        if (bookShape.isBlank()) return true
+        val same = chapters.count { shapeOf(it.url) == bookShape }
+        return same * 2 < chapters.size
+    }
 
     private val TOC_SELECTORS = listOf(
         "#list dl dd a", "#list dd a", "dl dd a", "#chapterlist a", "#chapter-list a",

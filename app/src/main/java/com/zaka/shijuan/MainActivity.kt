@@ -66,6 +66,10 @@ enum class Section(val label: String, val desc: String, val icon: ImageVector) {
 
 sealed class Route {
     data object Tabs : Route()
+    data object Cache : Route()
+    data object Network : Route()
+    /** 自定义书源编辑；id 为 null 表示新建 */
+    data class CustomSourceEdit(val id: String? = null) : Route()
     data class Detail(val book: Book) : Route()
     data class Reader(val book: Book, val chapters: List<Chapter>, val index: Int) : Route()
     data class ComicDetail(val comic: Comic) : Route()
@@ -82,6 +86,8 @@ fun ShijuanApp() {
     val store = remember { Store(ctx) }
     remember { ComicDownloader.init(ctx.applicationContext, store); 0 }
     remember { Offline.init(ctx.applicationContext) }
+    // 自定义书源：启动时从本地读出来注册，跟内置源一起参与搜索
+    remember { CustomSources.init(ctx.applicationContext, store); 0 }
     val online by Offline.online.collectAsState()
     var route by remember { mutableStateOf<Route>(Route.Tabs) }
     var shelf by remember { mutableStateOf(store.shelf()) }
@@ -112,6 +118,8 @@ fun ShijuanApp() {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val uiScope = rememberCoroutineScope()
     var section by remember { mutableStateOf(Section.Novel) }
+    // 页签状态提到这一层：进详情、加书源回来时不会跳回第一页
+    val pager = rememberPagerState(pageCount = { Tab.entries.size })
     val openDrawer = { uiScope.launch { drawerState.open() }; Unit }
 
     ModalNavigationDrawer(
@@ -126,10 +134,31 @@ fun ShijuanApp() {
                     route = Route.Tabs
                     uiScope.launch { drawerState.close() }
                 },
+                onOpenCache = {
+                    route = Route.Cache
+                    uiScope.launch { drawerState.close() }
+                },
+                onOpenNetwork = {
+                    route = Route.Network
+                    uiScope.launch { drawerState.close() }
+                },
             )
         },
     ) {
 
+    Column(
+        Modifier
+            .fillMaxSize()
+            .then(
+                if (!online) Modifier.consumeWindowInsets(WindowInsets.statusBars)
+                else Modifier
+            )
+    ) {
+        if (!online) {
+            OfflineBar(onRetry = { Offline.refresh(ctx.applicationContext) })
+        }
+
+    Box(Modifier.weight(1f)) {
     AnimatedContent(
         targetState = route,
         transitionSpec = {
@@ -145,9 +174,11 @@ fun ShijuanApp() {
                     onOpen = { route = Route.ComicDetail(it) },
                     onOpenDrawer = openDrawer,
                     offline = !online,
+                    onOpenCache = { route = Route.Cache },
                 )
             } else {
                 TabHost(
+                    pager = pager,
                     store = store,
                     shelf = shelfShown,
                     records = recordsShown,
@@ -166,6 +197,8 @@ fun ShijuanApp() {
                     },
                     onOpenComic = { route = Route.ComicDetail(it) },
                     onToggleSource = { id, on -> enabled = store.setSourceEnabled(id, on) },
+                    onAddSource = { route = Route.CustomSourceEdit(null) },
+                    onEditSource = { src -> route = Route.CustomSourceEdit(src.id) },
                 )
             }
 
@@ -200,13 +233,69 @@ fun ShijuanApp() {
                 startIndex = r.index,
                 store = store,
                 onBack = { route = Route.Detail(r.book) },
+                onSwitchBook = { other -> route = Route.Detail(other) },
                 onProgress = { ci, cn, p, total ->
                     store.updateProgress(r.book, ci, cn, p, total)
                     refreshShelf()
                 },
             )
+
+            is Route.Cache -> CacheScreen(
+                store = store,
+                onBack = { route = Route.Tabs },
+                onOpenComic = { c -> route = Route.ComicDetail(c) },
+            )
+
+            is Route.Network -> NetworkScreen(
+                store = store,
+                onBack = { route = Route.Tabs },
+            )
+
+            is Route.CustomSourceEdit -> CustomSourceEditScreen(
+                initial = r.id?.let { Sources.byId(it) },
+                onBack = { route = Route.Tabs },
+                onSaved = {
+                    enabled = store.enabledSources()
+                    route = Route.Tabs
+                    // 加完/改完停在书源页，能立刻看到刚加的源
+                    uiScope.launch { pager.animateScrollToPage(Tab.Sources.ordinal) }
+                },
+                onDeleted = {
+                    enabled = store.enabledSources()
+                    route = Route.Tabs
+                    uiScope.launch { pager.animateScrollToPage(Tab.Sources.ordinal) }
+                },
+            )
         }
     }
+    }
+    }
+    }
+}
+
+/** 断网时的常驻提示条：说清楚现在是离线、能看到什么，并给一个手动重测 */
+@Composable
+private fun OfflineBar(onRetry: () -> Unit) {
+    Surface(color = MaterialTheme.colorScheme.tertiaryContainer) {
+        Row(
+            Modifier
+                .fillMaxWidth()
+                .statusBarsPadding()
+                .padding(start = 14.dp, end = 6.dp, top = 4.dp, bottom = 4.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Text(
+                "📴 离线模式 · 只显示本机存过的内容",
+                fontSize = 12.sp,
+                color = MaterialTheme.colorScheme.onTertiaryContainer,
+                maxLines = 1,
+                overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+            )
+            Spacer(Modifier.weight(1f))
+            TextButton(onClick = onRetry, contentPadding = PaddingValues(horizontal = 8.dp)) {
+                Text("重新检测", fontSize = 12.sp)
+            }
+        }
     }
 }
 
@@ -217,6 +306,8 @@ fun ShijuanApp() {
 private fun SectionDrawer(
     current: Section,
     onPick: (Section) -> Unit,
+    onOpenCache: () -> Unit = {},
+    onOpenNetwork: () -> Unit = {},
 ) {
     ModalDrawerSheet(
         drawerShape = RoundedCornerShape(topEnd = 26.dp, bottomEnd = 26.dp),
@@ -285,6 +376,64 @@ private fun SectionDrawer(
             }
         }
 
+        Spacer(Modifier.height(10.dp))
+        HorizontalDivider(Modifier.padding(horizontal = 22.dp))
+        Spacer(Modifier.height(10.dp))
+
+        // 缓存管理：哪本存了多少、存全没有、不要了怎么删
+        Row(
+            modifier = Modifier
+                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .clickable { onOpenCache() }
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.FolderOpen,
+                contentDescription = "缓存管理",
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("缓存管理", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "占用 · 体检 · 删除",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        // 网络：直连还是走代理，外加一个连通性体检
+        Row(
+            modifier = Modifier
+                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .clickable { onOpenNetwork() }
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Wifi,
+                contentDescription = "网络",
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("网络", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    if (Net.proxy().usable) "代理已开 · ${Net.proxy().host}" else "直连 · 可设代理",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                )
+            }
+        }
     }
 }
 
@@ -294,6 +443,7 @@ private fun SectionDrawer(
 @OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun TabHost(
+    pager: androidx.compose.foundation.pager.PagerState,
     store: Store,
     shelf: List<ShelfItem>,
     records: List<ReadingRecord>,
@@ -306,6 +456,8 @@ private fun TabHost(
     onRemoveRecord: (Book) -> Unit,
     onOpenComic: (Comic) -> Unit,
     onToggleSource: (String, Boolean) -> Unit,
+    onAddSource: () -> Unit = {},
+    onEditSource: (Source) -> Unit = {},
 ) {
     // 断网：只剩书架，别的都要联网，没必要摆着
     if (!online) {
@@ -325,7 +477,6 @@ private fun TabHost(
         return
     }
 
-    val pager = rememberPagerState(pageCount = { Tab.entries.size })
     val scope = rememberCoroutineScope()
     val tabs = Tab.entries
 
@@ -365,6 +516,8 @@ private fun TabHost(
                             enabled = enabled,
                             onToggle = { id, on -> onToggleSource(id, on) },
                             onOpenDrawer = onOpenDrawer,
+                            onAddSource = onAddSource,
+                            onEditSource = onEditSource,
                         )
                     }
 
