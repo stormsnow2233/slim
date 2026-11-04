@@ -30,6 +30,8 @@ data class TocRule(
     val list: String = "",
     val name: String = "@text",
     val url: String = "@href",
+    // 目录页地址模板：{id} = 书号，{book} = 原书页。留空表示目录就在书页里
+    val page: String = "",
 )
 
 data class ContentRule(
@@ -310,22 +312,19 @@ object Sources {
 
         Source(
             id = "sfacg", name = "SF轻小说", group = "轻小说",
-            base = "https://book.sfacg.com", charset = "utf-8", status = "local",
-            note = "正版轻小说站，原创轻小说多。免费章节能看，付费章要买",
-            search = SearchRule(
-                url = "/Search/?keyword={key}", auto = true,
-                list = ".Comic_Pic_List li, .book-list li, .result-list li",
-                fields = mapOf(
-                    "name" to "h3 a@text || .title a@text || a@title",
-                    "bookUrl" to "h3 a@href || .title a@href || a@href",
-                    "cover" to "img@src || img@data-src",
-                    "author" to ".author@text || .sub@text",
-                    "intro" to ".intro@text || .desc@text",
-                ),
+            base = "https://m.sfacg.com", charset = "utf-8", status = "verified",
+            note = "正版轻小说站（菠萝包）。搜索走站点 JSON 接口，目录在单独列表页，正文在手机站",
+            apiKind = "sfacg",
+            search = SearchRule(url = "/API/HTML5.ashx?op=search&keyword={key}", auto = false),
+            detail = DetailRule(
+                name = ".book_newtitle@text",
+                author = ".book_info3@text##\\s*/[\\s\\S]*##",
+                cover = ".book_info img@src",
+                intro = ".book_bk_qs1@text",
             ),
-            detail = DetailRule(name = "h1@text || .title@text", author = ".author@text", cover = ".cover img@src", intro = ".intro@text || .desc@text"),
-            toc = TocRule(list = ".chapter-list a, .catalog a, .list a[href*='/Novel/']", name = "@text", url = "@href"),
-            content = ContentRule(body = ".article-content@html || #content@html || .content@html"),
+            // 书页 /b/{id}/ 没有章节列表，目录另有一页 /i/{id}/
+            toc = TocRule(list = "ul.mulu_list a", name = "@text", url = "@href", page = "https://m.sfacg.com/i/{id}/"),
+            content = ContentRule(body = ".Content_Frame > div@html || .yuedu > div@html || #content@html"),
         ),
 
         Source(

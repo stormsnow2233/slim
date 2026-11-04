@@ -39,6 +39,7 @@ object BookRepo {
                 r.first, r.second, System.currentTimeMillis() - t0,
             )
         }
+        if (src.apiKind == "sfacg") return searchSfacg(src, key)
         val rule = src.search ?: return SourceResult(src.id, src.name, false, error = "该源未配置搜索规则")
 
         // GBK 站点（笔趣阁系、飘天、顶点等）的搜索参数必须用 GBK 编码，否则中文搜不到
@@ -80,6 +81,62 @@ object BookRepo {
             }
         }
         return SourceResult(src.id, src.name, false, emptyList(), lastErr, System.currentTimeMillis() - t0)
+    }
+
+    /**
+     * SF 轻小说的搜索是前端 ajax 发出去的，HTML 里根本没有结果；
+     * 直接打它的搜索接口拿 JSON。书页统一用手机站 /b/{id}/，目录和正文也都走手机站。
+     */
+    private fun searchSfacg(src: Source, key: String): SourceResult {
+        val t0 = System.currentTimeMillis()
+        var lastErr = "连接不上"
+        val known = ActiveBases[src.id]
+        val ordered = if (known != null && src.bases.contains(known))
+            listOf(known) + src.bases.filter { it != known } else src.bases
+        for (base in ordered) {
+            val url = base + "/API/HTML5.ashx?op=search&keyword=" + enc(key)
+            val resp = Net.get(url, "utf-8", base + "/search.html")
+            if (!resp.ok) { lastErr = resp.error; continue }
+            val books = runCatching {
+                val json = JSONObject(resp.body.trimStart('\uFEFF'))
+                val arr = json.optJSONArray("Novels") ?: return@runCatching emptyList<Book>()
+                (0 until arr.length()).mapNotNull { i ->
+                    val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                    val id = o.optString("NovelID").trim()
+                    val name = o.optString("NovelName").trim()
+                    if (id.isEmpty() || name.isEmpty()) return@mapNotNull null
+                    Book(
+                        name = name,
+                        author = o.optString("AuthorName").trim(),
+                        cover = sfCover(o.optString("NovelCover").trim()),
+                        url = base + "/b/" + id + "/",
+                        sourceId = src.id,
+                        sourceName = src.name,
+                        kind = o.optString("TypeName").trim(),
+                    )
+                }
+            }.getOrElse { emptyList() }
+            if (books.isNotEmpty()) {
+                ActiveBases[src.id] = base
+                return SourceResult(src.id, src.name, true, books, "", System.currentTimeMillis() - t0)
+            }
+            lastErr = "接口没返回书目"
+        }
+        return SourceResult(src.id, src.name, false, emptyList(), lastErr, System.currentTimeMillis() - t0)
+    }
+
+    private fun sfCover(path: String): String = when {
+        path.isEmpty() || path == "null" -> ""
+        path.startsWith("http") -> path
+        path.startsWith("//") -> "https:" + path
+        else -> "https://rs.sfacg.com/web/novel/images/NovelCover/Big/" + path
+    }
+
+    /** 把目录页模板里的 {id}/{book} 换成真值 */
+    private fun fillTocPage(tpl: String, bookUrl: String): String {
+        val id = Regex("/(?:b|Novel|book|info)/(\\d+)").find(bookUrl)?.groupValues?.get(1)
+            ?: Regex("(\\d{3,})").find(bookUrl)?.groupValues?.get(1).orEmpty()
+        return tpl.replace("{book}", bookUrl).replace("{id}", id)
     }
 
     private fun parseSearchPage(src: Source, html: String, pageUrl: String, rule: SearchRule): List<Book> {
@@ -176,24 +233,29 @@ object BookRepo {
     /** 目录 */
     fun getToc(src: Source, book: Book): Result<Toc> {
         val base = ActiveBases[src.id] ?: src.base
-        val resp = Net.get(book.url, src.charset, base + "/", useCache = true)
+        val t = src.toc
+        // 有的站书页和目录页是分开的两页（SF 手机站就是），规则里可以单独给目录页模板
+        val tocTpl = t?.page.orEmpty()
+        val tocUrl = if (tocTpl.isBlank()) book.url
+        else Rules.absUrl(base + "/", fillTocPage(tocTpl, book.url))
+        val resp = Net.get(tocUrl, src.charset, base + "/", useCache = true)
         if (!resp.ok) return Result.failure(Exception(resp.error))
         val doc = Rules.parse(resp.body)
-        val t = src.toc
+        val pageUrl = resp.via.ifBlank { tocUrl }
         var list: List<Chapter> = emptyList()
 
         if (t != null && t.list.isNotBlank()) {
             val anchors = runCatching { doc.select(t.list) }.getOrDefault(emptyList())
             list = anchors.mapIndexedNotNull { idx, a ->
                 val name = if (t.name == "@text" || t.name.isBlank()) a.text().replace(Regex("\\s+"), " ").trim()
-                else Rules.extract(a, t.name, book.url)
-                val url = if (t.url == "@href" || t.url.isBlank()) Rules.absUrl(book.url, a.attr("href"))
-                else Rules.extract(a, t.url, book.url)
+                else Rules.extract(a, t.name, pageUrl)
+                val url = if (t.url == "@href" || t.url.isBlank()) Rules.absUrl(pageUrl, a.attr("href"))
+                else Rules.extract(a, t.url, pageUrl)
                 if (name.isEmpty() || url.isEmpty()) null else Chapter(name, url, idx)
             }
         }
         if (list.size < 2) {
-            val auto = Rules.autoList(doc, book.url, chapterMode = true)
+            val auto = Rules.autoList(doc, pageUrl, chapterMode = true)
             if (auto.size >= 2) list = auto.mapIndexed { i, b -> Chapter(b.name, b.url, i) }
         }
         // 去重 + 去导航
@@ -209,14 +271,21 @@ object BookRepo {
         var cover = book.cover
         var intro = book.intro
         var author = book.author
-        doc.selectFirst("meta[property=og:image]")?.attr("content")?.let {
+        // 目录页和书页分成两页的站点，详情要回书页再拿一次（有页面缓存，一般不额外耗时）
+        val detailDoc = if (tocUrl == book.url) doc else {
+            val r = Net.get(book.url, src.charset, base + "/", useCache = true)
+            if (r.ok) Rules.parse(r.body) else doc
+        }
+        detailDoc.selectFirst("meta[property=og:image]")?.attr("content")?.let {
             if (cover.isBlank()) cover = Rules.absUrl(book.url, it)
         }
         src.detail?.let { d ->
+            if (d.cover.isNotBlank() && cover.isBlank())
+                Rules.extract(detailDoc.body(), d.cover, book.url).ifBlank { null }?.let { cover = it }
             if (d.intro.isNotBlank() && intro.isBlank())
-                Rules.extract(doc.body(), d.intro, book.url).ifBlank { null }?.let { intro = it }
+                Rules.extract(detailDoc.body(), d.intro, book.url).ifBlank { null }?.let { intro = it }
             if (d.author.isNotBlank() && author.isBlank())
-                Rules.extract(doc.body(), d.author, book.url).ifBlank { null }?.let { author = it }
+                Rules.extract(detailDoc.body(), d.author, book.url).ifBlank { null }?.let { author = it }
         }
         return Result.success(Toc(list, cover, intro, author))
     }
@@ -246,6 +315,14 @@ object BookRepo {
             }
         }
         if (html.isBlank()) html = Rules.autoContent(doc)
+        // 有的站免费章节正常给正文，付费章节只给一段购买提示——这时别报"被拦截"，要报准
+        if (html.replace(Regex("\\s"), "").length < 120) {
+            val page = doc.text()
+            val vipMark = listOf("VIP章节", "vip章节", "购买本章", "订阅本章", "本章需购买", "余额不足", "充值后阅读", "登录后阅读")
+                .firstOrNull { page.contains(it) }
+            if (vipMark != null)
+                return Result.failure(Exception("这章是源站的付费/VIP 章节，得先在源站登录购买才能看，建议换个源搜同名书"))
+        }
         if (html.isBlank()) return Result.failure(Exception("正文没取到（可能这章要登录或要付费）"))
 
         // 分页拼接
@@ -279,7 +356,8 @@ object BookRepo {
 
     /** 书源体检 */
     fun health(src: Source): SourceResult {
-        val key = "斗破苍穹"
+        // SF 是日本轻小说站,拿玄幻书名去体检只会显示"没搜到",换个它站内确实有的词
+        val key = if (src.apiKind == "sfacg") "牧师" else "斗破苍穹"
         return searchSource(src, key)
     }
 
