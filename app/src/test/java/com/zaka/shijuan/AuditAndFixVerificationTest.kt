@@ -162,4 +162,166 @@ class AuditAndFixVerificationTest {
         assertNotNull(client.proxy)
         assertEquals(java.net.Proxy.Type.HTTP, client.proxy?.type())
     }
+
+    @Test
+    fun testNovelSearchAndDetailAndChapter() {
+        for (src in Sources.ALL.filter { it.apiKind.isEmpty() }) {
+            println("\n=== Testing source: ${src.id} (${src.name}) ===")
+            val searchRes = BookRepo.searchSource(src, "凡人修仙传")
+            println("Search ok=${searchRes.ok}, count=${searchRes.books.size}, error=${searchRes.error}")
+            if (searchRes.books.isNotEmpty()) {
+                val book = searchRes.books.first()
+                println("Found book: name=${book.name}, url=${book.url}, author=${book.author}")
+                val (detailBook, tocRes) = BookRepo.getDetailAndToc(src, book)
+                println("Detail: author=${detailBook.author}, cover=${detailBook.cover}")
+                println("Toc result ok=${tocRes.isSuccess}")
+                if (tocRes.isSuccess) {
+                    val toc = tocRes.getOrNull()!!
+                    println("Chapters count=${toc.chapters.size}")
+                    if (toc.chapters.isNotEmpty()) {
+                        val firstCh = toc.chapters.first()
+                        println("First chapter: ${firstCh.name}, url=${firstCh.url}")
+                        val contentRes = BookRepo.getChapter(src, firstCh)
+                        println("Content result ok=${contentRes.isSuccess}, error=${contentRes.exceptionOrNull()?.message}")
+                        if (contentRes.isSuccess) {
+                            val c = contentRes.getOrNull()!!
+                            println("Content title=${c.title}, len=${c.text.length}, sample=${c.text.take(40)}")
+                        }
+                    }
+                } else {
+                    println("Toc failed: ${tocRes.exceptionOrNull()?.message}")
+                }
+            }
+        }
+    }
+
+    @Test
+    fun testComicPagesResolution() {
+        println("Comic sources: ${ComicRepo.sources.map { it.id }}")
+        for (src in ComicRepo.sources) {
+            println("\n--- Testing comic source: ${src.id} (${src.name}) ---")
+            val home = runCatching { src.home() }.getOrElse {
+                println("Home failed: ${it.message}"); emptyList()
+            }
+            println("Home comics: count=${home.size}")
+            if (home.isNotEmpty()) {
+                val comic = home.first()
+                println("First comic: name=${comic.name}, url=${comic.url}")
+                val chs = runCatching { src.chapters(comic) }.getOrElse {
+                    println("Chapters failed: ${it.message}"); emptyList()
+                }
+                println("Chapters count=${chs.size}")
+                if (chs.isNotEmpty()) {
+                    val ch = chs.first()
+                    println("First ch: name=${ch.name}, url=${ch.url}")
+                    val pages = runCatching { src.pages(comic, ch) }.getOrNull()
+                    if (pages != null) {
+                        println("Pages title=${pages.title}, count=${pages.images.size}, referer=${pages.referer}, headers=${pages.headers}")
+                        println("Sample image URLs: ${pages.images.take(3)}")
+                        // Now test downloading or probing the first image URL with the headers!
+                        if (pages.images.isNotEmpty()) {
+                            val imgUrl = pages.images.first()
+                            val reqHeaders = src.headers() + pages.headers + (if (pages.referer.isNotBlank()) mapOf("Referer" to pages.referer) else emptyMap())
+                            println("Probing image URL: $imgUrl with headers=$reqHeaders")
+                            val probe = Net.probe(imgUrl, reqHeaders, pages.referer)
+                            println("Probe result: HTTP code=${probe.first}, len=${probe.second}")
+                        }
+                    } else {
+                        println("Pages resolution failed")
+                    }
+                }
+            }
+        }
+    }
+
+    @Test
+    fun testRulesPickOnAnchorAndBareFields() {
+        val doc = org.jsoup.Jsoup.parse("""
+            <div id="wrapper">
+                <a class="c-link" href="/book/123">仙逆</a>
+                <div class="content"><p>第一段</p><p>第二段</p></div>
+            </div>
+        """.trimIndent())
+        val anchor = doc.selectFirst("a")!!
+        // Previously root.selectFirst("a") returned null when root was already <a>!
+        val picked = Rules.pick(anchor, "a")
+        assertNotNull(picked)
+        assertEquals("仙逆", picked?.text())
+
+        // Bare field extraction
+        assertEquals("仙逆", Rules.extract(anchor, "text"))
+        assertEquals("仙逆", Rules.extract(anchor, "@text"))
+        assertEquals("/book/123", Rules.extract(anchor, "href"))
+        assertEquals("/book/123", Rules.extract(anchor, "@href"))
+        assertEquals("仙逆", Rules.extract(anchor, "a@text"))
+        assertEquals("/book/123", Rules.extract(anchor, "a@href"))
+    }
+
+    @Test
+    fun testParseTocListWithOrAndNestedAnchors() {
+        val src = Source(
+            id = "test_src",
+            name = "测试源",
+            group = "测试",
+            base = "https://example.com",
+            toc = TocRule(list = "#lbks dd || #list dd a", name = "a@text", url = "a@href")
+        )
+        val html = """
+            <div id="lbks">
+                <dd><a href="/chapter/1.html">第一章 降临</a></dd>
+                <dd><a href="/chapter/2.html">第二章 修行</a></dd>
+                <dd><a href="/chapter/3.html">第三章 突破</a></dd>
+            </div>
+        """.trimIndent()
+        val doc = org.jsoup.Jsoup.parse(html)
+        val chapters = BookRepo.parseTocList(doc, "https://example.com/book/1/", src.toc)
+        assertEquals(3, chapters.size)
+        assertEquals("第一章 降临", chapters[0].name)
+        assertEquals("https://example.com/chapter/1.html", chapters[0].url)
+        assertEquals("第二章 修行", chapters[1].name)
+        assertEquals("第三章 突破", chapters[2].name)
+    }
+
+    @Test
+    fun testDm5ChapterRegexWithAttributesBeforeHref() {
+        val chapRegex = Regex(
+            """<a\s+([^>]*?href=["']?(/m\d+/?)["']?[^>]*)>([\s\S]{0,1500}?)</a>""",
+            RegexOption.IGNORE_CASE,
+        )
+        val html = """
+            <div class="chapter-list">
+                <a class="chapteritem" title="第1话 初遇" href="/m1001/">第1话 初遇</a>
+                <a href="/m1002/" class="chapteritem">第2话 启程</a>
+                <a class="tg" href="/m1003/">1003</a>
+            </div>
+        """.trimIndent()
+        val matches = chapRegex.findAll(html).toList()
+        assertEquals(3, matches.size)
+
+        assertEquals("/m1001/", matches[0].groupValues[2])
+        assertTrue(matches[0].groupValues[1].contains("chapteritem"))
+        assertEquals("第1话 初遇", matches[0].groupValues[3].trim())
+
+        assertEquals("/m1002/", matches[1].groupValues[2])
+        assertTrue(matches[1].groupValues[1].contains("chapteritem"))
+        assertEquals("第2话 启程", matches[1].groupValues[3].trim())
+
+        assertEquals("/m1003/", matches[2].groupValues[2])
+    }
+
+    @Test
+    fun testShelfScreenOffShelfSetDeduplication() {
+        val shelf = listOf(
+            ShelfItem(book = Book(name = "书A", url = "https://a.com/1", sourceId = "s1")),
+            ShelfItem(book = Book(name = "书B", url = "https://a.com/2", sourceId = "s1")),
+        )
+        val records = listOf(
+            ReadingRecord(book = Book(name = "书A", url = "https://a.com/1", sourceId = "s1"), chapterName = "第1章"),
+            ReadingRecord(book = Book(name = "书C", url = "https://a.com/3", sourceId = "s1"), chapterName = "第10章"),
+        )
+        val shelfKeys = shelf.map { it.book.url + it.book.sourceId }.toSet()
+        val offShelf = records.filter { (it.book.url + it.book.sourceId) !in shelfKeys }
+        assertEquals(1, offShelf.size)
+        assertEquals("书C", offShelf[0].book.name)
+    }
 }

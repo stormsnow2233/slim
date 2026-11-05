@@ -383,7 +383,8 @@ object ComicDownloader {
         if (pages.images.isEmpty()) return 0
         val dir = File(dirOf(comic), "ch$chapterIndex")
         dir.mkdirs()
-        val headers = ComicRepo.imageHeaders(comic)
+        val reqHeaders = ComicRepo.imageHeaders(comic) + pages.headers
+        val referer = pages.referer.ifBlank { reqHeaders["Referer"].orEmpty() }
         var ok = 0
         pages.images.forEachIndexed { idx, url ->
             if (cancelled[taskKey] == true) return@forEachIndexed
@@ -399,7 +400,7 @@ object ComicDownloader {
             } else if (f.exists() && !isImageFile(f)) {
                 f.delete()
             }
-            val got = Net.downloadTo(url, f, headers)
+            val got = Net.downloadTo(url, f, reqHeaders, referer = referer)
             if (got > 0 && isImageFile(f)) {
                 ok++
                 onProgress(got, 1)

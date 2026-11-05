@@ -216,13 +216,9 @@ object BookRepo {
 
     /**
      * 详情 + 目录一次拿全。
-     * 两者原本是同一张页面各抓一次，现在先打一枪填缓存，再并行解析，
-     * 打开书籍的等待时间从「两次往返」压到「一次往返」。
+     * 两者并行解析，若首选域名失败则尝试镜像。
      */
     fun getDetailAndToc(src: Source, book: Book): Pair<Book, Result<Toc>> {
-        val base = ActiveBases[src.id] ?: src.base
-        Net.get(book.url, src.charset, base + "/", useCache = true)
-
         val detRef = java.util.concurrent.atomic.AtomicReference(book)
         val tocRef = java.util.concurrent.atomic.AtomicReference<Result<Toc>>(
             Result.failure(Exception("未执行"))
@@ -248,17 +244,40 @@ object BookRepo {
     }
 
     /** 从一张页面上按规则 / 兜底认出章节列表 */
-    private fun parseTocList(doc: org.jsoup.nodes.Document, pageUrl: String, t: TocRule?): List<Chapter> {
+    internal fun parseTocList(doc: org.jsoup.nodes.Document, pageUrl: String, t: TocRule?): List<Chapter> {
         var list: List<Chapter> = emptyList()
 
         if (t != null && t.list.isNotBlank()) {
-            val anchors = runCatching { doc.select(t.list) }.getOrDefault(emptyList())
-            list = anchors.mapIndexedNotNull { idx, a ->
-                val name = if (t.name == "@text" || t.name.isBlank()) a.text().replace(Regex("\\s+"), " ").trim()
-                else Rules.extract(a, t.name, pageUrl)
-                val url = if (t.url == "@href" || t.url.isBlank()) Rules.absUrl(pageUrl, a.attr("href"))
-                else Rules.extract(a, t.url, pageUrl)
-                if (name.isEmpty() || url.isEmpty()) null else Chapter(name, url, idx)
+            for (branch in t.list.split("||")) {
+                val sel = branch.trim()
+                if (sel.isEmpty()) continue
+                val elements = runCatching { doc.select(sel) }.getOrDefault(emptyList())
+                if (elements.isEmpty()) continue
+                val parsed = elements.mapIndexedNotNull { idx, el ->
+                    val target = if (el.tagName().equals("a", true)) el else el.selectFirst("a") ?: el
+                    val name = when {
+                        t.name.isBlank() || t.name == "@text" || t.name == "text" ->
+                            target.text().replace(Regex("\\s+"), " ").trim()
+                        else -> Rules.extract(el, t.name, pageUrl).ifBlank {
+                            target.text().replace(Regex("\\s+"), " ").trim()
+                        }
+                    }
+                    val url = when {
+                        t.url.isBlank() || t.url == "@href" || t.url == "href" -> {
+                            val href = target.attr("href").ifBlank { target.attr("data-href") }.trim()
+                            Rules.absUrl(pageUrl, href)
+                        }
+                        else -> Rules.extract(el, t.url, pageUrl).ifBlank {
+                            val href = target.attr("href").ifBlank { target.attr("data-href") }.trim()
+                            Rules.absUrl(pageUrl, href)
+                        }
+                    }
+                    if (name.isEmpty() || url.isEmpty() || url == pageUrl) null else Chapter(name, url, idx)
+                }
+                if (parsed.size >= 2) {
+                    list = parsed
+                    break
+                }
             }
         }
         if (list.size < 2) {
@@ -292,6 +311,21 @@ object BookRepo {
         if (!resp.ok && tocUrl != book.url) {
             val alt = Net.get(book.url, src.charset, base + "/", useCache = true)
             if (alt.ok) resp = alt
+        }
+        if (!resp.ok && src.mirrors.isNotEmpty()) {
+            val curUri = runCatching { java.net.URI(tocUrl) }.getOrNull()
+            if (curUri != null) {
+                for (mirror in src.mirrors) {
+                    val mirrorUri = runCatching { java.net.URI(mirror) }.getOrNull() ?: continue
+                    val altUrl = java.net.URI(mirrorUri.scheme, mirrorUri.authority, curUri.path, curUri.query, curUri.fragment).toString()
+                    val r2 = Net.get(altUrl, src.charset, "$mirror/", useCache = true)
+                    if (r2.ok) {
+                        resp = r2
+                        ActiveBases[src.id] = mirror
+                        break
+                    }
+                }
+            }
         }
         if (!resp.ok) return Result.failure(Exception(resp.error))
         var doc = Rules.parse(resp.body)
@@ -341,7 +375,22 @@ object BookRepo {
     /** 正文 */
     fun getChapter(src: Source, chapter: Chapter): Result<Content> {
         val base = ActiveBases[src.id] ?: src.base
-        val resp = Net.get(chapter.url, src.charset, base + "/")
+        var resp = Net.get(chapter.url, src.charset, base + "/")
+        if (!resp.ok && src.mirrors.isNotEmpty()) {
+            val curUri = runCatching { java.net.URI(chapter.url) }.getOrNull()
+            if (curUri != null) {
+                for (mirror in src.mirrors) {
+                    val mirrorUri = runCatching { java.net.URI(mirror) }.getOrNull() ?: continue
+                    val altUrl = java.net.URI(mirrorUri.scheme, mirrorUri.authority, curUri.path, curUri.query, curUri.fragment).toString()
+                    val r2 = Net.get(altUrl, src.charset, "$mirror/")
+                    if (r2.ok) {
+                        resp = r2
+                        ActiveBases[src.id] = mirror
+                        break
+                    }
+                }
+            }
+        }
         if (!resp.ok) return Result.failure(Exception(resp.error))
         val doc = Rules.parse(resp.body)
         val c = src.content
@@ -349,13 +398,28 @@ object BookRepo {
         var html = ""
         if (c != null && c.body.isNotBlank()) {
             for (br in c.body.split("||")) {
-                val parts = br.trim().split("@")
-                val sel = parts.getOrNull(0)?.trim().orEmpty()
-                val field = parts.getOrNull(1)?.trim() ?: "text"
+                var expr = br.trim()
+                if (expr.isEmpty()) continue
+                var regex = ""
+                val hashIdx = expr.indexOf("##")
+                if (hashIdx >= 0) {
+                    regex = expr.substring(hashIdx)
+                    expr = expr.substring(0, hashIdx)
+                }
+                val at = expr.lastIndexOf('@')
+                val sel = if (at >= 0) expr.substring(0, at).trim() else expr
+                val field = if (at >= 0) expr.substring(at + 1).trim().ifBlank { "html" } else "html"
                 val el = runCatching { if (sel.isBlank()) doc.body() else doc.selectFirst(sel) }.getOrNull()
                 if (el != null) {
-                    val text = if (field == "html") el.html() else el.text()
-                    if (text.replace(Regex("\\s"), "").length > 100) {
+                    var text = when (field) {
+                        "html" -> el.html()
+                        "texts" -> el.children().joinToString("\n") { it.text().trim() }.ifBlank { el.text().trim() }
+                        else -> el.text()
+                    }
+                    if (regex.isNotEmpty()) {
+                        text = Rules.applyRegex(text, regex)
+                    }
+                    if (text.replace(Regex("\\s"), "").length > 80) {
                         html = if (field == "html") text else "<p>" + text.replace("\n", "</p><p>") + "</p>"
                         break
                     }
@@ -443,6 +507,7 @@ object BookRepo {
      */
     fun tocLooksReal(bookUrl: String, chapters: List<Chapter>): Boolean {
         if (chapters.isEmpty()) return false
+        if (chapters.size >= 15) return true
         val bookShape = shapeOf(bookUrl)
         if (bookShape.isBlank()) return true
         val same = chapters.count { shapeOf(it.url) == bookShape }
@@ -464,13 +529,14 @@ object BookRepo {
         for (sel in TOC_SELECTORS) {
             val anchors = runCatching { doc.select(sel) }.getOrDefault(emptyList())
             if (anchors.size < 2) continue
-            val items = anchors.mapNotNull { a ->
-                val name = a.text().replace(Regex("\\s+"), " ").trim()
-                val href = a.attr("href").trim()
+            val items = anchors.mapNotNull { el ->
+                val target = if (el.tagName().equals("a", true)) el else el.selectFirst("a") ?: el
+                val name = target.text().replace(Regex("\\s+"), " ").trim()
+                val href = target.attr("href").ifBlank { target.attr("data-href") }.trim()
                 if (name.isEmpty() || href.isEmpty()) return@mapNotNull null
                 if (href.startsWith("#") || href.startsWith("javascript")) return@mapNotNull null
                 val abs = Rules.absUrl(pageUrl, href)
-                if (!abs.startsWith("http")) return@mapNotNull null
+                if (!abs.startsWith("http") || abs == pageUrl) return@mapNotNull null
                 name to abs
             }.distinctBy { it.second }
             if (items.size < 2) continue

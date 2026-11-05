@@ -28,6 +28,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
@@ -65,14 +66,12 @@ fun LiquidGlassBar(
     selected: Int,
     onSelect: (Int) -> Unit,
     /** 当前页面位置（0..n-1），让胶囊跟着左右翻页一起走 */
-    pageFraction: Float,
+    pageFraction: () -> Float,
     modifier: Modifier = Modifier,
 ) {
     val dark = MaterialTheme.colorScheme.background.luminance() < 0.5f
     val density = LocalDensity.current
     val shape = RoundedCornerShape(26.dp)
-
-    var barSize by remember { mutableStateOf(Size.Zero) }
 
     // 点击时的「啵」一下：胶囊瞬间撑大再弹回，酷安那种手感。
     val pillScale = remember { Animatable(1f) }
@@ -112,35 +111,34 @@ fun LiquidGlassBar(
             )
             .clip(shape)
             .border(1.dp, borderColor, shape)
-            .onSizeChanged { barSize = Size(it.width.toFloat(), it.height.toFloat()) }
     ) {
-        // 毛玻璃底色（Android 12+ API 31+ 原生硬件级高斯模糊）
+        // 毛玻璃底色（避免实时多层模糊引起的 GPU 掉帧）
         Box(
             Modifier
                 .matchParentSize()
-                .then(
-                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
-                        Modifier.blur(20.dp)
-                    } else Modifier
-                )
                 .background(Brush.verticalGradient(listOf(glassTop, glassBottom)))
         )
-        // 玻璃表面流动的高光
-        if (barSize.width > 0f) {
-            Box(
-                Modifier.matchParentSize().background(
-                    Brush.linearGradient(
-                        colors = listOf(
-                            Color.Transparent,
-                            Color.White.copy(alpha = if (dark) 0.10f else 0.34f),
-                            Color.Transparent,
-                        ),
-                        start = Offset(barSize.width * (sweep * 1.8f - 0.9f), -barSize.height * 0.2f),
-                        end = Offset(barSize.width * (sweep * 1.8f - 0.5f), barSize.height * 1.2f),
-                    )
-                )
-            )
-        }
+        // 玻璃表面流动的高光：在 drawBehind 阶段读取 sweep，不触发整体重组
+        Box(
+            Modifier
+                .matchParentSize()
+                .drawBehind {
+                    val s = sweep
+                    if (size.width > 0f && size.height > 0f) {
+                        drawRect(
+                            brush = Brush.linearGradient(
+                                colors = listOf(
+                                    Color.Transparent,
+                                    Color.White.copy(alpha = if (dark) 0.10f else 0.34f),
+                                    Color.Transparent,
+                                ),
+                                start = Offset(size.width * (s * 1.8f - 0.9f), -size.height * 0.2f),
+                                end = Offset(size.width * (s * 1.8f - 0.5f), size.height * 1.2f),
+                            )
+                        )
+                    }
+                }
+        )
 
         // 顶部内高光
         Box(
@@ -162,13 +160,13 @@ fun LiquidGlassBar(
             val inset = 3.dp
             val insetPx = with(density) { inset.toPx() }
 
-            val basePx = pageFraction.coerceIn(0f, (count - 1).toFloat()) * cellPx
-            val pillX = basePx
-
-            // 胶囊（只在它自己身上响应拖动）
+            // 胶囊（只在它自己身上响应拖动，offset 在布局阶段按 lambda 读取）
             Box(
                 Modifier
-                    .offset { IntOffset((pillX + insetPx).roundToInt(), 0) }
+                    .offset {
+                        val basePx = pageFraction().coerceIn(0f, (count - 1).toFloat()) * cellPx
+                        IntOffset((basePx + insetPx).roundToInt(), 0)
+                    }
                     .width(cell - inset * 2)
                     .height(46.dp)
                     .graphicsLayer {
@@ -259,6 +257,25 @@ fun LiquidGlassBar(
         }
     }
 }
+
+@Composable
+fun LiquidGlassBar(
+    labels: List<String>,
+    iconsOn: List<ImageVector>,
+    iconsOff: List<ImageVector>,
+    selected: Int,
+    onSelect: (Int) -> Unit,
+    pageFraction: Float,
+    modifier: Modifier = Modifier,
+) = LiquidGlassBar(
+    labels = labels,
+    iconsOn = iconsOn,
+    iconsOff = iconsOff,
+    selected = selected,
+    onSelect = onSelect,
+    pageFraction = { pageFraction },
+    modifier = modifier,
+)
 
 
 /**

@@ -40,10 +40,30 @@ object ComicImages {
     }
 
     private fun build(ctx: Context): ImageLoader {
+        val dispatcher = okhttp3.Dispatcher().apply {
+            maxRequests = 64
+            maxRequestsPerHost = 16
+        }
+        val pool = okhttp3.ConnectionPool(32, 5, TimeUnit.MINUTES)
         val clientBuilder = OkHttpClient.Builder()
-            .connectTimeout(8, TimeUnit.SECONDS)
-            .readTimeout(25, TimeUnit.SECONDS)
+            .dispatcher(dispatcher)
+            .connectionPool(pool)
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .connectTimeout(12, TimeUnit.SECONDS)
+            .readTimeout(30, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
+            .addInterceptor { chain ->
+                val orig = chain.request()
+                val b = orig.newBuilder()
+                if (orig.header("User-Agent").isNullOrBlank()) {
+                    b.header(
+                        "User-Agent",
+                        "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
+                    )
+                }
+                chain.proceed(b.build())
+            }
         com.zaka.shijuan.data.Net.applyProxy(clientBuilder)
         val client = clientBuilder.build()
         return ImageLoader.Builder(ctx)
@@ -71,7 +91,7 @@ object ComicImages {
         runCatching {
             val req = ImageRequest.Builder(ctx)
                 .data(url)
-                .apply { headers.forEach { (k, v) -> addHeader(k, v) } }
+                .apply { headers.forEach { (k, v) -> setHeader(k, v) } }
                 .size(widthPx.coerceAtLeast(1), heightPx.coerceAtLeast(1))
                 .memoryCacheKey(url)
                 .diskCacheKey(url)

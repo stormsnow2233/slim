@@ -983,6 +983,7 @@ fun ComicReaderScreen(
 ) {
     var index by remember { mutableIntStateOf(startIndex.coerceIn(0, (chapters.size - 1).coerceAtLeast(0))) }
     var images by remember { mutableStateOf<List<String>>(emptyList()) }
+    var pageHeaders by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf("") }
     var attempt by remember { mutableStateOf(0) }
@@ -998,7 +999,8 @@ fun ComicReaderScreen(
     val scope = rememberCoroutineScope()
     val listState = androidx.compose.foundation.lazy.rememberLazyListState()
     val pagerState = androidx.compose.foundation.pager.rememberPagerState(pageCount = { images.size })
-    val headers = remember(comic.sourceId) { ComicRepo.imageHeaders(comic) }
+    val defaultHeaders = remember(comic.sourceId) { ComicRepo.imageHeaders(comic) }
+    val activeHeaders = if (pageHeaders.isNotEmpty()) pageHeaders else defaultHeaders
 
     // 预取：进话先抓前几张，翻到哪就把后面两张也抓下来，翻页基本不用等
     val ctx = LocalContext.current
@@ -1010,21 +1012,21 @@ fun ComicReaderScreen(
         cfg.screenHeightDp.dp.roundToPx()
     }
 
-    LaunchedEffect(images) {
+    LaunchedEffect(images, activeHeaders) {
         if (images.isEmpty()) return@LaunchedEffect
         withContext(Dispatchers.IO) {
-            images.take(4).forEach { u -> ComicImages.prefetch(ctx, u, headers, screenW, screenH) }
+            images.take(4).forEach { u -> ComicImages.prefetch(ctx, u, activeHeaders, screenW, screenH) }
         }
         // 下一话的图地址也顺手要回来
         ComicRepo.prefetchPages(comic, chapters.getOrNull(index + 1))
     }
 
-    LaunchedEffect(images.size, mode) {
+    LaunchedEffect(images.size, mode, activeHeaders) {
         if (images.isEmpty()) return@LaunchedEffect
         snapshotFlow { pagerState.currentPage }.collect { p ->
             withContext(Dispatchers.IO) {
                 for (i in (p + 1)..(p + 3)) {
-                    images.getOrNull(i)?.let { ComicImages.prefetch(ctx, it, headers, screenW, screenH) }
+                    images.getOrNull(i)?.let { ComicImages.prefetch(ctx, it, activeHeaders, screenW, screenH) }
                 }
             }
         }
@@ -1065,6 +1067,7 @@ fun ComicReaderScreen(
         val ch = chapters.getOrNull(index) ?: return@LaunchedEffect
         loading = true
         error = ""
+        pageHeaders = emptyMap()
         zoomScale = 1f
         zoomOffset = androidx.compose.ui.geometry.Offset.Zero
         // 本地缓存优先：这一话存过就直接读文件，不碰网络
@@ -1091,6 +1094,10 @@ fun ComicReaderScreen(
         runCatching { withContext(Dispatchers.IO) { ComicRepo.pages(comic, ch) } }
             .onSuccess {
                 images = it.images
+                val merged = defaultHeaders.toMutableMap()
+                if (it.headers.isNotEmpty()) merged.putAll(it.headers)
+                if (it.referer.isNotBlank()) merged["Referer"] = it.referer
+                pageHeaders = merged
                 if (it.images.isNotEmpty()) store.putComicRecord(comic, index, ch.name)
             }
             .onFailure {
@@ -1194,7 +1201,7 @@ fun ComicReaderScreen(
                 ) { page ->
                     ComicPage(
                         src = images.getOrNull(page).orEmpty(),
-                        headers = headers,
+                        headers = activeHeaders,
                     )
                 }
                 // 页码
@@ -1224,7 +1231,7 @@ fun ComicReaderScreen(
                 items(images.size) { i ->
                     ComicPage(
                         src = images[i],
-                        headers = headers,
+                        headers = activeHeaders,
                         fillWidth = true,
                     )
                 }
@@ -1366,7 +1373,7 @@ private fun ComicPage(
     SubcomposeAsyncImage(
         model = ImageRequest.Builder(ctx)
             .data(src)
-            .apply { headers.forEach { (k, v) -> addHeader(k, v) } }
+            .apply { headers.forEach { (k, v) -> setHeader(k, v) } }
             .memoryCacheKey(src)
             .diskCacheKey(src)
             .setParameter("retry", retryKey, memoryCacheKey = null)

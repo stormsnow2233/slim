@@ -254,8 +254,8 @@ class Dm5FamilySource(
             )
         }
         val list = CHAP.findAll(r.body).mapNotNull { m ->
-            val href = m.groupValues[1]
-            val attrs = m.groupValues[2]
+            val attrs = m.groupValues[1]
+            val href = m.groupValues[2]
             val inner = m.groupValues[3]
             // 只认目录项：class 里有 chapteritem，或内部带详情标题节点，或正文就是个话数
             var title = stripTags(inner).trim()
@@ -263,7 +263,9 @@ class Dm5FamilySource(
             // class 在 a 外面，括号里只剩个话数（1151），所以纯数字也算目录项
             val digitOnly = title.matches(Regex("""\d{1,5}"""))
             val isItem = attrs.contains("chapteritem") || inner.contains("detail-list-2-info") ||
-                inner.contains("detail-list-item") || digitOnly
+                inner.contains("detail-list-item") || digitOnly ||
+                title.contains("话") || title.contains("章") || title.contains("回") ||
+                title.contains("卷") || href.matches(Regex("""^/m\d+/?$"""))
             if (!isItem) return@mapNotNull null
             if (digitOnly) title = "第${title}话"
             if (title.isBlank()) title = TITLE_ATTR.find(attrs)?.groupValues?.get(1)?.trim().orEmpty()
@@ -278,6 +280,7 @@ class Dm5FamilySource(
     }
 
     override fun pages(comic: Comic, chapter: ComicChapter): ComicPages {
+        val chapterUrl = abs(chapter.url)
         val r = fetch(pathOf(chapter.url))
         if (!r.ok) {
             throw IllegalStateException(
@@ -286,7 +289,7 @@ class Dm5FamilySource(
         }
         val imgs = JsPacker.imagesFromHtml(r.body)
         if (imgs.isEmpty()) throw IllegalStateException("这一话没解出图片，可能要先在浏览器里看")
-        return ComicPages(chapter.name, imgs, "$origin/", headers())
+        return ComicPages(chapter.name, imgs, chapterUrl, headers(chapterUrl))
     }
 
     /**
@@ -310,11 +313,13 @@ class Dm5FamilySource(
         return out
     }
 
-    override fun headers(): Map<String, String> = mapOf(
-        "Referer" to "$origin/",
+    fun headers(referer: String = "$origin/"): Map<String, String> = mapOf(
+        "Referer" to referer.ifBlank { "$origin/" },
         "User-Agent" to "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 " +
             "(KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
     )
+
+    override fun headers(): Map<String, String> = headers("$origin/")
 
     // ── 解析 ──
 
@@ -400,7 +405,7 @@ class Dm5FamilySource(
     private val BZ_SUB = Regex("""manga-i-list-subtitle"[^>]*>([^<]+)<""")
 
     private val CHAP = Regex(
-        """<a\s+href="(/m\d+/)"([^>]*)>([\s\S]{0,1500}?)</a>""",
+        """<a\s+([^>]*?href=["']?(/m\d+/?)["']?[^>]*)>([\s\S]{0,1500}?)</a>""",
         RegexOption.IGNORE_CASE,
     )
     private val TITLE_ATTR = Regex("""title="([^"]*)"""")

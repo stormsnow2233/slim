@@ -41,8 +41,9 @@ fun ShelfScreen(
     offline: Boolean = false,
 ) {
     // 不在书架上的阅读记忆单独列出来
-    val offShelf = records.filter { r ->
-        shelf.none { it.book.url == r.book.url && it.book.sourceId == r.book.sourceId }
+    val offShelf = remember(shelf, records) {
+        val shelfKeys = shelf.map { it.book.url + it.book.sourceId }.toSet()
+        records.filter { (it.book.url + it.book.sourceId) !in shelfKeys }
     }
     var menuFor by remember { mutableStateOf<String?>(null) }
     var confirmRemove by remember { mutableStateOf<ShelfItem?>(null) }

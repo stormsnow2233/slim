@@ -752,7 +752,7 @@ private fun TabHost(
                     pager.animateScrollToPage(i)
                 }
             },
-            pageFraction = (pager.currentPage + pager.currentPageOffsetFraction),
+            pageFraction = { pager.currentPage + pager.currentPageOffsetFraction },
             modifier = Modifier
                 .align(Alignment.BottomCenter)
                 .fillMaxWidth()

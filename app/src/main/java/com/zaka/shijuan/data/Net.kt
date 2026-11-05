@@ -109,10 +109,12 @@ object Net {
 
     data class Resp(val ok: Boolean, val code: Int, val body: String, val error: String = "", val via: String = "")
 
-    // ── 页面小缓存：只存最近的几十页，避免来回跳转重复下载 ──
-    private val pageCache = object : LinkedHashMap<String, Resp>(64, 0.75f, true) {
-        override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Resp>?): Boolean = size > 48
-    }
+    // ── 页面小缓存：只存最近的几十页，避免来回跳转重复下载（加锁保证并发安全） ──
+    private val pageCache = java.util.Collections.synchronizedMap(
+        object : LinkedHashMap<String, Resp>(64, 0.75f, true) {
+            override fun removeEldestEntry(eldest: MutableMap.MutableEntry<String, Resp>?): Boolean = size > 48
+        }
+    )
 
     /** 记录每个源实际连通的 base（避开挂掉的镜像，后续请求直接走通的） */
     private val bestBase = ConcurrentHashMap<String, String>()

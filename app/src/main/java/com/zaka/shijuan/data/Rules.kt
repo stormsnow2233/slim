@@ -14,9 +14,11 @@ import org.jsoup.nodes.Element
  */
 object Rules {
 
-    private fun pick(root: Element, selector: String): Element? {
+    internal fun pick(root: Element, selector: String): Element? {
         if (selector.isBlank()) return root
-        return runCatching { root.selectFirst(selector) }.getOrNull()
+        return runCatching {
+            if (root.`is`(selector)) root else root.selectFirst(selector)
+        }.getOrNull()
     }
 
     private fun pickAll(root: Element, selector: String): List<Element> {
@@ -26,7 +28,7 @@ object Rules {
 
     private val REGEX_SPEC = Regex("^#+(.+?)#+(.*)$", RegexOption.DOT_MATCHES_ALL)
 
-    private fun applyRegex(s: String, spec: String): String {
+    internal fun applyRegex(s: String, spec: String): String {
         val m = REGEX_SPEC.find(spec) ?: return s
         return runCatching { s.replace(Regex(m.groupValues[1]), m.groupValues[2]) }.getOrDefault(s)
     }
@@ -48,7 +50,7 @@ object Rules {
     }
 
     /** 按一条规则取值 */
-    fun extract(root: Element, rule: String, baseUrl: String): String {
+    fun extract(root: Element, rule: String, baseUrl: String = ""): String {
         if (rule.isBlank()) return ""
         for (branch in rule.split("||")) {
             var expr = branch.trim()
@@ -68,8 +70,14 @@ object Rules {
                 selector = expr.substring(0, at).trim()
                 field = expr.substring(at + 1).trim().ifBlank { "text" }
             } else {
-                selector = expr
-                field = "text"
+                val low = expr.lowercase()
+                if (low in setOf("text", "html", "outer", "own", "texts", "href", "src", "data-src", "content", "title", "alt")) {
+                    selector = ""
+                    field = low
+                } else {
+                    selector = expr
+                    field = "text"
+                }
             }
 
             val el = pick(root, selector)
