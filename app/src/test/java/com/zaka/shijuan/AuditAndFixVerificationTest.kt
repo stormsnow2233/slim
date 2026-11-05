@@ -324,4 +324,29 @@ class AuditAndFixVerificationTest {
         assertEquals(1, offShelf.size)
         assertEquals("书C", offShelf[0].book.name)
     }
+
+    @Test
+    fun testSfSoftErrorRecognition() {
+        val softErrorHtml = "<html><body>很抱歉，您访问的页面暂时无法访问哦</body></html>"
+        assertTrue(BookRepo.isSoftError(softErrorHtml))
+        assertFalse(BookRepo.isSoftError("<html><body><div class='yuedu Content_Frame'><div>正文内容很多很长...</div></div></body></html>"))
+    }
+
+    @Test
+    fun testSfContentSelectors() {
+        val sfHtml = """
+            <div class="yuedu Content_Frame" style="margin-top:0.4rem;">
+                <div style="text-indent: 2em;">
+                    <p>布雷住在纽汉镇的一个普通村民，目前的工作是务农。</p>
+                    <p>当然，这并不是让人瞧不起的工作，至少布雷其实很满意。</p>
+                </div>
+            </div>
+        """.trimIndent()
+        val doc = Rules.parse(sfHtml)
+        val sfacg = Sources.byId("sfacg")!!
+        assertNotNull(sfacg)
+        assertTrue(sfacg.enabledByDefault)
+        val rule = sfacg.content!!
+        assertTrue(rule.body.contains("Content_Frame"))
+    }
 }

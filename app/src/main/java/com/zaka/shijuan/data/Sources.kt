@@ -335,7 +335,7 @@ object Sources {
             ),
             // 书页 /b/{id}/ 没有章节列表，目录另有一页 /i/{id}/
             toc = TocRule(list = "ul.mulu_list a", name = "@text", url = "@href", page = "https://m.sfacg.com/i/{id}/"),
-            content = ContentRule(body = ".Content_Frame > div@html || .yuedu > div@html || #content@html"),
+            content = ContentRule(body = "div.yuedu.Content_Frame > div@html || .Content_Frame > div@html || .yuedu [style*=\"text-indent\"]@html || [style*=\"text-indent\"]@html || .yuedu@html || #content@html"),
         ),
 
         Source(

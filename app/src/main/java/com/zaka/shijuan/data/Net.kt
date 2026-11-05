@@ -31,6 +31,12 @@ object Net {
         maxRequestsPerHost = 8
     }
 
+    /** 专供慢速/易被流控站点（如 SF轻小说）的独立通道：连接 12s / 读取 35s / 总 48s，严格限制单主机并发 2 */
+    private val slowDispatcher = Dispatcher().apply {
+        maxRequests = 8
+        maxRequestsPerHost = 2
+    }
+
     /** 代理配置：填了就走它，没填就直连 */
     data class ProxyCfg(
         val enabled: Boolean = false,
@@ -47,6 +53,7 @@ object Net {
 
     @Volatile private var client: OkHttpClient = buildClient(ProxyCfg())
     @Volatile private var fastClient: OkHttpClient = buildFastClient(ProxyCfg())
+    @Volatile private var slowClient: OkHttpClient = buildSlowClient(ProxyCfg())
 
     /** 改了代理立刻换新连接，不用重启 App */
     fun setProxy(cfg: ProxyCfg) {
@@ -54,6 +61,7 @@ object Net {
         proxyCfg = cfg
         client = buildClient(cfg)
         fastClient = buildFastClient(cfg)
+        slowClient = buildSlowClient(cfg)
         pageCache.clear()
         bestBase.clear()
         com.zaka.shijuan.ui.ComicImages.invalidate()
@@ -90,6 +98,23 @@ object Net {
             .followRedirects(true)
             .followSslRedirects(true)
             .retryOnConnectionFailure(false)
+        applyProxy(b, cfg)
+        return b.build()
+    }
+
+    /** 专用于慢速/易流控源（如 SF 轻小说）的慢速通道（长超时 + 限 2 并发） */
+    private fun buildSlowClient(cfg: ProxyCfg): OkHttpClient {
+        val b = OkHttpClient.Builder()
+            .dispatcher(slowDispatcher)
+            .connectionPool(ConnectionPool(8, 5, TimeUnit.MINUTES))
+            .connectTimeout(12, TimeUnit.SECONDS)
+            .readTimeout(35, TimeUnit.SECONDS)
+            .writeTimeout(35, TimeUnit.SECONDS)
+            .callTimeout(48, TimeUnit.SECONDS)
+            .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .retryOnConnectionFailure(true)
         applyProxy(b, cfg)
         return b.build()
     }
@@ -177,7 +202,9 @@ object Net {
         headers: Map<String, String> = emptyMap(),
         useCache: Boolean = false,
         fast: Boolean = false,
+        slow: Boolean = false,
     ): Resp {
+        val isSlow = slow || url.contains("sfacg.com")
         val key = "G|$url|$charset"
         if (useCache) synchronized(pageCache) { pageCache[key] }?.let { return it }
         val builder = Request.Builder().url(safeUrl(url))
@@ -194,7 +221,7 @@ object Net {
         builder.header("Sec-Fetch-User", "?1")
         if (referer.isNotBlank()) builder.header("Referer", referer)
         headers.forEach { (k, v) -> builder.header(k, v) }
-        val resp = exec(builder.build(), charset, fast = fast)
+        val resp = exec(builder.build(), charset, fast = fast, slow = isSlow)
         if (useCache && resp.ok) synchronized(pageCache) { pageCache[key] = resp }
         return resp
     }
@@ -207,7 +234,9 @@ object Net {
         headers: Map<String, String> = emptyMap(),
         encoded: Boolean = false,
         fast: Boolean = false,
+        slow: Boolean = false,
     ): Resp {
+        val isSlow = slow || url.contains("sfacg.com")
         val fb = FormBody.Builder()
         if (encoded) {
             body.forEach { (k, v) -> fb.addEncoded(k, v) }
@@ -228,7 +257,7 @@ object Net {
         builder.post(fb.build())
         if (referer.isNotBlank()) builder.header("Referer", referer)
         headers.forEach { (k, v) -> builder.header(k, v) }
-        return exec(builder.build(), charset, fast = fast)
+        return exec(builder.build(), charset, fast = fast, slow = isSlow)
     }
 
     fun getBytes(url: String, referer: String = ""): ByteArray? = runCatching {
@@ -309,13 +338,13 @@ object Net {
      * 请求外壳：https 被 403 时尝试降级 http。
      * 移除对网络故障/超时的隐式休眠重试，使多域名轮询与镜像降级能够尽快切换。
      */
-    private fun exec(request: Request, charset: String, depth: Int = 0, fast: Boolean = false): Resp {
-        var r = once(request, charset, depth, fast = fast)
+    private fun exec(request: Request, charset: String, depth: Int = 0, fast: Boolean = false, slow: Boolean = false): Resp {
+        var r = once(request, charset, depth, fast = fast, slow = slow)
         if (r.ok) return r
         if (depth == 0 && r.code == 403) {
             val httpReq = toHttp(request)
             if (httpReq != null) {
-                val r2 = once(httpReq, charset, depth, fast = fast)
+                val r2 = once(httpReq, charset, depth, fast = fast, slow = slow)
                 if (r2.ok) return r2
                 r = r2
             }
@@ -331,8 +360,12 @@ object Net {
         return request.newBuilder().url(httpUrl).build()
     }
 
-    private fun once(request: Request, charset: String, depth: Int = 0, fast: Boolean = false): Resp = try {
-        val targetClient = if (fast) fastClient else client
+    private fun once(request: Request, charset: String, depth: Int = 0, fast: Boolean = false, slow: Boolean = false): Resp = try {
+        val targetClient = when {
+            slow -> slowClient
+            fast -> fastClient
+            else -> client
+        }
         targetClient.newCall(request).execute().use { r ->
             val bytes = r.body?.bytes() ?: ByteArray(0)
             val text = decode(bytes, charset, r.header("Content-Type"))
@@ -352,7 +385,7 @@ object Net {
                             .header("Referer", finalUrl)
                             .header("Accept-Language", "zh-CN,zh;q=0.9")
                             .build()
-                        return exec(again, charset, depth + 1, fast = fast)
+                        return exec(again, charset, depth + 1, fast = fast, slow = slow)
                     }
                 }
             }

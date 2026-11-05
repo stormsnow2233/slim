@@ -227,8 +227,8 @@ object BookRepo {
         val b = Thread { tocRef.set(runCatching { getToc(src, book) }.getOrElse { Result.failure(it) }) }
         a.isDaemon = true; b.isDaemon = true
         a.start(); b.start()
-        runCatching { a.join(18000) }
-        runCatching { b.join(18000) }
+        runCatching { a.join(35000) }
+        runCatching { b.join(35000) }
         return detRef.get() to tocRef.get()
     }
 
@@ -372,18 +372,35 @@ object BookRepo {
         return Result.success(Toc(list, cover, intro, author))
     }
 
+    /** 软错误页识别（源站 HTTP 200 但内容是报错/空壳） */
+    fun isSoftError(body: String): Boolean {
+        if (body.isBlank()) return false
+        return body.contains("您访问的页面暂时无法访问") || body.contains("页面找不到了") ||
+            body.contains("页面不存在") || body.contains("系统繁忙") || body.contains("访问过于频繁") ||
+            body.contains("暂时无法访问哦")
+    }
+
     /** 正文 */
     fun getChapter(src: Source, chapter: Chapter): Result<Content> {
         val base = ActiveBases[src.id] ?: src.base
-        var resp = Net.get(chapter.url, src.charset, base + "/")
+        val isSlow = src.id == "sfacg" || chapter.url.contains("sfacg.com")
+        var resp = Net.get(chapter.url, src.charset, base + "/", slow = isSlow)
+        if (!resp.ok || isSoftError(resp.body)) {
+            // 正文拿失败、或拿到软错误页 → 隔 450ms 重试一次（SF 等源站偶发错误页/排队抖动，重试大多能成功）
+            runCatching { Thread.sleep(450) }
+            val retry = Net.get(chapter.url, src.charset, base + "/", slow = isSlow)
+            if (retry.ok && !isSoftError(retry.body)) {
+                resp = retry
+            }
+        }
         if (!resp.ok && src.mirrors.isNotEmpty()) {
             val curUri = runCatching { java.net.URI(chapter.url) }.getOrNull()
             if (curUri != null) {
                 for (mirror in src.mirrors) {
                     val mirrorUri = runCatching { java.net.URI(mirror) }.getOrNull() ?: continue
                     val altUrl = java.net.URI(mirrorUri.scheme, mirrorUri.authority, curUri.path, curUri.query, curUri.fragment).toString()
-                    val r2 = Net.get(altUrl, src.charset, "$mirror/")
-                    if (r2.ok) {
+                    val r2 = Net.get(altUrl, src.charset, "$mirror/", slow = isSlow)
+                    if (r2.ok && !isSoftError(r2.body)) {
                         resp = r2
                         ActiveBases[src.id] = mirror
                         break
@@ -391,7 +408,21 @@ object BookRepo {
                 }
             }
         }
-        if (!resp.ok) return Result.failure(Exception(resp.error))
+        if (!resp.ok) {
+            val err = resp.error
+            val msg = when {
+                err.contains("超时") -> "正文请求超时（源站排队过慢，建议稍后刷新重试）"
+                err.contains("403") -> "源站 403 拦截（防爬机制触发，建议换源或稍后再试）"
+                err.isNotBlank() -> "网络请求失败：$err"
+                else -> "正文请求失败"
+            }
+            return Result.failure(Exception(msg))
+        }
+
+        if (isSoftError(resp.body)) {
+            return Result.failure(Exception("源站返回「页面暂时无法访问」（该老书在手机站未开放或章节已下线），换个源搜同名书试试"))
+        }
+
         val doc = Rules.parse(resp.body)
         val c = src.content
 
@@ -439,11 +470,13 @@ object BookRepo {
                 .firstOrNull { page.contains(it) }
             if (vipMark != null)
                 return Result.failure(Exception("这章是源站的付费/VIP 章节，得先在源站登录购买才能看，建议换个源搜同名书"))
+            if (isErrorPage(doc))
+                return Result.failure(Exception("源站返回「暂时无法访问」（该老书在手机站未开放或已下线），建议换个源搜同名书"))
         }
         if (html.isBlank()) {
             if (isErrorPage(doc))
-                return Result.failure(Exception("源站这一章打不开（它返回的是「页面无法访问」），这本书在网页版多半被限制了，换个源搜同名书试试"))
-            return Result.failure(Exception("正文没取到（可能这章要登录或要付费）"))
+                return Result.failure(Exception("源站返回「暂时无法访问」（该老书在手机站未开放或已下线），建议换个源搜同名书"))
+            return Result.failure(Exception("正文未解析出内容（可能章节需要登录或该页结构改版）"))
         }
 
         // 分页拼接
@@ -457,7 +490,7 @@ object BookRepo {
                 if (href.isBlank()) break
                 val nextUrl = Rules.absUrl(curUrl, href)
                 if (!Regex("[_\\-/]\\d+(_\\d+)?\\.html?$").containsMatchIn(nextUrl)) break
-                val r2 = Net.get(nextUrl, src.charset, base + "/")
+                val r2 = Net.get(nextUrl, src.charset, base + "/", slow = isSlow)
                 if (!r2.ok) break
                 val d2 = Rules.parse(r2.body)
                 val more = Rules.autoContent(d2)
@@ -474,10 +507,10 @@ object BookRepo {
         // 一百字以下基本不是正文：要么被拦，要么抓到的是书页/推荐列表那几行字
         if (len < 120) {
             if (isErrorPage(doc))
-                return Result.failure(Exception("源站这一章打不开（它返回的是「页面无法访问」），这本书在网页版多半被限制了，换个源搜同名书试试"))
+                return Result.failure(Exception("源站返回「暂时无法访问」（该老书在手机站未开放或已下线），建议换个源搜同名书"))
             if (doc.select("a[href]").size >= 12)
                 return Result.failure(Exception("抓到的这页是书籍页/目录页，不是正文，可能这站改版了"))
-            return Result.failure(Exception("正文太短（${len} 字），可能被站点拦截了"))
+            return Result.failure(Exception("正文内容过短（仅 ${len} 字），可能触发源站拦截或防盗提示"))
         }
         return Result.success(Content(title, text, cleaned))
     }
@@ -491,8 +524,7 @@ object BookRepo {
         val t = runCatching { doc.title() }.getOrDefault("")
         if (t.contains("出错") || t.contains("无法访问") || t.contains("页面找不到") || t.contains("404")) return true
         val body = runCatching { doc.body()?.text().orEmpty() }.getOrDefault("")
-        return body.contains("您访问的页面暂时无法访问") || body.contains("页面找不到了") ||
-            body.contains("页面不存在") || body.contains("出错啦")
+        return isSoftError(body) || body.contains("出错啦")
     }
 
     /** 地址形态：数字统一抹成 N。/b/785881/ 和 /b/142354/ 是同形，/c/9958959/ 不是 */
@@ -551,6 +583,8 @@ object BookRepo {
     }
 
     private val CONTENT_SELECTORS = listOf(
+        "div.yuedu.Content_Frame > div", ".Content_Frame > div", ".yuedu [style*=\"text-indent\"]",
+        "[style*=\"text-indent\"]", ".yuedu",
         "#content", "#chaptercontent", "#acontent", "#booktext", "#txtContent",
         "#nr1", "#nr", "#mlfy_main_text", "#zjny", "#contentbox", "#booktxt",
         "#htmlContent", "#chapter-content", "#article-content", "#BookText",
