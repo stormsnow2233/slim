@@ -48,6 +48,27 @@ data class ExportState(
  */
 object Exporter {
 
+    val UTF8_BOM = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
+
+    /** 严格嗅探与解码外部下载的 TXT 字节（优先 BOM / 严格 UTF-8，遇到非法序列回退 GB18030） */
+    fun decodeNovelBytes(bytes: ByteArray): String {
+        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+            return String(bytes, 3, bytes.size - 3, Charsets.UTF_8)
+        }
+        val utf8Decoder = Charsets.UTF_8.newDecoder()
+            .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+        val utf8Result = runCatching {
+            utf8Decoder.decode(java.nio.ByteBuffer.wrap(bytes)).toString()
+        }.getOrNull()
+        if (utf8Result != null && !utf8Result.contains("\uFFFD")) {
+            return utf8Result
+        }
+        return runCatching {
+            String(bytes, java.nio.charset.Charset.forName("GB18030"))
+        }.getOrElse { String(bytes, Charsets.UTF_8) }
+    }
+
     val state = MutableStateFlow(ExportState())
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -85,11 +106,12 @@ object Exporter {
                     state.value = state.value.copy(current = "尝试整本直下…")
                     val bytes = Net.getBytes(direct, referer = "https://www.wenku8.net/")
                     if (bytes != null && bytes.size > 4000) {
-                        val text = String(bytes, Charsets.UTF_8)
+                        val text = decodeNovelBytes(bytes)
                         if (text.length > 2000 && !text.contains("<html", true) && !text.contains("<script", true)) {
                             val safeName = sanitize(book.name)
                             val fileName = "$safeName.txt"
-                            saveToDownloads(appCtx, fileName, "text/plain", bytes)
+                            val outBytes = UTF8_BOM + text.toByteArray(Charsets.UTF_8)
+                            saveToDownloads(appCtx, fileName, "text/plain", outBytes)
                                 .onSuccess { path ->
                                     state.value = state.value.copy(
                                         running = false, finished = true, done = total, total = total,
@@ -136,7 +158,11 @@ object Exporter {
             val safeName = sanitize(book.name)
             val fileName = "$safeName.${format.lowercase()}"
             val bytes = try {
-                if (format.equals("epub", true)) buildEpub(book, items) else buildTxt(book, items).toByteArray(Charsets.UTF_8)
+                if (format.equals("epub", true)) {
+                    buildEpub(book, items)
+                } else {
+                    UTF8_BOM + buildTxt(book, items).toByteArray(Charsets.UTF_8)
+                }
             } catch (e: Exception) {
                 state.value = state.value.copy(running = false, failed = true, message = "生成文件失败：${e.message}")
                 return@launch

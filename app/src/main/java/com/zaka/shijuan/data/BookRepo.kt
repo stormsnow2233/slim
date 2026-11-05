@@ -64,8 +64,8 @@ object BookRepo {
                         val kv = it.split("=", limit = 2)
                         if (kv.size == 2) body[kv[0]] = kv[1]
                     }
-                    if (body.isEmpty()) body["searchkey"] = key
-                    Net.post(full, body, src.charset, base + "/")
+                    if (body.isEmpty()) body["searchkey"] = enc(key, keyCharset)
+                    Net.post(full, body, src.charset, base + "/", encoded = true)
                 } else {
                     Net.get(full, src.charset, base + "/")
                 }
@@ -545,7 +545,7 @@ object BookRepo {
                 try { onUpdate(r) } finally { latch.countDown() }
             }
         }
-        runCatching { latch.await(20, java.util.concurrent.TimeUnit.SECONDS) }
+        runCatching { latch.await(15, java.util.concurrent.TimeUnit.SECONDS) }
     }
 
     /** 当前每个源实际连通的域名 */

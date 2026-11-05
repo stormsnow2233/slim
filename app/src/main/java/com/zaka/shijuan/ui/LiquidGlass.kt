@@ -12,8 +12,6 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectDragGestures
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Menu
@@ -28,6 +26,7 @@ import androidx.compose.material3.ripple
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
@@ -74,7 +73,6 @@ fun LiquidGlassBar(
     val shape = RoundedCornerShape(26.dp)
 
     var barSize by remember { mutableStateOf(Size.Zero) }
-    var pillDrag by remember { mutableFloatStateOf(0f) }
 
     // 点击时的「啵」一下：胶囊瞬间撑大再弹回，酷安那种手感。
     val pillScale = remember { Animatable(1f) }
@@ -113,10 +111,20 @@ fun LiquidGlassBar(
                 spotColor = Color.Black.copy(alpha = 0.20f),
             )
             .clip(shape)
-            .background(Brush.verticalGradient(listOf(glassTop, glassBottom)))
             .border(1.dp, borderColor, shape)
             .onSizeChanged { barSize = Size(it.width.toFloat(), it.height.toFloat()) }
     ) {
+        // 毛玻璃底色（Android 12+ API 31+ 原生硬件级高斯模糊）
+        Box(
+            Modifier
+                .matchParentSize()
+                .then(
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                        Modifier.blur(20.dp)
+                    } else Modifier
+                )
+                .background(Brush.verticalGradient(listOf(glassTop, glassBottom)))
+        )
         // 玻璃表面流动的高光
         if (barSize.width > 0f) {
             Box(
@@ -155,11 +163,7 @@ fun LiquidGlassBar(
             val insetPx = with(density) { inset.toPx() }
 
             val basePx = pageFraction.coerceIn(0f, (count - 1).toFloat()) * cellPx
-            val pillX by animateFloatAsState(
-                targetValue = basePx + pillDrag,
-                animationSpec = spring(dampingRatio = 0.78f, stiffness = 560f),
-                label = "pill",
-            )
+            val pillX = basePx
 
             // 胶囊（只在它自己身上响应拖动）
             Box(
@@ -252,57 +256,10 @@ fun LiquidGlassBar(
                     }
                 }
             }
-
-            // 拖动层：盖在胶囊正上方，只有这一小块能接手势。
-            // 点别的格子照常是点击（tap 会落到下面那层按钮上），
-            // 只有从胶囊上按下并横向拖动，胶囊才跟着手指走。
-            val baseNow by rememberUpdatedState(basePx)
-            var dragging by remember { mutableStateOf(false) }
-            Box(
-                Modifier
-                    .offset { IntOffset((pillX + insetPx).roundToInt(), 0) }
-                    .width(cell - inset * 2)
-                    .height(46.dp)
-                    .pointerInput(count, cellPx) {
-                        detectHorizontalDragGestures(
-                            onDragEnd = {
-                                if (dragging) {
-                                    val target = ((baseNow + pillDrag + insetPx) / cellPx)
-                                        .roundToInt().coerceIn(0, count - 1)
-                                    pillDrag = 0f
-                                    if (target != selected) onSelect(target)
-                                }
-                                dragging = false
-                            },
-                            onDragCancel = {
-                                pillDrag = 0f
-                                dragging = false
-                            },
-                            onHorizontalDrag = { change, amount ->
-                                dragging = true
-                                change.consume()
-                                val left = -baseNow
-                                val right = cellPx * (count - 1) - baseNow
-                                pillDrag = (pillDrag + amount)
-                                    .coerceIn(minOf(left, right), maxOf(left, right))
-                            },
-                        )
-                    }
-            )
         }
     }
 }
 
-/** 按压缩放动画 */
-@Composable
-fun animatedScale(pressed: Boolean): Float {
-    val v by animateFloatAsState(
-        targetValue = if (pressed) 0.96f else 1f,
-        animationSpec = spring(dampingRatio = 0.6f, stiffness = 700f),
-        label = "press",
-    )
-    return v
-}
 
 /**
  * 侧栏入口：小说 / 漫画 的切换放在抽屉里，这里就是那个按钮。

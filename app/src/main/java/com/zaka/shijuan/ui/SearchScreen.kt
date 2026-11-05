@@ -338,6 +338,14 @@ fun SearchScreen(
                     }
                 }
             }
+        } else if (merged.isEmpty() && running) {
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(36.dp),
+                    strokeWidth = 3.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
         } else if (merged.isEmpty() && !running) {
             EmptyState(
                 title = "没找到「$searched」",
@@ -347,7 +355,7 @@ fun SearchScreen(
             )
         } else {
             LazyColumn(
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 28.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 104.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
             ) {
                 items(merged, key = { it.name + it.primary.sourceId }) { m ->

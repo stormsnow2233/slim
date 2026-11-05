@@ -195,7 +195,7 @@ class Dm5FamilySource(
                     val latest = o.optString("LastPartName").trim()
                     Comic(
                         name = title,
-                        url = abs("$url/"),
+                        url = abs(url.trimEnd('/')),
                         latest = if (latest == "暂无章节") "" else latest,
                         sourceId = id,
                         sourceName = name,
@@ -297,7 +297,7 @@ class Dm5FamilySource(
         val need = list.withIndex().filter { it.value.cover.isBlank() }.take(coverFillLimit)
         if (need.isEmpty()) return list
         val out = list.toMutableList()
-        val pool = Executors.newFixedThreadPool(6)
+        val pool = Executors.newFixedThreadPool(2)
         try {
             val jobs = need.map { (idx, c) -> idx to pool.submit(Callable { c to detail(c) }) }
             for ((idx, f) in jobs) {
@@ -337,7 +337,7 @@ class Dm5FamilySource(
                 Comic(
                     name = title,
                     cover = abs(cover),
-                    url = abs(href),
+                    url = abs(href.trimEnd('/')),
                     latest = latest,
                     sourceId = id,
                     sourceName = name,
@@ -362,7 +362,7 @@ class Dm5FamilySource(
                 Comic(
                     name = title,
                     cover = abs(cover),
-                    url = abs(href),
+                    url = abs(href.trimEnd('/')),
                     intro = sub,
                     sourceId = id,
                     sourceName = name,

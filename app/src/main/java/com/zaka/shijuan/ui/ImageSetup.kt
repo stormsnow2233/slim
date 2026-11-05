@@ -33,12 +33,19 @@ object ComicImages {
         cached ?: build(ctx.applicationContext).also { cached = it }
     }
 
+    fun invalidate() {
+        synchronized(this) {
+            cached = null
+        }
+    }
+
     private fun build(ctx: Context): ImageLoader {
-        val client = OkHttpClient.Builder()
+        val clientBuilder = OkHttpClient.Builder()
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(25, TimeUnit.SECONDS)
             .retryOnConnectionFailure(true)
-            .build()
+        com.zaka.shijuan.data.Net.applyProxy(clientBuilder)
+        val client = clientBuilder.build()
         return ImageLoader.Builder(ctx)
             .okHttpClient { client }
             .memoryCache {

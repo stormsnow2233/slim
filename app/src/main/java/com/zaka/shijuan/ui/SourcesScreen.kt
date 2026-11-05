@@ -113,7 +113,7 @@ fun SourcesScreen(
         }
 
         LazyColumn(
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 28.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 104.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {
             groups.forEach { (group, list) ->
@@ -248,7 +248,7 @@ fun MineScreen(
         Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
             StatCard("书架", "$shelfCount", Modifier.weight(1f))
             StatCard("书源", "$enabledCount", Modifier.weight(1f))
-            StatCard("版本", "2.0", Modifier.weight(1f))
+            StatCard("版本", com.zaka.shijuan.BuildConfig.VERSION_NAME, Modifier.weight(1f))
         }
 
         Spacer(Modifier.height(22.dp))
@@ -310,12 +310,12 @@ fun MineScreen(
 
         Spacer(Modifier.height(26.dp))
         Text(
-            "拾卷 2.0 · 原生安卓版\n书源内容来自各公开站点，仅供个人阅读使用",
+            "拾卷 ${com.zaka.shijuan.BuildConfig.VERSION_NAME} · 原生安卓版\n书源内容来自各公开站点，仅供个人阅读使用",
             style = MaterialTheme.typography.labelMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             lineHeight = 18.sp,
         )
-        Spacer(Modifier.height(30.dp))
+        Spacer(Modifier.height(104.dp))
     }
 
     if (showClear) {

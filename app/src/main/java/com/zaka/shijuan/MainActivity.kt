@@ -118,9 +118,18 @@ fun ShijuanApp() {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val uiScope = rememberCoroutineScope()
     var section by remember { mutableStateOf(Section.Novel) }
+    var showSettings by remember { mutableStateOf(false) }
     // 页签状态提到这一层：进详情、加书源回来时不会跳回第一页
     val pager = rememberPagerState(pageCount = { Tab.entries.size })
     val openDrawer = { uiScope.launch { drawerState.open() }; Unit }
+
+    if (showSettings) {
+        SettingsDialog(
+            onDismiss = { showSettings = false },
+            onOpenNetwork = { route = Route.Network },
+            onOpenCache = { route = Route.Cache },
+        )
+    }
 
     ModalNavigationDrawer(
         drawerState = drawerState,
@@ -140,6 +149,10 @@ fun ShijuanApp() {
                 },
                 onOpenNetwork = {
                     route = Route.Network
+                    uiScope.launch { drawerState.close() }
+                },
+                onOpenSettings = {
+                    showSettings = true
                     uiScope.launch { drawerState.close() }
                 },
             )
@@ -308,6 +321,7 @@ private fun SectionDrawer(
     onPick: (Section) -> Unit,
     onOpenCache: () -> Unit = {},
     onOpenNetwork: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
 ) {
     ModalDrawerSheet(
         drawerShape = RoundedCornerShape(topEnd = 26.dp, bottomEnd = 26.dp),
@@ -434,7 +448,228 @@ private fun SectionDrawer(
                 )
             }
         }
+
+        Spacer(Modifier.weight(1f))
+        HorizontalDivider(Modifier.padding(horizontal = 22.dp))
+        Spacer(Modifier.height(8.dp))
+
+        // 设置入口
+        Row(
+            modifier = Modifier
+                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .clickable { onOpenSettings() }
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Settings,
+                contentDescription = "设置",
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("设置", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "检查更新 · 关于",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+        Spacer(Modifier.height(16.dp))
     }
+}
+
+@Composable
+private fun SettingsDialog(
+    onDismiss: () -> Unit,
+    onOpenNetwork: () -> Unit,
+    onOpenCache: () -> Unit,
+) {
+    val ctx = LocalContext.current
+    val scope = rememberCoroutineScope()
+    var checking by remember { mutableStateOf(false) }
+    var releaseInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
+    var updateMsg by remember { mutableStateOf("") }
+    var downloading by remember { mutableStateOf(false) }
+    var downloadProgress by remember { mutableFloatStateOf(0f) }
+    var downloadedFile by remember { mutableStateOf<java.io.File?>(null) }
+
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text("设置", fontWeight = FontWeight.Bold) },
+        text = {
+            Column(Modifier.fillMaxWidth()) {
+                // 检查更新
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        if (checking || downloading) return@clickable
+                        checking = true
+                        updateMsg = ""
+                        scope.launch {
+                            UpdateManager.checkUpdate().fold(
+                                onSuccess = { info ->
+                                    checking = false
+                                    releaseInfo = info
+                                    if (!info.hasUpdate) {
+                                        updateMsg = "已是最新版本 (v${BuildConfig.VERSION_NAME})"
+                                    }
+                                },
+                                onFailure = {
+                                    checking = false
+                                    updateMsg = "检查失败：${it.message}"
+                                }
+                            )
+                        }
+                    }.padding(12.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Update, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("检查更新", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                when {
+                                    checking -> "正在连接 GitHub…"
+                                    updateMsg.isNotBlank() -> updateMsg
+                                    releaseInfo?.hasUpdate == true -> "发现新版本 ${releaseInfo?.tagName}"
+                                    else -> "当前版本 v${BuildConfig.VERSION_NAME}"
+                                },
+                                fontSize = 11.sp,
+                                color = if (releaseInfo?.hasUpdate == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        if (checking) {
+                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        }
+                    }
+                }
+
+                // 若发现新版本，展开 Release Notes 与下载安装按钮
+                releaseInfo?.takeIf { it.hasUpdate }?.let { rel ->
+                    Spacer(Modifier.height(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
+                        modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp)
+                    ) {
+                        Column(Modifier.padding(12.dp)) {
+                            Text("新版本 ${rel.tagName}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
+                            if (rel.changelog.isNotBlank()) {
+                                Spacer(Modifier.height(4.dp))
+                                Text(
+                                    rel.changelog,
+                                    fontSize = 12.sp,
+                                    maxLines = 6,
+                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            Spacer(Modifier.height(8.dp))
+                            if (downloading) {
+                                LinearProgressIndicator(
+                                    progress = { downloadProgress },
+                                    modifier = Modifier.fillMaxWidth().height(6.dp)
+                                )
+                                Spacer(Modifier.height(4.dp))
+                                Text("下载中 ${(downloadProgress * 100).toInt()}%", fontSize = 10.sp)
+                            } else if (downloadedFile != null) {
+                                Button(
+                                    onClick = { UpdateManager.installApk(ctx, downloadedFile!!) },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("立即安装")
+                                }
+                            } else {
+                                Button(
+                                    onClick = {
+                                        downloading = true
+                                        scope.launch {
+                                            UpdateManager.downloadApk(ctx, rel.downloadUrl) { bytes, total ->
+                                                if (total > 0) downloadProgress = (bytes.toFloat() / total).coerceIn(0f, 1f)
+                                            }.fold(
+                                                onSuccess = { file ->
+                                                    downloading = false
+                                                    downloadedFile = file
+                                                    UpdateManager.installApk(ctx, file)
+                                                },
+                                                onFailure = {
+                                                    downloading = false
+                                                    updateMsg = "下载失败：${it.message}"
+                                                }
+                                            )
+                                        }
+                                    },
+                                    modifier = Modifier.fillMaxWidth()
+                                ) {
+                                    Text("下载并更新")
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                // 网络代理快捷入口
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        onDismiss()
+                        onOpenNetwork()
+                    }.padding(12.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.Wifi, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("网络代理配置", style = MaterialTheme.typography.titleSmall)
+                            Text(
+                                if (Net.proxy().usable) "代理已开 · ${Net.proxy().host}" else "直连 · 可配置 HTTP/SOCKS 代理",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(8.dp))
+                // 缓存清理快捷入口
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    modifier = Modifier.fillMaxWidth().clickable {
+                        onDismiss()
+                        onOpenCache()
+                    }.padding(12.dp)
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Icon(Icons.Rounded.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
+                        Spacer(Modifier.width(12.dp))
+                        Column(Modifier.weight(1f)) {
+                            Text("缓存管理与清理", style = MaterialTheme.typography.titleSmall)
+                            Text("小说与漫画离线内容占用", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(12.dp))
+                Text(
+                    "关于：拾卷 (Slim) 开源阅读器\n项目地址：github.com/stormsnow2233/slim",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(onClick = onDismiss) { Text("关闭") }
+        }
+    )
 }
 
 /**
@@ -459,24 +694,6 @@ private fun TabHost(
     onAddSource: () -> Unit = {},
     onEditSource: (Source) -> Unit = {},
 ) {
-    // 断网：只剩书架，别的都要联网，没必要摆着
-    if (!online) {
-        Box(Modifier.fillMaxSize()) {
-            ShelfScreen(
-                shelf = shelf,
-                records = records,
-                onOpen = { item -> onOpenBook(item.book) },
-                onRemove = { item -> onRemoveShelf(item) },
-                onOpenRecord = onOpenRecord,
-                onRemoveRecord = onRemoveRecord,
-                onBrowse = {},
-                onOpenDrawer = onOpenDrawer,
-                offline = true,
-            )
-        }
-        return
-    }
-
     val scope = rememberCoroutineScope()
     val tabs = Tab.entries
 
@@ -487,49 +704,40 @@ private fun TabHost(
             beyondViewportPageCount = 1,
             pageSpacing = 0.dp,
         ) { page ->
-            Box(Modifier.fillMaxSize()) {
-                when (tabs[page]) {
-                    Tab.Shelf -> Box(Modifier.fillMaxSize().padding(bottom = 92.dp)) {
-                        ShelfScreen(
-                            shelf = shelf,
-                            records = records,
-                            onOpen = { item -> onOpenBook(item.book) },
-                            onRemove = { item -> onRemoveShelf(item) },
-                            onOpenRecord = onOpenRecord,
-                            onRemoveRecord = onRemoveRecord,
-                            onBrowse = { scope.launch { pager.animateScrollToPage(1) } },
-                            onOpenDrawer = onOpenDrawer,
-                        )
-                    }
+            when (tabs[page]) {
+                Tab.Shelf -> ShelfScreen(
+                    shelf = shelf,
+                    records = records,
+                    onOpen = { item -> onOpenBook(item.book) },
+                    onRemove = { item -> onRemoveShelf(item) },
+                    onOpenRecord = onOpenRecord,
+                    onRemoveRecord = onRemoveRecord,
+                    onBrowse = { scope.launch { pager.animateScrollToPage(1) } },
+                    onOpenDrawer = onOpenDrawer,
+                    offline = !online,
+                )
 
-                    Tab.Search -> Box(Modifier.fillMaxSize().padding(bottom = 92.dp)) {
-                        SearchScreen(
-                            store = store,
-                            enabled = enabled,
-                            onOpenBook = { onOpenBook(it) },
-                            onOpenDrawer = onOpenDrawer,
-                        )
-                    }
+                Tab.Search -> SearchScreen(
+                    store = store,
+                    enabled = enabled,
+                    onOpenBook = { onOpenBook(it) },
+                    onOpenDrawer = onOpenDrawer,
+                )
 
-                    Tab.Sources -> Box(Modifier.fillMaxSize().padding(bottom = 96.dp)) {
-                        SourcesScreen(
-                            enabled = enabled,
-                            onToggle = { id, on -> onToggleSource(id, on) },
-                            onOpenDrawer = onOpenDrawer,
-                            onAddSource = onAddSource,
-                            onEditSource = onEditSource,
-                        )
-                    }
+                Tab.Sources -> SourcesScreen(
+                    enabled = enabled,
+                    onToggle = { id, on -> onToggleSource(id, on) },
+                    onOpenDrawer = onOpenDrawer,
+                    onAddSource = onAddSource,
+                    onEditSource = onEditSource,
+                )
 
-                    Tab.Mine -> Box(Modifier.fillMaxSize().padding(bottom = 96.dp)) {
-                        MineScreen(
-                            store = store,
-                            shelfCount = shelf.size,
-                            enabledCount = enabled.size,
-                            onOpenDrawer = onOpenDrawer,
-                        )
-                    }
-                }
+                Tab.Mine -> MineScreen(
+                    store = store,
+                    shelfCount = shelf.size,
+                    enabledCount = enabled.size,
+                    onOpenDrawer = onOpenDrawer,
+                )
             }
         }
 

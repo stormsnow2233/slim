@@ -73,7 +73,12 @@ object JsPacker {
         val out = ArrayList<String>()
         QUOTED.findAll(body).forEach { m ->
             val v = m.groupValues.drop(1).firstOrNull { it.isNotEmpty() } ?: return@forEach
-            if (v.startsWith("http")) out.add(v)
+            val url = when {
+                v.startsWith("http://") || v.startsWith("https://") -> v
+                v.startsWith("//") -> "https:$v"
+                else -> null
+            }
+            if (url != null) out.add(url)
         }
         return out
     }

@@ -40,6 +40,7 @@ data class DownloadTask(
             arr.put(JSONObject().apply {
                 put("name", c.name); put("url", c.url)
                 put("index", c.index); put("cover", c.cover)
+                put("sourceId", c.sourceId)
             })
         }
         put("chapters", arr)
@@ -54,6 +55,7 @@ data class DownloadTask(
 
     companion object {
         fun from(o: JSONObject): DownloadTask {
+            val comic = Comic.from(o.optJSONObject("comic") ?: JSONObject())
             val arr = o.optJSONArray("chapters") ?: JSONArray()
             val chs = (0 until arr.length()).mapNotNull { i ->
                 val c = arr.optJSONObject(i) ?: return@mapNotNull null
@@ -61,13 +63,13 @@ data class DownloadTask(
                     name = c.optString("name"),
                     url = c.optString("url"),
                     index = c.optInt("index", i),
-                    sourceId = "lizi",
+                    sourceId = c.optString("sourceId").ifBlank { comic.sourceId.ifBlank { "dm5" } },
                     cover = c.optString("cover"),
                 )
             }
             return DownloadTask(
                 key = o.optString("key"),
-                comic = Comic.from(o.optJSONObject("comic") ?: JSONObject()),
+                comic = comic,
                 chapters = chs,
                 state = o.optString("state", STATE_WAITING),
                 doneChapters = o.optInt("doneChapters"),
@@ -139,12 +141,36 @@ object ComicDownloader {
             ?.toSet() ?: emptySet()
     }
 
+    /** 校验文件头魔数，确保是真正的图片而非 HTML 错误页或损坏文件 */
+    fun isImageFile(f: File): Boolean {
+        if (!f.exists() || f.length() < 12) return false
+        return runCatching {
+            f.inputStream().use { input ->
+                val h = ByteArray(12)
+                val read = input.read(h)
+                if (read < 12) return@use false
+                // JPEG: FF D8 FF
+                if (h[0] == 0xFF.toByte() && h[1] == 0xD8.toByte() && h[2] == 0xFF.toByte()) return@use true
+                // PNG: 89 50 4E 47
+                if (h[0] == 0x89.toByte() && h[1] == 0x50.toByte() && h[2] == 0x4E.toByte() && h[3] == 0x47.toByte()) return@use true
+                // WebP: 'R' 'I' 'F' 'F' ... 'W' 'E' 'B' 'P'
+                if (h[0] == 'R'.code.toByte() && h[1] == 'I'.code.toByte() && h[2] == 'F'.code.toByte() && h[3] == 'F'.code.toByte() &&
+                    h[8] == 'W'.code.toByte() && h[9] == 'E'.code.toByte() && h[10] == 'B'.code.toByte() && h[11] == 'P'.code.toByte()) return@use true
+                // GIF: 'G' 'I' 'F' '8'
+                if (h[0] == 'G'.code.toByte() && h[1] == 'I'.code.toByte() && h[2] == 'F'.code.toByte() && h[3] == '8'.code.toByte()) return@use true
+                // BMP: 'B' 'M'
+                if (h[0] == 'B'.code.toByte() && h[1] == 'M'.code.toByte()) return@use true
+                false
+            }
+        }.getOrDefault(false)
+    }
+
     /** 某一话的本地图片（按页码排好），没缓存就空 */
     fun localPages(comic: Comic, chapterIndex: Int): List<File> {
         val dir = File(dirOf(comic), "ch$chapterIndex")
         if (!dir.exists()) return emptyList()
         return dir.listFiles()
-            ?.filter { it.isFile && it.length() > 256 && it.nameWithoutExtension.toIntOrNull() != null }
+            ?.filter { it.isFile && it.length() > 256 && it.nameWithoutExtension.toIntOrNull() != null && isImageFile(it) }
             ?.sortedBy { it.nameWithoutExtension.toIntOrNull() ?: 0 }
             ?: emptyList()
     }
@@ -362,19 +388,23 @@ object ComicDownloader {
         pages.images.forEachIndexed { idx, url ->
             if (cancelled[taskKey] == true) return@forEachIndexed
             while (paused[taskKey] == true) {
-                Thread.sleep(200)
+                delay(200)
             }
             val ext = url.substringAfterLast('.').substringBefore('?').take(5)
                 .lowercase().ifBlank { "jpg" }.let { if (it.length > 4) "jpg" else it }
             val f = File(dir, "${idx + 1}.$ext")
-            if (f.exists() && f.length() > 1024) {
+            if (f.exists() && f.length() > 512 && isImageFile(f)) {
                 ok++
                 return@forEachIndexed
+            } else if (f.exists() && !isImageFile(f)) {
+                f.delete()
             }
             val got = Net.downloadTo(url, f, headers)
-            if (got > 0) {
+            if (got > 0 && isImageFile(f)) {
                 ok++
                 onProgress(got, 1)
+            } else {
+                f.delete()
             }
         }
         // 一页都没下下来的话，把空目录收掉，免得显示成已缓存

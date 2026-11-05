@@ -13,8 +13,8 @@ android {
         applicationId = "com.zaka.shijuan"
         minSdk = 24
         targetSdk = 35
-        versionCode = 32
-        versionName = "2.12"
+        versionCode = 33
+        versionName = "2.13"
         resourceConfigurations += listOf("zh", "zh-rCN")
     }
 
@@ -50,6 +50,7 @@ android {
 
     buildFeatures {
         compose = true
+        buildConfig = true
     }
 
     packaging {

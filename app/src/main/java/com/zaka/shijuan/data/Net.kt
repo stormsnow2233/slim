@@ -54,6 +54,7 @@ object Net {
         client = buildClient(cfg)
         pageCache.clear()
         bestBase.clear()
+        com.zaka.shijuan.ui.ComicImages.invalidate()
     }
 
     fun proxy(): ProxyCfg = proxyCfg
@@ -62,14 +63,20 @@ object Net {
         val b = OkHttpClient.Builder()
             .dispatcher(dispatcher)
             .connectionPool(ConnectionPool(28, 6, TimeUnit.MINUTES))
-            .connectTimeout(6, TimeUnit.SECONDS)
-            .readTimeout(14, TimeUnit.SECONDS)
+            .connectTimeout(5, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
             .writeTimeout(10, TimeUnit.SECONDS)
-            .callTimeout(20, TimeUnit.SECONDS)
+            .callTimeout(15, TimeUnit.SECONDS)
             .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
             .followRedirects(true)
             .followSslRedirects(true)
             .retryOnConnectionFailure(true)
+        applyProxy(b, cfg)
+        return b.build()
+    }
+
+    /** 统一为外部 OkHttpClient.Builder 配置代理（供 Coil 与更新下载器复用） */
+    fun applyProxy(b: OkHttpClient.Builder, cfg: ProxyCfg = proxyCfg) {
         if (cfg.usable) {
             val type = if (cfg.socks) Proxy.Type.SOCKS else Proxy.Type.HTTP
             b.proxy(Proxy(type, InetSocketAddress.createUnresolved(cfg.host, cfg.port)))
@@ -83,11 +90,10 @@ object Net {
                 })
             }
         }
-        return b.build()
     }
 
     /** 桌面 UA：Cloudflare 对移动 UA 打分更低，很多站会直接 403 */
-    private const val UA =
+    const val UA =
         "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) " +
             "Chrome/122.0.0.0 Safari/537.36"
 
@@ -117,7 +123,7 @@ object Net {
 
     fun baseOf(sourceId: String): String? = bestBase[sourceId]
 
-    /** 按站点编码解码（GBK 站点很常见，必须处理） */
+    /** 按站点编码解码（GB18030 兼容 GBK/GB2312 超集，避免生僻字与扩展字乱码） */
     private fun decode(bytes: ByteArray, charset: String, contentType: String?): String {
         var cs = charset
         if (cs == "auto" || cs.isBlank()) cs = "utf-8"
@@ -129,19 +135,19 @@ object Net {
             )
             if (m != null) {
                 val sniff = m.groupValues[1].lowercase()
-                if (sniff.contains("gb")) cs = "gbk"
+                if (sniff.contains("gb")) cs = "gb18030"
                 else if (sniff.contains("big5")) cs = "big5"
             }
         }
         val javaCharset = when {
-            cs.contains("gb") -> Charset_gbk
+            cs.contains("gb") -> Charset_gb18030
             cs.contains("big5") -> charset("big5")
             else -> charset("utf-8")
         }
         return runCatching { String(bytes, javaCharset) }.getOrDefault(String(bytes, Charsets.UTF_8))
     }
 
-    private val Charset_gbk = charset("gbk")
+    private val Charset_gb18030 = charset("GB18030")
 
     fun get(
         url: String,
@@ -154,6 +160,10 @@ object Net {
         if (useCache) pageCache[key]?.let { return it }
         val builder = Request.Builder().url(safeUrl(url))
         baseHeaders.forEach { (k, v) -> builder.header(k, v) }
+        val reqUa = headers["User-Agent"] ?: UA
+        val isMobile = reqUa.contains("Mobile") || reqUa.contains("Android")
+        builder.header("sec-ch-ua-mobile", if (isMobile) "?1" else "?0")
+        builder.header("sec-ch-ua-platform", if (isMobile) "\"Android\"" else "\"Windows\"")
         builder.header("Connection", "keep-alive")
         // 这几个头是 Cloudflare 判「真人浏览器」的重要依据，缺了容易被 403
         builder.header("Sec-Fetch-Dest", "document")
@@ -173,11 +183,20 @@ object Net {
         charset: String = "utf-8",
         referer: String = "",
         headers: Map<String, String> = emptyMap(),
+        encoded: Boolean = false,
     ): Resp {
         val fb = FormBody.Builder()
-        body.forEach { (k, v) -> fb.add(k, v) }
+        if (encoded) {
+            body.forEach { (k, v) -> fb.addEncoded(k, v) }
+        } else {
+            body.forEach { (k, v) -> fb.add(k, v) }
+        }
         val builder = Request.Builder().url(safeUrl(url))
         baseHeaders.forEach { (k, v) -> builder.header(k, v) }
+        val reqUa = headers["User-Agent"] ?: UA
+        val isMobile = reqUa.contains("Mobile") || reqUa.contains("Android")
+        builder.header("sec-ch-ua-mobile", if (isMobile) "?1" else "?0")
+        builder.header("sec-ch-ua-platform", if (isMobile) "\"Android\"" else "\"Windows\"")
         builder.header("Content-Type", "application/x-www-form-urlencoded")
         builder.header("Sec-Fetch-Dest", "document")
         builder.header("Sec-Fetch-Mode", "navigate")
@@ -204,7 +223,7 @@ object Net {
     fun probe(url: String, headers: Map<String, String> = emptyMap(), referer: String = ""): Pair<Int, Long> =
         runCatching {
             val b = Request.Builder().url(safeUrl(url)).get()
-                .header("User-Agent", UA)
+                .header("User-Agent", headers["User-Agent"] ?: UA)
                 .header("Range", "bytes=0-0")
             if (referer.isNotBlank()) b.header("Referer", referer)
             headers.forEach { (k, v) -> b.header(k, v) }
@@ -216,25 +235,37 @@ object Net {
             }
         }.getOrDefault(0 to -1L)
 
-    /** 下载二进制到本地文件，返回字节数（-1 表示失败） */
+    /** 下载二进制到本地文件，返回字节数（-1 表示失败，并在失败时自动清理残损文件） */
     fun downloadTo(url: String, dest: java.io.File, headers: Map<String, String> = emptyMap(), referer: String = ""): Long =
         runCatching {
             dest.parentFile?.mkdirs()
-            val b = Request.Builder().url(safeUrl(url)).get().header("User-Agent", UA)
+            val b = Request.Builder().url(safeUrl(url)).get().header("User-Agent", headers["User-Agent"] ?: UA)
             if (referer.isNotBlank()) b.header("Referer", referer)
             headers.forEach { (k, v) -> b.header(k, v) }
             client.newCall(b.build()).execute().use { r ->
-                if (!r.isSuccessful) return -1L
-                val body = r.body ?: return -1L
+                if (!r.isSuccessful) {
+                    dest.delete()
+                    return -1L
+                }
+                val body = r.body ?: run { dest.delete(); return -1L }
                 val len = body.contentLength()
                 body.byteStream().use { input ->
                     dest.outputStream().use { out -> input.copyTo(out, 64 * 1024) }
                 }
-                if (len > 0 && dest.length() != len) return -1L
-                if (dest.length() < 512) return -1L
+                if (len > 0 && dest.length() != len) {
+                    dest.delete()
+                    return -1L
+                }
+                if (dest.length() < 512) {
+                    dest.delete()
+                    return -1L
+                }
                 dest.length()
             }
-        }.getOrDefault(-1L)
+        }.getOrElse {
+            runCatching { dest.delete() }
+            -1L
+        }
 
     /** 预连接：点开书籍前先把到该站的 TCP/TLS 握手做掉，省掉首包那一两百毫秒 */
     fun warmUp(url: String) {
@@ -252,10 +283,8 @@ object Net {
     }
 
     /**
-     * 请求外壳：失败时做两级补救。
-     *  1. https 被 403 / 握手失败 → 换 http 再打一次（同人小说这类站 https 挂 CF 拦截、http 反而通）
-     *  2. 连接重置 / 超时这类偶发错误 → 稍等重打一次
-     * 只在第一层生效，跳转之后不再重试，避免放大请求。
+     * 请求外壳：https 被 403 时尝试降级 http。
+     * 移除对网络故障/超时的隐式休眠重试，使多域名轮询与镜像降级能够尽快切换。
      */
     private fun exec(request: Request, charset: String, depth: Int = 0): Resp {
         var r = once(request, charset, depth)
@@ -267,12 +296,6 @@ object Net {
                 if (r2.ok) return r2
                 r = r2
             }
-        }
-        if (depth == 0 && r.code == 0) {
-            runCatching { Thread.sleep(220) }
-            val r3 = once(request, charset, depth)
-            if (r3.ok || r3.code != 0) return r3
-            r = r3
         }
         return r
     }
@@ -364,7 +387,11 @@ object Net {
 
     private fun safeUrl(u: String): String {
         var s = u.trim()
-        if (!s.startsWith("http")) s = "https://$s"
+        s = when {
+            s.startsWith("http://") || s.startsWith("https://") -> s
+            s.startsWith("//") -> "https:$s"
+            else -> "https://$s"
+        }
         return s.replace(" ", "%20")
     }
 

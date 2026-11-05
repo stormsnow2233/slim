@@ -45,6 +45,7 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
+import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.zaka.shijuan.data.Comic
 import com.zaka.shijuan.data.ComicChapter
@@ -354,7 +355,16 @@ fun ComicScreen(
             }
         }
 
-        LazyVerticalGrid(
+        if (loading && shown.isEmpty() && error.isBlank()) {
+            Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(36.dp),
+                    strokeWidth = 3.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        } else {
+            LazyVerticalGrid(
             columns = GridCells.Fixed(3),
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 28.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -456,6 +466,7 @@ fun ComicScreen(
                     }
                 }
             }
+        }
         }
         } else if (tab == 1) {
             ComicShelfGrid(
@@ -1351,16 +1362,50 @@ private fun ComicPage(
     fillWidth: Boolean = false,
 ) {
     val ctx = LocalContext.current
-    AsyncImage(
+    var retryKey by remember(src) { mutableIntStateOf(0) }
+    SubcomposeAsyncImage(
         model = ImageRequest.Builder(ctx)
             .data(src)
             .apply { headers.forEach { (k, v) -> addHeader(k, v) } }
             .memoryCacheKey(src)
             .diskCacheKey(src)
+            .setParameter("retry", retryKey, memoryCacheKey = null)
             .build(),
         contentDescription = null,
         contentScale = if (fillWidth) ContentScale.FillWidth else ContentScale.Fit,
         modifier = if (fillWidth) Modifier.fillMaxWidth() else Modifier.fillMaxSize(),
+        loading = {
+            Box(
+                modifier = if (fillWidth) Modifier.fillMaxWidth().height(260.dp) else Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                CircularProgressIndicator(
+                    modifier = Modifier.size(36.dp),
+                    strokeWidth = 3.dp,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        },
+        error = {
+            Box(
+                modifier = if (fillWidth) Modifier.fillMaxWidth().height(200.dp) else Modifier.fillMaxSize(),
+                contentAlignment = Alignment.Center,
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.clickable { retryKey++ }.padding(12.dp),
+                ) {
+                    Icon(
+                        Icons.Rounded.Refresh,
+                        contentDescription = "重试",
+                        tint = MaterialTheme.colorScheme.error,
+                        modifier = Modifier.size(32.dp),
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text("加载失败，点击重试", fontSize = 12.sp, color = MaterialTheme.colorScheme.error)
+                }
+            }
+        },
     )
 }
 

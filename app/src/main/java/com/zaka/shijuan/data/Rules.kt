@@ -55,8 +55,8 @@ object Rules {
             if (expr.isEmpty()) continue
 
             var regex = ""
-            val hashIdx = expr.indexOf('#', 1)
-            if (hashIdx > 0) {
+            val hashIdx = expr.indexOf("##")
+            if (hashIdx >= 0) {
                 regex = expr.substring(hashIdx)
                 expr = expr.substring(0, hashIdx)
             }
