@@ -85,19 +85,19 @@ object Net {
         return b.build()
     }
 
-    /** 专用于热门榜单与多源搜索的极速客户端（硬超时控制，遇挂站快速跳过） */
+    /** 专用于热门榜单与多源搜索的高响应客户端 */
     private fun buildFastClient(cfg: ProxyCfg): OkHttpClient {
         val b = OkHttpClient.Builder()
             .dispatcher(dispatcher)
             .connectionPool(ConnectionPool(16, 3, TimeUnit.MINUTES))
-            .connectTimeout(3, TimeUnit.SECONDS)
-            .readTimeout(5, TimeUnit.SECONDS)
-            .writeTimeout(5, TimeUnit.SECONDS)
-            .callTimeout(6, TimeUnit.SECONDS)
+            .connectTimeout(8, TimeUnit.SECONDS)
+            .readTimeout(10, TimeUnit.SECONDS)
+            .writeTimeout(10, TimeUnit.SECONDS)
+            .callTimeout(12, TimeUnit.SECONDS)
             .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
             .followRedirects(true)
             .followSslRedirects(true)
-            .retryOnConnectionFailure(false)
+            .retryOnConnectionFailure(true)
         applyProxy(b, cfg)
         return b.build()
     }
@@ -339,25 +339,7 @@ object Net {
      * 移除对网络故障/超时的隐式休眠重试，使多域名轮询与镜像降级能够尽快切换。
      */
     private fun exec(request: Request, charset: String, depth: Int = 0, fast: Boolean = false, slow: Boolean = false): Resp {
-        var r = once(request, charset, depth, fast = fast, slow = slow)
-        if (r.ok) return r
-        if (depth == 0 && r.code == 403) {
-            val httpReq = toHttp(request)
-            if (httpReq != null) {
-                val r2 = once(httpReq, charset, depth, fast = fast, slow = slow)
-                if (r2.ok) return r2
-                r = r2
-            }
-        }
-        return r
-    }
-
-    /** https://x → http://x，已经是 http 的返回 null（别来回打） */
-    private fun toHttp(request: Request): Request? {
-        val u = request.url
-        if (!u.isHttps) return null
-        val httpUrl = u.newBuilder().scheme("http").port(80).build()
-        return request.newBuilder().url(httpUrl).build()
+        return once(request, charset, depth, fast = fast, slow = slow)
     }
 
     private fun once(request: Request, charset: String, depth: Int = 0, fast: Boolean = false, slow: Boolean = false): Resp = try {

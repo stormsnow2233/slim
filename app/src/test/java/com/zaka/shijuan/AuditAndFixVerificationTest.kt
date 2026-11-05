@@ -349,4 +349,13 @@ class AuditAndFixVerificationTest {
         val rule = sfacg.content!!
         assertTrue(rule.body.contains("Content_Frame"))
     }
+
+    @Test
+    fun testDefaultEnabledSourcesRefinement() {
+        val def = Sources.defaultEnabled
+        assertTrue(def.contains("biqugese"))
+        assertTrue(def.contains("sfacg"))
+        assertFalse("novel8 requires JS rendering for chapter text and should not be enabled by default", def.contains("novel8"))
+        assertFalse("ptwxz rule is fragile and should not be enabled by default", def.contains("ptwxz"))
+    }
 }

@@ -606,8 +606,11 @@ object BookRepo {
 
     /** 书源体检 */
     fun health(src: Source): SourceResult {
-        // SF 是日本轻小说站,拿玄幻书名去体检只会显示"没搜到",换个它站内确实有的词
-        val key = if (src.apiKind == "sfacg") "牧师" else "斗破苍穹"
+        val key = when {
+            src.apiKind == "sfacg" -> "魔王"
+            src.group.contains("轻小说") -> "邻家天使"
+            else -> "凡人修仙传"
+        }
         return searchSource(src, key)
     }
 
@@ -632,7 +635,7 @@ object BookRepo {
 
     private val failedUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
-    fun markFailed(sourceId: String, durationMs: Long = 10 * 60 * 1000L) {
+    fun markFailed(sourceId: String, durationMs: Long = 60 * 1000L) {
         failedUntil[sourceId] = System.currentTimeMillis() + durationMs
     }
 
@@ -645,7 +648,7 @@ object BookRepo {
         return true
     }
 
-    /** 并发多源搜索，边出结果边回调（单源 5s 硬超时与临时熔断） */
+    /** 并发多源搜索，边出结果边回调 */
     fun searchAll(
         sources: List<Source>,
         key: String,
@@ -658,23 +661,18 @@ object BookRepo {
             pool.execute {
                 val t0 = System.currentTimeMillis()
                 val r = runCatching {
-                    val future = pool.submit(java.util.concurrent.Callable { searchSource(src, key) })
-                    runCatching { future.get(5, java.util.concurrent.TimeUnit.SECONDS) }.getOrElse {
-                        future.cancel(true)
-                        markFailed(src.id)
-                        SourceResult(src.id, src.name, false, error = "搜索超时 (5s)", ms = 5000)
-                    }
+                    searchSource(src, key)
                 }.getOrElse {
-                    markFailed(src.id)
                     SourceResult(src.id, src.name, false, error = Net.friendlyError(it), ms = System.currentTimeMillis() - t0)
                 }
-                if (!r.ok && (r.error.contains("超时") || r.error.contains("连接不上") || r.error.contains("50"))) {
-                    markFailed(src.id)
+                // 仅对严重网关故障（502、504、连接拒绝）做 1 分钟轻度临时熔断，常规超时或搜无结果绝不拉黑
+                if (!r.ok && (r.error.contains("502") || r.error.contains("504") || r.error.contains("拒绝连接"))) {
+                    markFailed(src.id, 60_000L)
                 }
                 try { onUpdate(r) } finally { latch.countDown() }
             }
         }
-        runCatching { latch.await(6, java.util.concurrent.TimeUnit.SECONDS) }
+        runCatching { latch.await(14, java.util.concurrent.TimeUnit.SECONDS) }
     }
 
     /** 当前每个源实际连通的域名 */

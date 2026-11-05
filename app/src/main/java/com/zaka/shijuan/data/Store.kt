@@ -371,7 +371,7 @@ class Store(context: Context) {
 
     // ── 书源开关 ──
     fun enabledSources(): Set<String> {
-        val s = sp.getString("enabled_sources_v2", null) ?: return Sources.defaultEnabled
+        val s = sp.getString("enabled_sources_v3", null) ?: return Sources.defaultEnabled
         return runCatching {
             val a = JSONArray(s)
             (0 until a.length()).map { a.getString(it) }.toSet()
@@ -381,7 +381,7 @@ class Store(context: Context) {
     fun setSourceEnabled(id: String, on: Boolean): Set<String> {
         val cur = enabledSources().toMutableSet()
         if (on) cur.add(id) else cur.remove(id)
-        sp.edit().putString("enabled_sources_v2", JSONArray(cur.toList()).toString()).apply()
+        sp.edit().putString("enabled_sources_v3", JSONArray(cur.toList()).toString()).apply()
         return cur
     }
 

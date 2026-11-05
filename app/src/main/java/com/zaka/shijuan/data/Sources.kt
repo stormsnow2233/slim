@@ -115,9 +115,9 @@ object Sources {
 
         Source(
             id = "novel8", name = "无限轻小说", group = "轻小说",
-            base = "https://www.8novel.com", charset = "utf-8", status = "verified",
-            enabledByDefault = true,
-            note = "【推荐】繁体轻小说库。搜索/正文可用，更新稳定",
+            base = "https://www.8novel.com", charset = "utf-8", status = "local",
+            enabledByDefault = false,
+            note = "【备用】正文由前端 JS 动态异步加载，纯 HTTP 抓取无正文",
             search = SearchRule(
                 url = "/search/?key={key}",
                 list = ".card .col-4",
@@ -361,8 +361,8 @@ object Sources {
         Source(
             id = "ptwxz", name = "飘天文学", group = "综合",
             base = "https://www.ptwxz.com", charset = "gbk", status = "local",
-            enabledByDefault = true,
-            note = "【推荐】老牌 GBK 完本站，书库大",
+            enabledByDefault = false,
+            note = "【备用】老牌 GBK 完本站，规则易失效",
             search = SearchRule(
                 url = "/modules/article/search.php?searchkey={key}", auto = true,
                 list = ".grid tr, .bookbox, .novel-list li",
