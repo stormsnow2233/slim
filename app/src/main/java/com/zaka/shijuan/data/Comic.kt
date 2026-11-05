@@ -135,11 +135,11 @@ class Dm5FamilySource(
     private val origin: String get() = liveBase
 
     /** 依次试域名，谁通用谁 */
-    private fun fetch(path: String, referer: String = ""): Net.Resp {
+    private fun fetch(path: String, referer: String = "", fast: Boolean = false): Net.Resp {
         val order = listOf(liveBase) + bases.filter { it != liveBase }
         var last = Net.Resp(false, 0, "", "网络不通")
         for (b in order) {
-            val r = Net.get(b + path, referer = referer.ifBlank { "$b/" }, useCache = true)
+            val r = Net.get(b + path, referer = referer.ifBlank { "$b/" }, useCache = true, fast = fast)
             if (r.ok) { liveBase = b; return r }
             last = r
         }
@@ -150,8 +150,8 @@ class Dm5FamilySource(
     private fun pathOf(url: String): String =
         Regex("""^https?://[^/]+(/.*)$""").find(url)?.groupValues?.get(1) ?: url
 
-    /** 搜索结果里补封面的上限：每个源最多补这么多，免得搜一次打几十个详情页 */
-    private val coverFillLimit = 12
+    /** 搜索结果里补封面的上限：限制并发，避免霸占网络带宽 */
+    private val coverFillLimit = 6
 
     override fun home(): List<Comic> {
         val paths = buildList {
@@ -159,7 +159,7 @@ class Dm5FamilySource(
             add(if (listStyle == "bz") "/manga-list/" else "/manhua-list/")
         }
         for (p in paths) {
-            val r = fetch(p)
+            val r = fetch(p, fast = true)
             if (!r.ok) continue
             val out = parseListPage(r.body)
             if (out.isNotEmpty()) return out
@@ -457,6 +457,7 @@ class CopymangaSource : ComicSource {
                     "Accept" to "application/json",
                 ),
                 useCache = cache,
+                fast = true,
             )
             if (r.ok) {
                 val o = runCatching { JSONObject(r.body) }.getOrNull() ?: continue
@@ -467,9 +468,13 @@ class CopymangaSource : ComicSource {
     }
 
     override fun home(): List<Comic> = runCatching {
-        val o = api("/api/v3/comics?ordering=-popular&limit=36&offset=0&platform=1", cache = true)
-            ?: return emptyList()
-        val arr = o.optJSONArray("list") ?: JSONArray()
+        var o = api("/api/v3/comics?ordering=-popular&limit=36&offset=0&platform=1", cache = true)
+        var arr = o?.optJSONArray("list")
+        if (arr == null || arr.length() == 0) {
+            o = api("/api/v3/comics?ordering=-datetime_updated&limit=30&offset=0&platform=1", cache = true)
+            arr = o?.optJSONArray("list")
+        }
+        if (arr == null) return emptyList()
         (0 until arr.length()).mapNotNull { parseComic(arr.optJSONObject(it)) }
     }.getOrDefault(emptyList())
 
@@ -922,43 +927,55 @@ object ComicRepo {
 
     fun byIdOrNull(id: String): ComicSource? = sources.firstOrNull { it.id == id }
 
+    val pool = Executors.newFixedThreadPool(4)
+    private val failedUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    fun markFailed(sourceId: String, durationMs: Long = 10 * 60 * 1000L) {
+        failedUntil[sourceId] = System.currentTimeMillis() + durationMs
+    }
+
+    fun isBlacklisted(sourceId: String): Boolean {
+        val until = failedUntil[sourceId] ?: return false
+        if (System.currentTimeMillis() > until) {
+            failedUntil.remove(sourceId)
+            return false
+        }
+        return true
+    }
+
     /** 热门：按源并发取首页 */
     fun home(sourceId: String): List<Comic> = source(sourceId).home()
 
     /**
      * 多源搜索：每个源并发跑，返回每个源各自的结果和状态。
-     * 单个源超时/失败不影响其它源。
+     * 单个源超时/失败不影响其它源，单源最多等 5 秒。
      */
     fun searchAll(keyword: String, ids: List<String>): List<ComicHit> {
-        val picked = sources.filter { it.id in ids }.ifEmpty { sources }
-        // 几个源一起打，别排队等；每个源最多等 12 秒，不让慢源拖住整屏
-        val pool = Executors.newFixedThreadPool(picked.size.coerceAtLeast(1))
-        return try {
-            val jobs = picked.map { src ->
-                val t0 = System.currentTimeMillis()
-                pool.submit(Callable {
-                    runCatching { src.search(keyword) }
-                        .fold(
-                            onSuccess = { ComicHit(src.id, src.name, it, true, System.currentTimeMillis() - t0) },
-                            onFailure = {
-                                ComicHit(
-                                    src.id, src.name, emptyList(), false,
-                                    System.currentTimeMillis() - t0,
-                                    it.message ?: "失败",
-                                )
-                            },
-                        )
-                })
-            }
-            jobs.map { f ->
-                runCatching { f.get(14, TimeUnit.SECONDS) }.getOrElse { e ->
-                    val i = jobs.indexOf(f)
-                    ComicHit(picked[i].id, picked[i].name, emptyList(), false, 14000, "超时")
-                }
-            }.sortedByDescending { it.list.size }
-        } finally {
-            pool.shutdown()
+        val picked = sources.filter { it.id in ids && !isBlacklisted(it.id) }.ifEmpty { sources }
+        val jobs = picked.map { src ->
+            val t0 = System.currentTimeMillis()
+            pool.submit(Callable {
+                runCatching { src.search(keyword) }
+                    .fold(
+                        onSuccess = { ComicHit(src.id, src.name, it, true, System.currentTimeMillis() - t0) },
+                        onFailure = {
+                            markFailed(src.id)
+                            ComicHit(
+                                src.id, src.name, emptyList(), false,
+                                System.currentTimeMillis() - t0,
+                                it.message ?: "失败",
+                            )
+                        },
+                    )
+            })
         }
+        return jobs.map { f ->
+            runCatching { f.get(5, TimeUnit.SECONDS) }.getOrElse {
+                val i = jobs.indexOf(f)
+                markFailed(picked[i].id)
+                ComicHit(picked[i].id, picked[i].name, emptyList(), false, 5000, "超时 (5s)")
+            }
+        }.sortedByDescending { it.list.size }
     }
 
     /** 把多个源的结果合并去重（同名取先到的，标注来源） */

@@ -46,12 +46,14 @@ object Net {
     @Volatile private var proxyCfg = ProxyCfg()
 
     @Volatile private var client: OkHttpClient = buildClient(ProxyCfg())
+    @Volatile private var fastClient: OkHttpClient = buildFastClient(ProxyCfg())
 
     /** 改了代理立刻换新连接，不用重启 App */
     fun setProxy(cfg: ProxyCfg) {
         if (cfg == proxyCfg) return
         proxyCfg = cfg
         client = buildClient(cfg)
+        fastClient = buildFastClient(cfg)
         pageCache.clear()
         bestBase.clear()
         com.zaka.shijuan.ui.ComicImages.invalidate()
@@ -71,6 +73,23 @@ object Net {
             .followRedirects(true)
             .followSslRedirects(true)
             .retryOnConnectionFailure(true)
+        applyProxy(b, cfg)
+        return b.build()
+    }
+
+    /** 专用于热门榜单与多源搜索的极速客户端（硬超时控制，遇挂站快速跳过） */
+    private fun buildFastClient(cfg: ProxyCfg): OkHttpClient {
+        val b = OkHttpClient.Builder()
+            .dispatcher(dispatcher)
+            .connectionPool(ConnectionPool(16, 3, TimeUnit.MINUTES))
+            .connectTimeout(3, TimeUnit.SECONDS)
+            .readTimeout(5, TimeUnit.SECONDS)
+            .writeTimeout(5, TimeUnit.SECONDS)
+            .callTimeout(6, TimeUnit.SECONDS)
+            .protocols(listOf(Protocol.HTTP_2, Protocol.HTTP_1_1))
+            .followRedirects(true)
+            .followSslRedirects(true)
+            .retryOnConnectionFailure(false)
         applyProxy(b, cfg)
         return b.build()
     }
@@ -157,9 +176,10 @@ object Net {
         referer: String = "",
         headers: Map<String, String> = emptyMap(),
         useCache: Boolean = false,
+        fast: Boolean = false,
     ): Resp {
         val key = "G|$url|$charset"
-        if (useCache) pageCache[key]?.let { return it }
+        if (useCache) synchronized(pageCache) { pageCache[key] }?.let { return it }
         val builder = Request.Builder().url(safeUrl(url))
         baseHeaders.forEach { (k, v) -> builder.header(k, v) }
         val reqUa = headers["User-Agent"] ?: UA
@@ -174,8 +194,8 @@ object Net {
         builder.header("Sec-Fetch-User", "?1")
         if (referer.isNotBlank()) builder.header("Referer", referer)
         headers.forEach { (k, v) -> builder.header(k, v) }
-        val resp = exec(builder.build(), charset)
-        if (useCache && resp.ok) pageCache[key] = resp
+        val resp = exec(builder.build(), charset, fast = fast)
+        if (useCache && resp.ok) synchronized(pageCache) { pageCache[key] = resp }
         return resp
     }
 
@@ -186,6 +206,7 @@ object Net {
         referer: String = "",
         headers: Map<String, String> = emptyMap(),
         encoded: Boolean = false,
+        fast: Boolean = false,
     ): Resp {
         val fb = FormBody.Builder()
         if (encoded) {
@@ -207,7 +228,7 @@ object Net {
         builder.post(fb.build())
         if (referer.isNotBlank()) builder.header("Referer", referer)
         headers.forEach { (k, v) -> builder.header(k, v) }
-        return exec(builder.build(), charset)
+        return exec(builder.build(), charset, fast = fast)
     }
 
     fun getBytes(url: String, referer: String = ""): ByteArray? = runCatching {
@@ -288,13 +309,13 @@ object Net {
      * 请求外壳：https 被 403 时尝试降级 http。
      * 移除对网络故障/超时的隐式休眠重试，使多域名轮询与镜像降级能够尽快切换。
      */
-    private fun exec(request: Request, charset: String, depth: Int = 0): Resp {
-        var r = once(request, charset, depth)
+    private fun exec(request: Request, charset: String, depth: Int = 0, fast: Boolean = false): Resp {
+        var r = once(request, charset, depth, fast = fast)
         if (r.ok) return r
         if (depth == 0 && r.code == 403) {
             val httpReq = toHttp(request)
             if (httpReq != null) {
-                val r2 = once(httpReq, charset, depth)
+                val r2 = once(httpReq, charset, depth, fast = fast)
                 if (r2.ok) return r2
                 r = r2
             }
@@ -310,8 +331,9 @@ object Net {
         return request.newBuilder().url(httpUrl).build()
     }
 
-    private fun once(request: Request, charset: String, depth: Int = 0): Resp = try {
-        client.newCall(request).execute().use { r ->
+    private fun once(request: Request, charset: String, depth: Int = 0, fast: Boolean = false): Resp = try {
+        val targetClient = if (fast) fastClient else client
+        targetClient.newCall(request).execute().use { r ->
             val bytes = r.body?.bytes() ?: ByteArray(0)
             val text = decode(bytes, charset, r.header("Content-Type"))
             val finalUrl = r.request.url.toString()
@@ -330,7 +352,7 @@ object Net {
                             .header("Referer", finalUrl)
                             .header("Accept-Language", "zh-CN,zh;q=0.9")
                             .build()
-                        return exec(again, charset, depth + 1)
+                        return exec(again, charset, depth + 1, fast = fast)
                     }
                 }
             }

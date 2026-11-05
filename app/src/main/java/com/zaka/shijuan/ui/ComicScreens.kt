@@ -101,8 +101,9 @@ fun ComicScreen(
         if (offline) all.filter { ComicDownloader.cachedChapters(it).isNotEmpty() } else all
     }
     val dlTasks = ComicDownloader.tasks
-    // 每个源各自拿回一批，选「全部」时合并去重，选单个源时只看它
-    var hits by remember { mutableStateOf<List<ComicHit>>(emptyList()) }
+    // 首次进入优先渲染本地缓存榜单（0 秒出内容），后台静默刷新
+    val cachedHits = remember { store.cachedComicHits() }
+    var hits by remember { mutableStateOf(cachedHits) }
     var picked by remember { mutableStateOf("all") }
     // 封面补全的触发器：列表先出来，封面随后一批批填上
     var coverToken by remember { mutableStateOf(0) }
@@ -110,32 +111,50 @@ fun ComicScreen(
     LaunchedEffect(tick, query.isNotBlank()) {
         if (offline) return@LaunchedEffect
         if (query.isNotBlank()) return@LaunchedEffect
-        loading = true
+        if (hits.isEmpty()) loading = true
         error = ""
-        hits = withContext(Dispatchers.IO) {
-            // 四个源同时打，谁先回谁先上；单个源挂了不拖累其它源
-            coroutineScope {
-                ComicRepo.sources.map { src ->
-                    async {
-                        val t0 = System.currentTimeMillis()
-                        runCatching { withTimeoutOrNull(12_000) { src.home() } ?: emptyList() }.fold(
-                            onSuccess = { ComicHit(src.id, src.name, it, true, System.currentTimeMillis() - t0) },
-                            onFailure = {
-                                ComicHit(
-                                    src.id, src.name, emptyList(), false,
-                                    System.currentTimeMillis() - t0, it.message ?: "失败",
-                                )
-                            },
-                        )
+        val activeSources = ComicRepo.sources.filterNot { ComicRepo.isBlacklisted(it.id) }
+            .ifEmpty { ComicRepo.sources }
+        coroutineScope {
+            activeSources.forEach { src ->
+                launch(Dispatchers.IO) {
+                    val t0 = System.currentTimeMillis()
+                    val hit = runCatching {
+                        val future = ComicRepo.pool.submit(java.util.concurrent.Callable { src.home() })
+                        runCatching { future.get(5, java.util.concurrent.TimeUnit.SECONDS) }.getOrElse {
+                            future.cancel(true)
+                            ComicRepo.markFailed(src.id)
+                            emptyList()
+                        }
+                    }.fold(
+                        onSuccess = { clist ->
+                            if (clist.isEmpty()) {
+                                ComicHit(src.id, src.name, emptyList(), false, System.currentTimeMillis() - t0, "无数据")
+                            } else {
+                                ComicHit(src.id, src.name, clist, true, System.currentTimeMillis() - t0)
+                            }
+                        },
+                        onFailure = {
+                            ComicRepo.markFailed(src.id)
+                            ComicHit(src.id, src.name, emptyList(), false, System.currentTimeMillis() - t0, it.message ?: "失败")
+                        },
+                    )
+                    withContext(Dispatchers.Main) {
+                        // 谁先回谁先上！增量刷新列表，无需等待其它慢源
+                        hits = (hits.filterNot { it.sourceId == hit.sourceId } + hit)
+                        list = ComicRepo.merge(hits)
+                        fromRank = true
+                        loading = false
+                        if (hit.ok && hit.list.isNotEmpty()) {
+                            store.saveComicHits(hits)
+                            coverToken++
+                        }
                     }
-                }.awaitAll()
+                }
             }
         }
-        list = ComicRepo.merge(hits)
-        fromRank = true
         if (list.isEmpty()) error = "榜单没解析出内容，换个时间再试"
         loading = false
-        coverToken++
     }
 
     // 搜索触发：用一个 token 驱动
@@ -162,18 +181,22 @@ fun ComicScreen(
         val snapshot = hits
         val pend = snapshot.filter { it.ok && it.list.any { c -> c.cover.isBlank() } }
         if (pend.isEmpty()) return@LaunchedEffect
-        val filled = withContext(Dispatchers.IO) {
-            coroutineScope {
-                pend.map { h ->
-                    async {
-                        val src = ComicRepo.byIdOrNull(h.sourceId) ?: return@async h
-                        val got = runCatching { withTimeoutOrNull(10_000) { src.fillCovers(h.list) } }.getOrNull()
-                        if (got == null) h else h.copy(list = got)
+        coroutineScope {
+            pend.forEach { h ->
+                launch(Dispatchers.IO) {
+                    val src = ComicRepo.byIdOrNull(h.sourceId) ?: return@launch
+                    val future = ComicRepo.pool.submit(java.util.concurrent.Callable { src.fillCovers(h.list) })
+                    val got = runCatching { future.get(5, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull()
+                    if (got != null && got.isNotEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            val updated = h.copy(list = got)
+                            hits = hits.map { if (it.sourceId == updated.sourceId) updated else it }
+                            list = ComicRepo.merge(hits)
+                        }
                     }
-                }.awaitAll()
+                }
             }
         }
-        hits = hits.map { old -> filled.firstOrNull { it.sourceId == old.sourceId } ?: old }
     }
 
     // 当前选中源要展示的列表

@@ -65,9 +65,9 @@ object BookRepo {
                         if (kv.size == 2) body[kv[0]] = kv[1]
                     }
                     if (body.isEmpty()) body["searchkey"] = enc(key, keyCharset)
-                    Net.post(full, body, src.charset, base + "/", encoded = true)
+                    Net.post(full, body, src.charset, base + "/", encoded = true, fast = true)
                 } else {
-                    Net.get(full, src.charset, base + "/")
+                    Net.get(full, src.charset, base + "/", fast = true)
                 }
 
                 if (!resp.ok) { lastErr = resp.error; continue }
@@ -102,7 +102,7 @@ object BookRepo {
             listOf(known) + src.bases.filter { it != known } else src.bases
         for (base in ordered) {
             val url = base + "/API/HTML5.ashx?op=search&keyword=" + enc(key)
-            val resp = Net.get(url, "utf-8", base + "/search.html")
+            val resp = Net.get(url, "utf-8", base + "/search.html", fast = true)
             if (!resp.ok) { lastErr = resp.error; continue }
             val books = runCatching {
                 val json = JSONObject(resp.body.trimStart('\uFEFF'))
@@ -596,22 +596,51 @@ object BookRepo {
         return Triple(true, "目录 ${list.chapters.size} 章 · 正文 ${n} 字", "")
     }
 
-    /** 并发多源搜索，边出结果边回调 */
+    private val failedUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    fun markFailed(sourceId: String, durationMs: Long = 10 * 60 * 1000L) {
+        failedUntil[sourceId] = System.currentTimeMillis() + durationMs
+    }
+
+    fun isBlacklisted(sourceId: String): Boolean {
+        val until = failedUntil[sourceId] ?: return false
+        if (System.currentTimeMillis() > until) {
+            failedUntil.remove(sourceId)
+            return false
+        }
+        return true
+    }
+
+    /** 并发多源搜索，边出结果边回调（单源 5s 硬超时与临时熔断） */
     fun searchAll(
         sources: List<Source>,
         key: String,
         onUpdate: (SourceResult) -> Unit,
     ) {
-        if (sources.isEmpty()) return
-        val latch = java.util.concurrent.CountDownLatch(sources.size)
-        for (src in sources) {
+        val active = sources.filterNot { isBlacklisted(it.id) }.ifEmpty { sources }
+        if (active.isEmpty()) return
+        val latch = java.util.concurrent.CountDownLatch(active.size)
+        for (src in active) {
             pool.execute {
-                val r = runCatching { searchSource(src, key) }
-                    .getOrElse { SourceResult(src.id, src.name, false, error = Net.friendlyError(it)) }
+                val t0 = System.currentTimeMillis()
+                val r = runCatching {
+                    val future = pool.submit(java.util.concurrent.Callable { searchSource(src, key) })
+                    runCatching { future.get(5, java.util.concurrent.TimeUnit.SECONDS) }.getOrElse {
+                        future.cancel(true)
+                        markFailed(src.id)
+                        SourceResult(src.id, src.name, false, error = "搜索超时 (5s)", ms = 5000)
+                    }
+                }.getOrElse {
+                    markFailed(src.id)
+                    SourceResult(src.id, src.name, false, error = Net.friendlyError(it), ms = System.currentTimeMillis() - t0)
+                }
+                if (!r.ok && (r.error.contains("超时") || r.error.contains("连接不上") || r.error.contains("50"))) {
+                    markFailed(src.id)
+                }
                 try { onUpdate(r) } finally { latch.countDown() }
             }
         }
-        runCatching { latch.await(15, java.util.concurrent.TimeUnit.SECONDS) }
+        runCatching { latch.await(6, java.util.concurrent.TimeUnit.SECONDS) }
     }
 
     /** 当前每个源实际连通的域名 */

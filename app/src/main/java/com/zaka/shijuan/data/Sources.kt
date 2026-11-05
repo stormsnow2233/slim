@@ -57,7 +57,7 @@ data class Source(
     val toc: TocRule? = null,
     val content: ContentRule? = null,
     val apiKind: String = "",       // "zlib"
-    val enabledByDefault: Boolean = true,
+    val enabledByDefault: Boolean = false,
 ) {
     val bases: List<String> get() = (listOf(base) + mirrors).filter { it.isNotBlank() }.distinct()
 }
@@ -67,11 +67,12 @@ object Sources {
     /** 内置源 */
     val ALL: List<Source> = listOf(
 
-        // ─────────── 已实测可用 ───────────
+        // ─────────── 已实测可用（默认启用） ───────────
         Source(
             id = "biqugese", name = "笔趣书阁", group = "笔趣阁系",
             base = "https://www.biqugese.com", charset = "utf-8", status = "verified",
-            note = "搜索、目录、正文全通（实测），更新快，优先用这个",
+            enabledByDefault = true,
+            note = "【推荐】搜索/目录/正文全通（实测），更新快，首选推荐",
             search = SearchRule(
                 url = "/search/result.html?searchkey={key}",
                 list = "ul.librarylist > li",
@@ -95,8 +96,8 @@ object Sources {
         Source(
             id = "biquge5200", name = "笔趣阁 5200", group = "笔趣阁系",
             base = "https://www.bqg9.xyz", mirrors = listOf("https://www.biquge5200.cc"),
-            charset = "gbk", status = "verified",
-            note = "老牌站，书库大，编码 GBK（已内置解码）。实测搜索/目录/正文全通",
+            charset = "gbk", status = "local",
+            note = "【备用】源站网关超时 504",
             search = SearchRule(
                 url = "/modules/article/search.php?searchkey={key}",
                 list = "table.grid tr",
@@ -115,7 +116,8 @@ object Sources {
         Source(
             id = "novel8", name = "无限轻小说", group = "轻小说",
             base = "https://www.8novel.com", charset = "utf-8", status = "verified",
-            note = "繁体轻小说库。搜索可用；章节要在站内网页看，遇到打不开就用「浏览器打开」",
+            enabledByDefault = true,
+            note = "【推荐】繁体轻小说库。搜索/正文可用，更新稳定",
             search = SearchRule(
                 url = "/search/?key={key}",
                 list = ".card .col-4",
@@ -139,7 +141,7 @@ object Sources {
         Source(
             id = "qianbi", name = "铅笔小说", group = "综合",
             base = "https://www.23qb.com", charset = "utf-8", status = "local",
-            note = "国内直连，轻小说与网文都全，排版干净",
+            note = "【备用】海外/部分地区 403 拦截",
             search = SearchRule(
                 url = "/search.html?searchkey={key}",
                 list = ".module-search-item",
@@ -164,7 +166,7 @@ object Sources {
         Source(
             id = "ttkan", name = "天天看小说", group = "综合",
             base = "https://cn.ttkan.co", charset = "utf-8", status = "local",
-            note = "繁体站，玄幻修真类很全，章节更新快",
+            note = "【备用】源站 502 Bad Gateway",
             search = SearchRule(
                 url = "/novel/search?q={key}",
                 list = ".novel_cell",
@@ -184,8 +186,8 @@ object Sources {
 
         Source(
             id = "sudugu", name = "速读谷", group = "综合",
-            base = "https://www.sudugu.co", charset = "utf-8", status = "local",
-            note = "国内直连，老书冷门书比较多",
+            base = "https://www.sudugu.cc", charset = "utf-8", status = "local",
+            note = "【备用】域名已搬至 sudugu.cc，国内老书冷门书",
             search = SearchRule(
                 url = "/modules/article/search.php", method = "POST",
                 body = "searchkey={key}&action=login&searchtype=all&submit=",
@@ -207,7 +209,7 @@ object Sources {
         Source(
             id = "shoujix", name = "手机小说", group = "综合",
             base = "https://www.shoujix.com", charset = "gbk", status = "local",
-            note = "GBK 老站，书库偏完本",
+            note = "【备用】源站返回空壳页",
             search = SearchRule(
                 url = "/modules/article/search.php", method = "POST",
                 body = "searchkey={key}",
@@ -229,7 +231,7 @@ object Sources {
         Source(
             id = "kuaishu", name = "快书网", group = "综合",
             base = "https://www.kuaishu5.com", charset = "utf-8", status = "local",
-            note = "国内直连，走通用识别，冷门书命中率高",
+            note = "【备用】源站 SSL 证书失效",
             search = SearchRule(url = "/search/?searchkey={key}", auto = true),
             toc = TocRule(list = "", name = "@text", url = "@href"),
             content = ContentRule(body = ""),
@@ -238,7 +240,7 @@ object Sources {
         Source(
             id = "deqixs", name = "得奇小说网", group = "综合",
             base = "https://www.deqixs.com", charset = "utf-8", status = "local",
-            note = "国内直连，分类标签检索，走通用识别",
+            note = "【备用】源站直接掐断连接",
             search = SearchRule(url = "/tag/?key={key}", auto = true),
             content = ContentRule(body = ""),
         ),
@@ -248,7 +250,7 @@ object Sources {
             id = "qidian", name = "起点中文网", group = "正版",
             base = "https://www.qidian.com", mirrors = listOf("https://m.qidian.com"),
             charset = "utf-8", status = "local",
-            note = "正版源头。免费章节可读，正文有自定义字体加密（个别字会显示异常）；VIP 章节需购买",
+            note = "【备用】起点反爬 202 拦截",
             search = SearchRule(
                 url = "/so/{key}.html", auto = true,
                 list = "ul.book-img-text > li, .book-mid-info",
@@ -271,7 +273,7 @@ object Sources {
             id = "linovelib", name = "哔哩轻小说", group = "轻小说",
             base = "https://www.linovelib.com", mirrors = listOf("https://www.bilinovel.com"),
             charset = "utf-8", status = "local",
-            note = "日轻/台版翻译最全的站之一，轻小说首选",
+            note = "【备用】源站改版，搜索路径 404",
             search = SearchRule(
                 url = "/search.php?searchkey={key}",
                 list = ".book-img-text li, .bookbox, .book-item",
@@ -300,7 +302,7 @@ object Sources {
         Source(
             id = "wenku8", name = "轻小说文库", group = "轻小说",
             base = "https://www.wenku8.net", charset = "utf-8", status = "local",
-            note = "老牌轻小说文库，日轻翻译量大。部分章节要登录，遇到就换源",
+            note = "【备用】海外/部分地区 403 拦截",
             search = SearchRule(
                 url = "/modules/article/search.php?searchtype=articlename&searchkey={key}",
                 keyCharset = "gbk",
@@ -321,7 +323,8 @@ object Sources {
         Source(
             id = "sfacg", name = "SF轻小说", group = "轻小说",
             base = "https://m.sfacg.com", charset = "utf-8", status = "verified",
-            note = "正版轻小说站（菠萝包）。搜索走站点 JSON 接口，目录在单独列表页，正文在手机站",
+            enabledByDefault = true,
+            note = "【推荐】正版轻小说官方接口，检索快，目录正文结构清晰",
             apiKind = "sfacg",
             search = SearchRule(url = "/API/HTML5.ashx?op=search&keyword={key}", auto = false),
             detail = DetailRule(
@@ -338,7 +341,7 @@ object Sources {
         Source(
             id = "trxs", name = "同人小说", group = "轻小说",
             base = "https://www.trxs.cc", charset = "utf-8", status = "local",
-            note = "同人/二次元向文本多，轻小说改编同人很全",
+            note = "【备用】源站改版，搜索路径 404",
             search = SearchRule(
                 url = "/modules/article/search.php?searchkey={key}", auto = true,
                 list = ".bookbox, .novel-item, .grid tr",
@@ -358,7 +361,8 @@ object Sources {
         Source(
             id = "ptwxz", name = "飘天文学", group = "综合",
             base = "https://www.ptwxz.com", charset = "gbk", status = "local",
-            note = "老牌 GBK 站，完本资源多",
+            enabledByDefault = true,
+            note = "【推荐】老牌 GBK 完本站，书库大",
             search = SearchRule(
                 url = "/modules/article/search.php?searchkey={key}", auto = true,
                 list = ".grid tr, .bookbox, .novel-list li",
@@ -376,7 +380,7 @@ object Sources {
         Source(
             id = "ddxs", name = "顶点小说", group = "综合",
             base = "https://www.ddxs.com", charset = "gbk", status = "local",
-            note = "GBK 老站，书库大更新快",
+            note = "【备用】海外/部分地区 403 拦截",
             search = SearchRule(
                 url = "/modules/article/search.php?searchkey={key}", auto = true,
                 list = ".grid tr, .bookbox, .novel-list li",
@@ -394,7 +398,7 @@ object Sources {
         Source(
             id = "xbiquge", name = "新笔趣阁", group = "笔趣阁系",
             base = "https://www.xbiquge.la", charset = "utf-8", status = "local",
-            note = "笔趣阁系里比较稳的一个，网文全",
+            note = "【备用】源站 SSL 证书失效",
             search = SearchRule(
                 url = "/modules/article/search.php?searchkey={key}", auto = true,
                 list = ".grid tr, .bookbox, .novel-list li",
@@ -414,7 +418,7 @@ object Sources {
             id = "zlib", name = "Z-Library", group = "电子书",
             base = "https://z-lib.gd", mirrors = listOf("https://z-library.sk", "https://1lib.sk"),
             charset = "utf-8", status = "api", apiKind = "zlib",
-            note = "全球最大的电子书库（EPUB/PDF），走官方 App 接口检索，点开可看详情与下载页",
+            note = "【备用】全球最大的电子书库（EPUB/PDF），走官方 App 接口检索",
         ),
     )
 

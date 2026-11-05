@@ -6,6 +6,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
 import org.json.JSONArray
+import org.json.JSONObject
 
 /** 本地存储：书架、进度、设置、搜索历史、书源开关 */
 class Store(context: Context) {
@@ -124,6 +125,40 @@ class Store(context: Context) {
         val list = comicShelf().filterNot { it.url == comic.url && it.sourceId == comic.sourceId }
         saveComicShelf(list)
         return list
+    }
+
+    // ── 漫画热门榜单本地缓存（秒开） ──
+    fun cachedComicHits(): List<ComicHit> {
+        val s = sp.getString("comic_hot_hits_v1", null) ?: return emptyList()
+        return runCatching {
+            val arr = JSONArray(s)
+            (0 until arr.length()).mapNotNull { i ->
+                val o = arr.optJSONObject(i) ?: return@mapNotNull null
+                val sid = o.optString("sourceId")
+                val sname = o.optString("sourceName")
+                val carr = o.optJSONArray("list") ?: JSONArray()
+                val clist = (0 until carr.length()).mapNotNull { j ->
+                    carr.optJSONObject(j)?.let { Comic.from(it) }
+                }
+                if (clist.isEmpty()) null else ComicHit(sid, sname, clist, true, 0)
+            }
+        }.getOrDefault(emptyList())
+    }
+
+    fun saveComicHits(hits: List<ComicHit>) {
+        runCatching {
+            val arr = JSONArray()
+            hits.filter { it.ok && it.list.isNotEmpty() }.forEach { h ->
+                val ho = JSONObject()
+                ho.put("sourceId", h.sourceId)
+                ho.put("sourceName", h.sourceName)
+                val carr = JSONArray()
+                h.list.take(30).forEach { carr.put(it.toJson()) }
+                ho.put("list", carr)
+                arr.put(ho)
+            }
+            sp.edit().putString("comic_hot_hits_v1", arr.toString()).apply()
+        }
     }
 
     // ── 漫画阅读设置 ──
@@ -336,7 +371,7 @@ class Store(context: Context) {
 
     // ── 书源开关 ──
     fun enabledSources(): Set<String> {
-        val s = sp.getString("enabled_sources", null) ?: return Sources.defaultEnabled
+        val s = sp.getString("enabled_sources_v2", null) ?: return Sources.defaultEnabled
         return runCatching {
             val a = JSONArray(s)
             (0 until a.length()).map { a.getString(it) }.toSet()
@@ -346,7 +381,7 @@ class Store(context: Context) {
     fun setSourceEnabled(id: String, on: Boolean): Set<String> {
         val cur = enabledSources().toMutableSet()
         if (on) cur.add(id) else cur.remove(id)
-        sp.edit().putString("enabled_sources", JSONArray(cur.toList()).toString()).apply()
+        sp.edit().putString("enabled_sources_v2", JSONArray(cur.toList()).toString()).apply()
         return cur
     }
 

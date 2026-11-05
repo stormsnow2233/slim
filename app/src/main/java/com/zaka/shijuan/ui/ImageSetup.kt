@@ -41,8 +41,8 @@ object ComicImages {
 
     private fun build(ctx: Context): ImageLoader {
         val dispatcher = okhttp3.Dispatcher().apply {
-            maxRequests = 64
-            maxRequestsPerHost = 16
+            maxRequests = 16
+            maxRequestsPerHost = 4
         }
         val pool = okhttp3.ConnectionPool(32, 5, TimeUnit.MINUTES)
         val clientBuilder = OkHttpClient.Builder()
