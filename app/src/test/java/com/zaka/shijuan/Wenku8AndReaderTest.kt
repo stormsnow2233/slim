@@ -91,4 +91,20 @@ class Wenku8AndReaderTest {
         assertEquals("https://dl.wenku8.com/down.php?type=utf8&node=1&id=1973", u1)
         assertEquals("https://dl.wenku8.com/down.php?type=utf8&node=1&id=1305", u2)
     }
+
+    @Test
+    fun testFilterFakeBooks() {
+        val m = BookRepo::class.java.getDeclaredMethod("isFakeBook", String::class.java, String::class.java)
+        m.isAccessible = true
+
+        val isFake1 = m.invoke(BookRepo, "新用户注册", "https://www.wenku8.cc/register.php") as Boolean
+        val isFake2 = m.invoke(BookRepo, "用户登录", "https://www.wenku8.cc/login.php") as Boolean
+        val isFake3 = m.invoke(BookRepo, "取回密码", "https://www.wenku8.cc/getpass.php") as Boolean
+        val isReal = m.invoke(BookRepo, "刀剑神域", "https://www.wenku8.cc/book/1.htm") as Boolean
+
+        assertTrue("新用户注册链接应被判定为假书", isFake1)
+        assertTrue("用户登录链接应被判定为假书", isFake2)
+        assertTrue("取回密码链接应被判定为假书", isFake3)
+        assertFalse("真实小说不应被判定为假书", isReal)
+    }
 }

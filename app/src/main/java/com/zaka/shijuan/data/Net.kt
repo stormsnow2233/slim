@@ -195,6 +195,9 @@ object Net {
 
     private val Charset_gb18030 = charset("GB18030")
 
+    // 默认内置的常用书源凭证（如文库8会员Cookie，免除关站拦截与会员章节访问限制）
+    const val WENKU8_DEFAULT_COOKIE = "jieqiUserInfo=jieqiUserId%3D1947674%2CjieqiUserName%3Dwanmiaohai%2CjieqiUserGroup%3D3%2CjieqiUserVip%3D0%2CjieqiUserPassword%3D9472cb36a664a6eb22d122aad30e3ca6%2CjieqiUserName_un%3Dwanmiaohai%2CjieqiUserHonor_un%3D%26%23x65B0%3B%26%23x624B%3B%26%23x4E0A%3B%26%23x8DEF%3B%2CjieqiUserGroupName_un%3D%26%23x666E%3B%26%23x901A%3B%26%23x4F1A%3B%26%23x5458%3B%2CjieqiUserLogin%3D1793930437; jieqiVisitInfo=jieqiUserLogin%3D1793930437%2CjieqiUserId%3D1947674"
+
     fun get(
         url: String,
         charset: String = "utf-8",
@@ -220,6 +223,9 @@ object Net {
         builder.header("Sec-Fetch-Site", if (referer.isBlank()) "none" else "same-origin")
         builder.header("Sec-Fetch-User", "?1")
         if (referer.isNotBlank()) builder.header("Referer", referer)
+        if (url.contains("wenku8") && !headers.containsKey("Cookie")) {
+            builder.header("Cookie", WENKU8_DEFAULT_COOKIE)
+        }
         headers.forEach { (k, v) -> builder.header(k, v) }
         val resp = exec(builder.build(), charset, fast = fast, slow = isSlow)
         if (useCache && resp.ok) synchronized(pageCache) { pageCache[key] = resp }
@@ -256,6 +262,9 @@ object Net {
         builder.header("Origin", referer.trimEnd('/'))
         builder.post(fb.build())
         if (referer.isNotBlank()) builder.header("Referer", referer)
+        if (url.contains("wenku8") && !headers.containsKey("Cookie")) {
+            builder.header("Cookie", WENKU8_DEFAULT_COOKIE)
+        }
         headers.forEach { (k, v) -> builder.header(k, v) }
         return exec(builder.build(), charset, fast = fast, slow = isSlow)
     }
@@ -263,6 +272,9 @@ object Net {
     fun getBytes(url: String, referer: String = ""): ByteArray? = runCatching {
         val b = Request.Builder().url(safeUrl(url)).header("User-Agent", UA)
         if (referer.isNotBlank()) b.header("Referer", referer)
+        if (url.contains("wenku8")) {
+            b.header("Cookie", WENKU8_DEFAULT_COOKIE)
+        }
         client.newCall(b.build()).execute().use { r ->
             if (!r.isSuccessful) null else r.body?.bytes()
         }

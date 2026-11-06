@@ -167,6 +167,14 @@ object BookRepo {
         ).any { heads.contains(it, ignoreCase = true) }
     }
 
+    /** 过滤误将站点登录/注册/找回密码链接当成书籍的假条目 */
+    private fun isFakeBook(name: String, url: String): Boolean {
+        val lowerUrl = url.lowercase()
+        if (lowerUrl.contains("login") || lowerUrl.contains("register") || lowerUrl.contains("getpass")) return true
+        val blockedNames = listOf("新用户注册", "用户登录", "注册新用户", "取回密码", "忘记密码", "退出登录")
+        return blockedNames.any { name.equals(it, ignoreCase = true) || name.contains(it) }
+    }
+
     private fun parseSearchPage(src: Source, html: String, pageUrl: String, rule: SearchRule, key: String = ""): List<Book> {
         val doc = Rules.parse(html)
         var rows: List<Map<String, String>> = emptyList()
@@ -176,7 +184,7 @@ object BookRepo {
         var books = rows.mapNotNull { row ->
             val name = row["name"].orEmpty().trim()
             val url = row["bookUrl"].orEmpty().trim()
-            if (name.isEmpty() || url.isEmpty()) null
+            if (name.isEmpty() || url.isEmpty() || isFakeBook(name, url)) null
             else Book(
                 name = name,
                 author = row["author"].orEmpty().trim(),
@@ -194,9 +202,11 @@ object BookRepo {
         // 于是列表里全是书名不对、点进去是伪目录的条目。要求页面里真出现了搜索词才采纳。
         val echoKey = key.isBlank() || html.contains(key, ignoreCase = true)
         if (books.isEmpty() && rule.auto && echoKey) {
-            books = Rules.autoList(doc, pageUrl).map {
-                it.copy(sourceId = src.id, sourceName = src.name)
-            }
+            books = Rules.autoList(doc, pageUrl)
+                .filterNot { isFakeBook(it.name, it.url) }
+                .map {
+                    it.copy(sourceId = src.id, sourceName = src.name)
+                }
         }
         return books.take(60)
     }
@@ -235,7 +245,7 @@ object BookRepo {
         val name = (listOf(Regex("^《(.+?)》"), Regex("^(.+?)[-_|｜（(]"))
             .firstNotNullOfOrNull { p -> p.find(raw)?.groupValues?.get(1)?.trim()?.takeIf { it.length >= 2 } }
             ?: raw).replace(Regex("[《》]"), "").trim()
-        if (name.isBlank()) return null
+        if (name.isBlank() || isFakeBook(name, landed)) return null
         return Book(
             name = name,
             author = metaText(doc, "og:novel:author").ifBlank { metaText(doc, "author") },
