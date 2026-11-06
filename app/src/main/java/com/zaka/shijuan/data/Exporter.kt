@@ -185,18 +185,12 @@ object Exporter {
         }
     }
 
-    /** 轻小说文库的整本 TXT 直链（目录按作品号分桶） */
+    /** 轻小说文库的整本 TXT 直链（dl.wenku8.com 官方打包，支持全部作品号） */
     private fun directTxtUrl(book: Book): String? {
         if (book.sourceId != "wenku8") return null
-        val aid = Regex("/book/(\\d+)").find(book.url)?.groupValues?.get(1)?.toIntOrNull() ?: return null
-        val group = when (aid) {
-            in 1..999 -> 0
-            in 1000..1999 -> 1
-            in 2000..2999 -> 2
-            in 3000..3999 -> 3
-            else -> return null
-        }
-        return "https://dl1.wenku8.com/down/txtutf8/$group/$aid.txt"
+        val aid = Regex("(?:/book/|/novel/\\d+/|id=)(\\d+)").find(book.url)?.groupValues?.get(1)?.toIntOrNull()
+            ?: return null
+        return "https://dl.wenku8.com/down.php?type=utf8&node=1&id=$aid"
     }
 
     // ───────────── 文件生成 ─────────────

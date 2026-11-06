@@ -315,12 +315,14 @@ object Sources {
 
         Source(
             id = "wenku8", name = "轻小说文库", group = "轻小说",
-            base = "https://www.wenku8.net", charset = "utf-8", status = "local",
-            note = "【备用】海外/部分地区 403 拦截",
+            base = "https://www.wenku8.net",
+            mirrors = listOf("http://www.wenku8.cc", "https://www.wenku8.cc"),
+            charset = "gbk", status = "verified",
+            note = "双载点直连 + 官方整本打包，收录日本轻小说与插图",
             search = SearchRule(
                 url = "/modules/article/search.php?searchtype=articlename&searchkey={key}",
                 keyCharset = "gbk",
-                list = "table.css tr, table.grid tr, .grid tr",
+                list = "table.css tr:has(td.ccss), table.grid tr, .grid tr",
                 fields = mapOf(
                     "name" to "td:nth-child(1) a@text || td:nth-child(2) a@text",
                     "bookUrl" to "td:nth-child(1) a@href || td:nth-child(2) a@href",
@@ -329,9 +331,19 @@ object Sources {
                 ),
                 auto = true,
             ),
-            detail = DetailRule(name = "h1@text || #title@text", author = "#info a@text || .author@text", cover = "#fmimg img@src || .cover img@src", intro = "#intro@text || .intro@text"),
-            toc = TocRule(list = "#content table td a, .css table td a, .chapter_list a", name = "@text", url = "@href"),
-            content = ContentRule(body = "#content@html || #acontent@html"),
+            detail = DetailRule(
+                name = "h1@text || #title@text || title@text",
+                author = "#info a@text || .author@text || td:contains(小说作者)@text",
+                cover = "img[src*=image]@src || #fmimg img@src || .cover img@src",
+                intro = "#intro@text || .intro@text || td:contains(内容简介)@text"
+            ),
+            toc = TocRule(
+                list = "table.css td.ccss a, table.css td a, td.ccss a, .chapter_list a",
+                name = "@text",
+                url = "@href",
+                volume = "td.vcss",
+            ),
+            content = ContentRule(body = "div#content@html || #content@html || #acontent@html"),
         ),
 
         Source(

@@ -308,16 +308,24 @@ object BookRepo {
         var list: List<Chapter> = emptyList()
         val skipVol = t?.skipVolume?.takeIf { it.isNotBlank() }?.let { runCatching { Regex(it) }.getOrNull() }
 
-        /** 这个章节属于哪一卷：往上找几层，看前一个兄弟是不是卷标题（SF 是 div.mulu > div.Content_Frame > ul.mulu_list > a） */
+        /** 这个章节属于哪一卷：往上找几层，向前查找卷标题（SF 是 div.mulu，Wenku8 是 table.css 中的 td.vcss） */
         fun volumeOf(el: org.jsoup.nodes.Element): String {
             val sel = t?.volume.orEmpty()
             if (sel.isBlank()) return ""
             var n: org.jsoup.nodes.Element? = el
             var depth = 0
-            while (n != null && depth++ < 5) {
-                val prev = n.previousElementSibling()
-                if (prev != null && runCatching { prev.`is`(sel) }.getOrDefault(false))
-                    return prev.text().replace(Regex("\\s+"), " ").trim()
+            while (n != null && depth++ < 6) {
+                var prev = n.previousElementSibling()
+                while (prev != null) {
+                    if (runCatching { prev.`is`(sel) }.getOrDefault(false)) {
+                        return prev.text().replace(Regex("\\s+"), " ").trim()
+                    }
+                    val found = runCatching { prev.selectFirst(sel) }.getOrNull()
+                    if (found != null) {
+                        return found.text().replace(Regex("\\s+"), " ").trim()
+                    }
+                    prev = prev.previousElementSibling()
+                }
                 n = n.parent()
             }
             return ""
@@ -330,8 +338,9 @@ object BookRepo {
                 val elements = runCatching { doc.select(sel) }.getOrDefault(emptyList())
                 if (elements.isEmpty()) continue
                 val parsed = elements.mapIndexedNotNull { idx, el ->
+                    val vol = volumeOf(el)
                     // 整卷都是插图/人设的话（SF 每本书几乎都有），这一卷的章节一个都不要
-                    if (skipVol != null && skipVol.containsMatchIn(volumeOf(el))) return@mapIndexedNotNull null
+                    if (skipVol != null && skipVol.containsMatchIn(vol)) return@mapIndexedNotNull null
                     val target = if (el.tagName().equals("a", true)) el else el.selectFirst("a") ?: el
                     val name = when {
                         t.name.isBlank() || t.name == "@text" || t.name == "text" ->
@@ -350,7 +359,7 @@ object BookRepo {
                             Rules.absUrl(pageUrl, href)
                         }
                     }
-                    if (name.isEmpty() || url.isEmpty() || url == pageUrl) null else Chapter(name, url, idx)
+                    if (name.isEmpty() || url.isEmpty() || url == pageUrl) null else Chapter(name, url, idx, vol)
                 }
                 if (parsed.size >= 2) {
                     list = parsed
@@ -562,12 +571,7 @@ object BookRepo {
                 return Result.failure(Exception("这章是源站的付费/VIP 章节，得先在源站登录购买才能看，建议换个源搜同名书"))
             if (isErrorPage(doc))
                 return Result.failure(Exception("源站返回「暂时无法访问」（该老书在手机站未开放或已下线），建议换个源搜同名书"))
-            // 正文区里只有图片：插图画/人设页这类章节（SF 每本书开头常有好几章），阅读器只排文字，怎么抓都是空的
-            // 只数「取到的正文块」里的 img：html 为空时整页数会把站标/广告图也算进去，误判成插图章
-            val imgs = if (html.isBlank()) 0
-            else Regex("<img", RegexOption.IGNORE_CASE).findAll(html).count()
-            if (imgs > 0)
-                return Result.failure(Exception("这章是插图/图片章（正文全是图片），App 只显示文字，翻到下一章看正文吧"))
+            // 如果正文区里有图片（插图画/彩页/人设），保留交给阅读器以插图卡片形式呈现
         }
         if (html.isBlank()) {
             if (isErrorPage(doc))
@@ -597,11 +601,12 @@ object BookRepo {
         }
 
         val cleaned = Rules.stripAds(html)
-        val text = Rules.htmlToParagraphs(cleaned)
+        val text = Rules.htmlToParagraphs(cleaned, chapter.url)
         val title = doc.selectFirst("h1")?.text()?.trim().orEmpty().ifBlank { chapter.name }
+        val hasImages = text.contains("<!--image-->")
         val len = text.replace(Regex("\\s"), "").length
-        // 一百字以下基本不是正文：要么被拦，要么抓到的是书页/推荐列表那几行字
-        if (len < 120) {
+        // 一百字以下且没有插图的通常不是正文：要么被拦，要么抓到的是书页/推荐列表那几行字
+        if (len < 120 && !hasImages) {
             if (isErrorPage(doc))
                 return Result.failure(Exception("源站返回「暂时无法访问」（该老书在手机站未开放或已下线），建议换个源搜同名书"))
             if (len == 0)

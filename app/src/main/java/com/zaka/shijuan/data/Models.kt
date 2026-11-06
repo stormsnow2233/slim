@@ -43,7 +43,7 @@ data class Book(
 }
 
 /** 章节 */
-data class Chapter(val name: String, val url: String, val index: Int = 0)
+data class Chapter(val name: String, val url: String, val index: Int = 0, val volume: String = "")
 
 /** 目录结果 */
 data class Toc(val chapters: List<Chapter>, val cover: String = "", val intro: String = "", val author: String = "")

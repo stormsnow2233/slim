@@ -243,9 +243,16 @@ object Rules {
         return wrap.html()
     }
 
-    /** 把正文 HTML 规范成段落文本（保留段落换行） */
-    fun htmlToParagraphs(html: String): String {
-        val d = Jsoup.parse("<div id=\"__c\">$html</div>")
+    /** 把正文 HTML 规范成段落文本（保留段落换行与插图） */
+    fun htmlToParagraphs(html: String, baseUrl: String = ""): String {
+        // 先把文库等源站原生的 <!--image-->url<!--image--> 规范为统一的 <img> 节点
+        val normalized = if (html.contains("<!--image-->")) {
+            html.replace(Regex("<!--image-->([\\s\\S]*?)<!--image-->")) {
+                "<img src=\"${it.groupValues[1].trim()}\" />"
+            }
+        } else html
+
+        val d = Jsoup.parse("<div id=\"__c\">$normalized</div>")
         val c = d.getElementById("__c") ?: return cleanText(html)
         c.select("script, style, iframe").remove()
 
@@ -257,10 +264,20 @@ object Rules {
                 is org.jsoup.nodes.TextNode -> sb.append(node.text())
                 is Element -> {
                     val tag = node.tagName().lowercase()
-                    val isBlock = tag in blocks
-                    if (isBlock) sb.append('\n')
-                    node.childNodes().forEach { walk(it) }
-                    if (isBlock) sb.append('\n')
+                    if (tag == "img") {
+                        val src = node.attr("src").ifBlank {
+                            node.attr("data-src").ifBlank { node.attr("data-original") }
+                        }.trim()
+                        if (src.isNotBlank() && !src.startsWith("data:")) {
+                            val fullUrl = if (baseUrl.isNotBlank()) absUrl(baseUrl, src) else src
+                            sb.append("\n<!--image-->").append(fullUrl).append("<!--image-->\n")
+                        }
+                    } else {
+                        val isBlock = tag in blocks
+                        if (isBlock) sb.append('\n')
+                        node.childNodes().forEach { walk(it) }
+                        if (isBlock) sb.append('\n')
+                    }
                 }
             }
         }

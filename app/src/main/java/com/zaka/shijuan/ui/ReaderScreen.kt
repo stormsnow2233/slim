@@ -9,6 +9,8 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.foundation.gestures.rememberTransformableState
+import androidx.compose.foundation.gestures.transformable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -28,7 +30,10 @@ import androidx.compose.runtime.snapshotFlow
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalConfiguration
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -37,6 +42,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.window.Dialog
+import androidx.compose.ui.window.DialogProperties
+import coil.compose.AsyncImage
+import coil.request.ImageRequest
 import com.zaka.shijuan.data.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -65,6 +74,7 @@ fun ReaderScreen(
     var altLoading by remember { mutableStateOf(false) }
     var altBooks by remember { mutableStateOf<List<Book>>(emptyList()) }
     var prefs by remember { mutableStateOf(store.readerPrefs()) }
+    var previewImageUrl by remember { mutableStateOf<String?>(null) }
 
     // 章内分页状态
     var pageCount by remember { mutableIntStateOf(1) }
@@ -286,6 +296,7 @@ fun ReaderScreen(
                                     pagerState = p
                                     currentPage = p.currentPage
                                 },
+                                onImageClick = { previewImageUrl = it },
                             )
                         }
                         Text(
@@ -311,8 +322,8 @@ fun ReaderScreen(
                             .padding(horizontal = 22.dp)
                     ) {
                         Spacer(Modifier.height(10.dp))
-                        ChapterTitle(content?.title ?: chapter?.name ?: "", prefs, theme)
-                        BodyText(content?.text ?: "", prefs, theme)
+                        ChapterTitle(content?.title ?: chapter?.name ?: "", chapter?.volume.orEmpty(), prefs, theme)
+                        BodyText(content?.text ?: "", prefs, theme, onImageClick = { previewImageUrl = it })
                         Spacer(Modifier.height(24.dp))
                         FootNav(index, chapters.size, theme) { }
                         Spacer(Modifier.height(60.dp))
@@ -485,12 +496,22 @@ fun ReaderScreen(
                 }
                 LazyColumn(state = tocState, modifier = Modifier.weight(1f)) {
                     items(chapters, key = { it.url + it.index }) { ch ->
-                        Row(
+                        Column(
                             Modifier
                                 .fillMaxWidth()
                                 .clickable { showToc = false; index = ch.index }
-                                .padding(horizontal = 22.dp, vertical = 13.dp)
+                                .padding(horizontal = 22.dp, vertical = 10.dp)
                         ) {
+                            if (ch.volume.isNotBlank()) {
+                                Text(
+                                    ch.volume,
+                                    fontSize = 11.sp,
+                                    color = MaterialTheme.colorScheme.primary.copy(alpha = 0.85f),
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis,
+                                    modifier = Modifier.padding(bottom = 2.dp)
+                                )
+                            }
                             Text(
                                 ch.name,
                                 style = MaterialTheme.typography.bodyLarge,
@@ -506,35 +527,154 @@ fun ReaderScreen(
             }
         }
     }
+
+    // ── 轻小说插图全屏缩放预览（参考 MewX 双击缩放与手势操作） ──
+    if (previewImageUrl != null) {
+        ImageViewerDialog(previewImageUrl!!) { previewImageUrl = null }
+    }
 }
 
 @Composable
-private fun ChapterTitle(title: String, prefs: ReaderPrefs, theme: ReaderTheme) {
+private fun ChapterTitle(title: String, volume: String = "", prefs: ReaderPrefs, theme: ReaderTheme) {
     if (title.isBlank()) return
-    Text(
-        title,
-        color = theme.text,
-        fontSize = (prefs.fontSize + 3).sp,
-        fontWeight = FontWeight.SemiBold,
-        lineHeight = (prefs.fontSize * prefs.lineHeight).sp,
-        modifier = Modifier.padding(top = 8.dp, bottom = 14.dp),
-    )
+    Column(Modifier.padding(top = 8.dp, bottom = 14.dp)) {
+        if (volume.isNotBlank()) {
+            Text(
+                volume,
+                color = theme.text.copy(alpha = 0.55f),
+                fontSize = (prefs.fontSize * 0.72f).sp,
+                fontWeight = FontWeight.Medium,
+                modifier = Modifier.padding(bottom = 3.dp),
+            )
+        }
+        Text(
+            title,
+            color = theme.text,
+            fontSize = (prefs.fontSize + 3).sp,
+            fontWeight = FontWeight.SemiBold,
+            lineHeight = (prefs.fontSize * prefs.lineHeight).sp,
+        )
+    }
 }
 
 @Composable
-private fun BodyText(text: String, prefs: ReaderPrefs, theme: ReaderTheme) {
+private fun BodyText(
+    text: String,
+    prefs: ReaderPrefs,
+    theme: ReaderTheme,
+    onImageClick: (String) -> Unit = {}
+) {
     val paragraphs = remember(text) {
         text.split("\n").map { it.trim() }.filter { it.isNotEmpty() }
     }
+    val imgRegex = remember { Regex("^<!--image-->([\\s\\S]*?)<!--image-->$") }
+
     Column {
         paragraphs.forEach { p ->
-            Text(
-                text = if (prefs.indent) "　　$p" else p,
-                color = theme.text,
-                fontSize = prefs.fontSize.sp,
-                lineHeight = (prefs.fontSize * prefs.lineHeight).sp,
-                modifier = Modifier.padding(bottom = (prefs.fontSize * 0.45f).dp),
+            val match = imgRegex.find(p)
+            if (match != null) {
+                val imgUrl = match.groupValues[1].trim()
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 10.dp),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Card(
+                        shape = RoundedCornerShape(8.dp),
+                        colors = CardDefaults.cardColors(containerColor = theme.bar.copy(alpha = 0.4f)),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clickable { onImageClick(imgUrl) }
+                    ) {
+                        AsyncImage(
+                            model = ImageRequest.Builder(LocalContext.current)
+                                .data(imgUrl)
+                                .crossfade(true)
+                                .build(),
+                            contentDescription = "插图",
+                            contentScale = ContentScale.FillWidth,
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .heightIn(min = 100.dp, max = 560.dp)
+                        )
+                    }
+                }
+            } else {
+                Text(
+                    text = if (prefs.indent) "　　$p" else p,
+                    color = theme.text,
+                    fontSize = prefs.fontSize.sp,
+                    lineHeight = (prefs.fontSize * prefs.lineHeight).sp,
+                    modifier = Modifier.padding(bottom = (prefs.fontSize * 0.45f).dp),
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun ImageViewerDialog(
+    imageUrl: String,
+    onDismiss: () -> Unit
+) {
+    var scale by remember { mutableFloatStateOf(1f) }
+    var offset by remember { mutableStateOf(Offset.Zero) }
+    val transformState = rememberTransformableState { zoomChange, offsetChange, _ ->
+        scale = (scale * zoomChange).coerceIn(0.8f, 5f)
+        offset += offsetChange
+    }
+
+    Dialog(
+        onDismissRequest = onDismiss,
+        properties = DialogProperties(usePlatformDefaultWidth = false)
+    ) {
+        Box(
+            Modifier
+                .fillMaxSize()
+                .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.94f))
+                .pointerInput(Unit) {
+                    detectTapGestures(
+                        onDoubleTap = {
+                            scale = if (scale > 1.2f) 1f else 2.5f
+                            offset = Offset.Zero
+                        },
+                        onTap = { onDismiss() }
+                    )
+                }
+        ) {
+            AsyncImage(
+                model = ImageRequest.Builder(LocalContext.current)
+                    .data(imageUrl)
+                    .crossfade(true)
+                    .build(),
+                contentDescription = "全屏插图",
+                contentScale = ContentScale.Fit,
+                modifier = Modifier
+                    .fillMaxSize()
+                    .graphicsLayer(
+                        scaleX = scale,
+                        scaleY = scale,
+                        translationX = offset.x,
+                        translationY = offset.y,
+                    )
+                    .transformable(state = transformState)
             )
+
+            IconButton(
+                onClick = onDismiss,
+                modifier = Modifier
+                    .align(Alignment.TopEnd)
+                    .statusBarsPadding()
+                    .padding(12.dp)
+                    .background(androidx.compose.ui.graphics.Color.Black.copy(alpha = 0.5f), RoundedCornerShape(20.dp))
+            ) {
+                Icon(
+                    Icons.Rounded.Close,
+                    contentDescription = "关闭",
+                    tint = androidx.compose.ui.graphics.Color.White,
+                )
+            }
         }
     }
 }

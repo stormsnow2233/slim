@@ -208,7 +208,11 @@ class Store(context: Context) {
         if (!tocSane(bookUrl, chapters)) return
         val arr = JSONArray()
         chapters.forEach {
-            arr.put(JSONArray().apply { put(it.name); put(it.url) })
+            arr.put(JSONArray().apply {
+                put(it.name)
+                put(it.url)
+                if (it.volume.isNotBlank()) put(it.volume)
+            })
         }
         sp.edit().putString(tocKey(bookUrl), arr.toString()).apply()
         // 章节 URL 单独留一份，删缓存时才知道该删哪些正文（目录丢了也能删干净）
@@ -310,7 +314,7 @@ class Store(context: Context) {
             val arr = JSONArray(s)
             (0 until arr.length()).map {
                 val a = arr.getJSONArray(it)
-                Chapter(a.getString(0), a.getString(1), it)
+                Chapter(a.getString(0), a.getString(1), it, if (a.length() > 2) a.optString(2) else "")
             }
         }.getOrNull()
     }
