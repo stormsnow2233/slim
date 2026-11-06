@@ -12,6 +12,7 @@ data class ReadingRecord(
     val chapterIndex: Int = 0,
     val chapterName: String = "",
     val progress: Float = 0f,
+    val pageIndex: Int = 0,
     val total: Int = 0,
     val lastReadAt: Long = 0,
 ) {
@@ -20,6 +21,7 @@ data class ReadingRecord(
         put("chapterIndex", chapterIndex)
         put("chapterName", chapterName)
         put("progress", progress.toDouble())
+        put("pageIndex", pageIndex)
         put("total", total)
         put("lastReadAt", lastReadAt)
     }
@@ -30,6 +32,7 @@ data class ReadingRecord(
             chapterIndex = o.optInt("chapterIndex"),
             chapterName = o.optString("chapterName"),
             progress = o.optDouble("progress", 0.0).toFloat(),
+            pageIndex = o.optInt("pageIndex", 0),
             total = o.optInt("total"),
             lastReadAt = o.optLong("lastReadAt"),
         )

@@ -41,10 +41,11 @@ class Store(context: Context) {
 
     fun updateProgress(
         book: Book, chapterIndex: Int, chapterName: String,
-        progress: Float, total: Int,
+        progress: Float, pageIndex: Int = 0, total: Int,
     ): List<ShelfItem> {
         // 不管在不在书架，先把阅读记忆存下来
-        putRecord(book, chapterIndex, chapterName, progress, total)
+        putRecord(book, chapterIndex, chapterName, progress, pageIndex, total)
+        saveBookPage(book.url, chapterIndex, pageIndex)
         val list = shelf().toMutableList()
         val idx = list.indexOfFirst { it.book.url == book.url && it.book.sourceId == book.sourceId }
         if (idx >= 0) {
@@ -52,6 +53,7 @@ class Store(context: Context) {
                 chapterIndex = chapterIndex,
                 chapterName = chapterName,
                 progress = progress,
+                pageIndex = pageIndex,
                 lastReadAt = System.currentTimeMillis(),
                 totalChapters = if (total > 0) total else list[idx].totalChapters,
                 book = if (list[idx].book.cover.isBlank() && book.cover.isNotBlank()) book else list[idx].book,
@@ -69,7 +71,7 @@ class Store(context: Context) {
 
     fun putRecord(
         book: Book, chapterIndex: Int, chapterName: String,
-        progress: Float, total: Int,
+        progress: Float, pageIndex: Int = 0, total: Int,
     ) {
         val list = records().toMutableList()
         val idx = list.indexOfFirst { it.book.url == book.url && it.book.sourceId == book.sourceId }
@@ -79,12 +81,29 @@ class Store(context: Context) {
             chapterIndex = chapterIndex,
             chapterName = chapterName,
             progress = progress,
+            pageIndex = pageIndex,
             total = if (total > 0) total else old?.total ?: 0,
             lastReadAt = System.currentTimeMillis(),
         )
         if (idx >= 0) list[idx] = rec else list.add(0, rec)
         val sorted = list.sortedByDescending { it.lastReadAt }.take(60)
         sp.edit().putString("records", ReadingRecord.listToJson(sorted)).apply()
+    }
+
+    fun saveBookPage(bookUrl: String, chapterIndex: Int, page: Int) {
+        sp.edit().putInt("p_${bookUrl.hashCode()}_$chapterIndex", page).apply()
+    }
+
+    fun loadBookPage(bookUrl: String, chapterIndex: Int): Int {
+        return sp.getInt("p_${bookUrl.hashCode()}_$chapterIndex", 0)
+    }
+
+    fun saveBookScroll(bookUrl: String, chapterIndex: Int, scrollY: Int) {
+        sp.edit().putInt("s_${bookUrl.hashCode()}_$chapterIndex", scrollY).apply()
+    }
+
+    fun loadBookScroll(bookUrl: String, chapterIndex: Int): Int {
+        return sp.getInt("s_${bookUrl.hashCode()}_$chapterIndex", 0)
     }
 
     fun removeRecord(book: Book) {

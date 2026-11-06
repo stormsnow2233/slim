@@ -65,7 +65,7 @@ sealed class Route {
     /** 自定义书源编辑；id 为 null 表示新建 */
     data class CustomSourceEdit(val id: String? = null) : Route()
     data class Detail(val book: Book) : Route()
-    data class Reader(val book: Book, val chapters: List<Chapter>, val index: Int) : Route()
+    data class Reader(val book: Book, val chapters: List<Chapter>, val index: Int, val initialPage: Int = 0) : Route()
     data class ComicDetail(val comic: Comic) : Route()
     data class ComicRead(
         val comic: Comic,
@@ -301,8 +301,8 @@ fun ShijuanApp() {
                             book = r.book,
                             store = store,
                             onBack = { route = Route.Main },
-                            onRead = { book, chapters, idx ->
-                                route = Route.Reader(book, chapters, idx)
+                            onRead = { book, chapters, idx, initPage ->
+                                route = Route.Reader(book, chapters, idx, initPage)
                             },
                             onShelfChanged = { refreshShelf() },
                         )
@@ -311,11 +311,12 @@ fun ShijuanApp() {
                             book = r.book,
                             chapters = r.chapters,
                             startIndex = r.index,
+                            initialPage = r.initialPage,
                             store = store,
                             onBack = { route = Route.Detail(r.book) },
                             onSwitchBook = { other -> route = Route.Detail(other) },
-                            onProgress = { ci, cn, p, total ->
-                                store.updateProgress(r.book, ci, cn, p, total)
+                            onProgress = { ci, cn, p, page, total ->
+                                store.updateProgress(r.book, ci, cn, p, page, total)
                                 refreshShelf()
                             },
                         )

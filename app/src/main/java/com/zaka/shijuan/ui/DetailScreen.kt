@@ -50,7 +50,7 @@ fun DetailScreen(
     book: Book,
     store: Store,
     onBack: () -> Unit,
-    onRead: (Book, List<Chapter>, Int) -> Unit,
+    onRead: (Book, List<Chapter>, Int, Int) -> Unit,
     onShelfChanged: () -> Unit,
 ) {
     val scope = rememberCoroutineScope()
@@ -125,10 +125,13 @@ fun DetailScreen(
     val startIdx = (record?.chapterIndex ?: shelfItem?.chapterIndex ?: 0)
         .coerceIn(0, (toc.size - 1).coerceAtLeast(0))
     val startName = record?.chapterName?.ifBlank { null } ?: shelfItem?.chapterName.orEmpty()
+    val startPage = record?.pageIndex ?: shelfItem?.pageIndex ?: store.loadBookPage(full.url, startIdx)
 
-    fun read(idx: Int) {
+    fun read(idx: Int, fromContinue: Boolean = false) {
         if (toc.isEmpty()) return
-        onRead(full, toc, idx.coerceIn(0, toc.size - 1))
+        val targetIdx = idx.coerceIn(0, toc.size - 1)
+        val page = if (fromContinue || targetIdx == startIdx) startPage else store.loadBookPage(full.url, targetIdx)
+        onRead(full, toc, targetIdx, page)
     }
 
     fun doExport(format: String) {
@@ -304,7 +307,7 @@ fun DetailScreen(
                             }
                         } else {
                             Button(
-                                onClick = { read(startIdx) },
+                                onClick = { read(startIdx, fromContinue = true) },
                                 enabled = toc.isNotEmpty(),
                                 modifier = Modifier.fillMaxWidth(),
                                 shape = RoundedCornerShape(10.dp),
@@ -313,8 +316,10 @@ fun DetailScreen(
                                 Spacer(Modifier.width(6.dp))
                                 Text(
                                     when {
-                                        startName.isNotBlank() ->
-                                            "继续阅读 · ${startName.take(8)}"
+                                        startName.isNotBlank() -> {
+                                            val pageStr = if (startPage > 0) " (第${startPage + 1}页)" else ""
+                                            "继续阅读 · ${startName.take(8)}$pageStr"
+                                        }
                                         toc.isNotEmpty() -> "开始阅读"
                                         loading -> "加载中…"
                                         else -> "暂无目录"

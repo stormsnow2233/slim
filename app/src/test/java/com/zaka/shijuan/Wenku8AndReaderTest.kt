@@ -121,4 +121,50 @@ class Wenku8AndReaderTest {
         assertFalse("正常正文不应被识别为错误", BookRepo.isTranscodeOrPiracyError(normalText))
         assertFalse("正常正文不应被识别为软错误", BookRepo.isSoftError(normalText))
     }
+
+    @Test
+    fun testReadingPageMemoryAndCompatibility() {
+        val book = Book(name = "测试小说", url = "https://test.com/book/1", sourceId = "test")
+        
+        // 1. ReadingRecord 记录页码并序列化/反序列化
+        val record = ReadingRecord(
+            book = book,
+            chapterIndex = 0,
+            chapterName = "第一章",
+            progress = 0.6f,
+            pageIndex = 2, // 第3页（0-indexed 为 2）
+            total = 10,
+            lastReadAt = 1000L
+        )
+        val json = record.toJson()
+        assertEquals(2, json.getInt("pageIndex"))
+        val restoredRecord = ReadingRecord.from(json)
+        assertEquals(2, restoredRecord.pageIndex)
+        assertEquals("第一章", restoredRecord.chapterName)
+
+        // 2. 兼容旧版本无 pageIndex 的 JSON
+        val oldJson = org.json.JSONObject().apply {
+            put("book", book.toJson())
+            put("chapterIndex", 1)
+            put("chapterName", "第二章")
+            put("progress", 0.5)
+            put("total", 10)
+        }
+        val oldRestored = ReadingRecord.from(oldJson)
+        assertEquals(0, oldRestored.pageIndex)
+
+        // 3. ShelfItem 记录页码并序列化/反序列化
+        val shelfItem = ShelfItem(
+            book = book,
+            chapterIndex = 0,
+            chapterName = "第一章",
+            progress = 0.6f,
+            pageIndex = 2,
+            totalChapters = 10
+        )
+        val shelfJson = shelfItem.toJson()
+        assertEquals(2, shelfJson.getInt("pageIndex"))
+        val restoredShelf = ShelfItem.from(shelfJson)
+        assertEquals(2, restoredShelf.pageIndex)
+    }
 }

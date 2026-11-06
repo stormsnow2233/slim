@@ -68,6 +68,7 @@ data class ShelfItem(
     var chapterIndex: Int = 0,
     var chapterName: String = "",
     var progress: Float = 0f,
+    var pageIndex: Int = 0,
     var addedAt: Long = 0,
     var lastReadAt: Long = 0,
     var totalChapters: Int = 0,
@@ -77,6 +78,7 @@ data class ShelfItem(
         put("chapterIndex", chapterIndex)
         put("chapterName", chapterName)
         put("progress", progress.toDouble())
+        put("pageIndex", pageIndex)
         put("addedAt", addedAt)
         put("lastReadAt", lastReadAt)
         put("totalChapters", totalChapters)
@@ -88,6 +90,7 @@ data class ShelfItem(
             chapterIndex = o.optInt("chapterIndex"),
             chapterName = o.optString("chapterName"),
             progress = o.optDouble("progress", 0.0).toFloat(),
+            pageIndex = o.optInt("pageIndex", 0),
             addedAt = o.optLong("addedAt"),
             lastReadAt = o.optLong("lastReadAt"),
             totalChapters = o.optInt("totalChapters"),

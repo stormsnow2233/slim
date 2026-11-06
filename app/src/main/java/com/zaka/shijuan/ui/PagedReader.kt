@@ -16,7 +16,10 @@ import androidx.compose.foundation.pager.rememberPagerState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -227,6 +230,7 @@ fun PagedChapter(
     prefs: ReaderPrefs,
     colors: ReaderTheme,
     modifier: Modifier = Modifier,
+    initialPage: Int = 0,
     onPageCount: (Int) -> Unit,
     onPagerReady: (PagerState) -> Unit,
     onImageClick: (String) -> Unit = {},
@@ -273,9 +277,23 @@ fun PagedChapter(
             )
         }
 
-        val pager = rememberPagerState(pageCount = { pages.size })
+        val pager = rememberPagerState(
+            initialPage = if (pages.size > 0 && initialPage in 0 until pages.size) initialPage else 0,
+            pageCount = { pages.size.coerceAtLeast(1) }
+        )
 
-        LaunchedEffect(pages.size) { onPageCount(pages.size) }
+        var restoredPage by remember(bodyText, initialPage) { mutableStateOf(false) }
+
+        LaunchedEffect(pages.size, initialPage) {
+            onPageCount(pages.size)
+            if (!restoredPage && pages.isNotEmpty()) {
+                val target = initialPage.coerceIn(0, pages.size - 1)
+                if (target > 0 && pager.currentPage != target) {
+                    pager.scrollToPage(target)
+                }
+                restoredPage = true
+            }
+        }
         LaunchedEffect(pager) { onPagerReady(pager) }
 
         HorizontalPager(

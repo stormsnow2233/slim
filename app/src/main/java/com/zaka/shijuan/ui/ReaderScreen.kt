@@ -59,12 +59,16 @@ fun ReaderScreen(
     book: Book,
     chapters: List<Chapter>,
     startIndex: Int,
+    initialPage: Int = 0,
     store: Store,
     onBack: () -> Unit,
     onSwitchBook: (Book) -> Unit = {},
-    onProgress: (Int, String, Float, Int) -> Unit,
+    onProgress: (Int, String, Float, Int, Int) -> Unit,
 ) {
     var index by remember { mutableIntStateOf(startIndex.coerceIn(0, maxOf(0, chapters.size - 1))) }
+    var targetPageForChapter by remember {
+        mutableIntStateOf(if (initialPage > 0) initialPage else store.loadBookPage(book.url, startIndex))
+    }
     var content by remember { mutableStateOf<Content?>(null) }
     var loading by remember { mutableStateOf(true) }
     var error by remember { mutableStateOf("") }
@@ -80,7 +84,7 @@ fun ReaderScreen(
     // 章内分页状态
     var pageCount by remember { mutableIntStateOf(1) }
     var pagerState by remember { mutableStateOf<PagerState?>(null) }
-    var currentPage by remember { mutableIntStateOf(0) }
+    var currentPage by remember { mutableIntStateOf(targetPageForChapter) }
 
     val theme = ReaderThemes.getOrElse(prefs.themeIndex) { ReaderThemes[0] }
     val ctx = LocalContext.current
@@ -89,6 +93,22 @@ fun ReaderScreen(
     val tocState = rememberLazyListState()
     val chapter = chapters.getOrNull(index)
 
+    // 切章统一方法：离开前保存当前章页码，切到新章指定页
+    fun switchChapter(newIndex: Int, newPage: Int = 0) {
+        if (newIndex !in chapters.indices || newIndex == index) return
+        val p = when {
+            prefs.pageMode == 1 && pageCount > 0 -> (currentPage + 1).toFloat() / pageCount
+            scrollState.maxValue > 0 -> scrollState.value.toFloat() / scrollState.maxValue
+            else -> 0f
+        }
+        store.saveBookPage(book.url, index, currentPage)
+        onProgress(index, chapter?.name ?: "", p, currentPage, chapters.size)
+
+        targetPageForChapter = newPage
+        currentPage = newPage
+        index = newIndex
+    }
+
     // 加载章节 + 后台预取下一章
     LaunchedEffect(index) {
         val ch = chapters.getOrNull(index) ?: return@LaunchedEffect
@@ -96,8 +116,9 @@ fun ReaderScreen(
         error = ""
         content = null
         pageCount = 1
-        currentPage = 0
-        scrollState.scrollTo(0)
+        currentPage = targetPageForChapter
+        val savedScroll = store.loadBookScroll(book.url, index)
+        if (savedScroll <= 0) scrollState.scrollTo(0)
         withContext(Dispatchers.IO) {
             val src = Sources.byId(book.sourceId)
             val cached = store.loadContent(ch.url)
@@ -132,23 +153,37 @@ fun ReaderScreen(
 
     // 阅读进度回传（节流）
     var lastSave by remember { mutableLongStateOf(0L) }
-    fun saveProgress(p: Float) {
+    fun saveProgress(p: Float, page: Int = currentPage) {
         val now = System.currentTimeMillis()
         if (now - lastSave < 1200) return
         lastSave = now
-        onProgress(index, chapter?.name ?: "", p, chapters.size)
+        store.saveBookPage(book.url, index, page)
+        onProgress(index, chapter?.name ?: "", p, page, chapters.size)
     }
 
     LaunchedEffect(scrollState.value, scrollState.maxValue, loading) {
         if (scrollState.maxValue > 0) {
-            saveProgress(scrollState.value.toFloat() / scrollState.maxValue)
+            val ratio = scrollState.value.toFloat() / scrollState.maxValue
+            store.saveBookScroll(book.url, index, scrollState.value)
+            saveProgress(ratio, 0)
         }
     }
 
-    // 翻页模式下按页数算进度
+    // 翻页模式下按页数算进度并实时持久化当前页码
     LaunchedEffect(currentPage, pageCount) {
         if (prefs.pageMode == 1 && pageCount > 0) {
-            saveProgress((currentPage + 1).toFloat() / pageCount)
+            store.saveBookPage(book.url, index, currentPage)
+            saveProgress((currentPage + 1).toFloat() / pageCount, currentPage)
+        }
+    }
+
+    // 滚动模式恢复保存的滚动高度
+    LaunchedEffect(scrollState.maxValue, index) {
+        if (prefs.pageMode != 1 && scrollState.maxValue > 0) {
+            val savedScroll = store.loadBookScroll(book.url, index)
+            if (savedScroll > 0 && scrollState.value == 0) {
+                scrollState.scrollTo(savedScroll.coerceIn(0, scrollState.maxValue))
+            }
         }
     }
 
@@ -159,7 +194,8 @@ fun ReaderScreen(
                 scrollState.maxValue > 0 -> scrollState.value.toFloat() / scrollState.maxValue
                 else -> 0f
             }
-            onProgress(index, chapter?.name ?: "", p, chapters.size)
+            store.saveBookPage(book.url, index, currentPage)
+            onProgress(index, chapter?.name ?: "", p, currentPage, chapters.size)
         }
     }
 
@@ -176,20 +212,20 @@ fun ReaderScreen(
                     val p = pagerState
                     if (p != null && p.currentPage > 0) {
                         scope.launch { p.animateScrollToPage(p.currentPage - 1) }
-                    } else if (index > 0) index--
+                    } else if (index > 0) switchChapter(index - 1)
                 }
                 x > width * 0.70f -> {
                     val p = pagerState
                     if (p != null && p.currentPage < pageCount - 1) {
                         scope.launch { p.animateScrollToPage(p.currentPage + 1) }
-                    } else if (index < chapters.size - 1) index++
+                    } else if (index < chapters.size - 1) switchChapter(index + 1)
                 }
                 else -> showBar = !showBar
             }
         } else {
             when {
-                x < width * 0.28f -> if (index > 0) index-- else showBar = true
-                x > width * 0.72f -> if (index < chapters.size - 1) index++ else showBar = true
+                x < width * 0.28f -> if (index > 0) switchChapter(index - 1) else showBar = true
+                x > width * 0.72f -> if (index < chapters.size - 1) switchChapter(index + 1) else showBar = true
                 else -> showBar = !showBar
             }
         }
@@ -240,7 +276,7 @@ fun ReaderScreen(
                     }) { Text("重试") }
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedButton(onClick = { if (index < chapters.size - 1) index++ }) {
+                        OutlinedButton(onClick = { if (index < chapters.size - 1) switchChapter(index + 1) }) {
                             Text("下一章")
                         }
                         OutlinedButton(onClick = { showToc = true }) {
@@ -298,6 +334,7 @@ fun ReaderScreen(
                                 title = content?.title ?: chapter?.name ?: "",
                                 prefs = prefs,
                                 colors = theme,
+                                initialPage = targetPageForChapter,
                                 modifier = Modifier.fillMaxSize().padding(horizontal = 22.dp, vertical = 8.dp),
                                 onPageCount = { pageCount = it },
                                 onPagerReady = { p ->
@@ -318,7 +355,10 @@ fun ReaderScreen(
                     }
                     LaunchedEffect(pagerState) {
                         val p = pagerState ?: return@LaunchedEffect
-                        snapshotFlow { p.currentPage }.collect { currentPage = it }
+                        snapshotFlow { p.currentPage }.collect {
+                            currentPage = it
+                            targetPageForChapter = it
+                        }
                     }
                 }
 
@@ -356,13 +396,13 @@ fun ReaderScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 IconButton(onClick = {
-                    onProgress(
-                        index, chapter?.name ?: "",
-                        if (prefs.pageMode == 1 && pageCount > 0) (currentPage + 1).toFloat() / pageCount
-                        else if (scrollState.maxValue > 0) scrollState.value.toFloat() / scrollState.maxValue
-                        else 0f,
-                        chapters.size,
-                    )
+                    val p = when {
+                        prefs.pageMode == 1 && pageCount > 0 -> (currentPage + 1).toFloat() / pageCount
+                        scrollState.maxValue > 0 -> scrollState.value.toFloat() / scrollState.maxValue
+                        else -> 0f
+                    }
+                    store.saveBookPage(book.url, index, currentPage)
+                    onProgress(index, chapter?.name ?: "", p, currentPage, chapters.size)
                     onBack()
                 }) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = theme.text)
@@ -400,12 +440,12 @@ fun ReaderScreen(
                 verticalAlignment = Alignment.CenterVertically,
             ) {
                 BarAction("上一章", Icons.AutoMirrored.Rounded.KeyboardArrowLeft, theme, index > 0) {
-                    index--
+                    switchChapter(index - 1)
                 }
                 BarAction("目录", Icons.Rounded.FormatListBulleted, theme, true) { showToc = true }
                 BarAction("设置", Icons.Rounded.TextFields, theme, true) { showSettings = true }
                 BarAction("下一章", Icons.AutoMirrored.Rounded.KeyboardArrowRight, theme, index < chapters.size - 1) {
-                    index++
+                    switchChapter(index + 1)
                 }
             }
         }
@@ -507,7 +547,10 @@ fun ReaderScreen(
                         Column(
                             Modifier
                                 .fillMaxWidth()
-                                .clickable { showToc = false; index = ch.index }
+                                .clickable {
+                                    showToc = false
+                                    switchChapter(ch.index, store.loadBookPage(book.url, ch.index))
+                                }
                                 .padding(horizontal = 22.dp, vertical = 10.dp)
                         ) {
                             if (ch.volume.isNotBlank()) {

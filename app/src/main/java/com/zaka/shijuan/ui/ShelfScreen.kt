@@ -169,7 +169,8 @@ fun ShelfScreen(
                                             overflow = TextOverflow.Ellipsis,
                                         )
                                         Text(
-                                            rec.chapterName.ifBlank { "第 ${rec.chapterIndex + 1} 章" },
+                                            rec.chapterName.ifBlank { "第 ${rec.chapterIndex + 1} 章" } +
+                                                if (rec.pageIndex > 0) " (第${rec.pageIndex + 1}页)" else "",
                                             fontSize = 10.sp,
                                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                                             maxLines = 1,
@@ -229,7 +230,8 @@ fun ShelfScreen(
                                 overflow = TextOverflow.Ellipsis,
                             )
                             Text(
-                                item.chapterName.ifBlank { item.book.author.ifBlank { "未开始" } },
+                                item.chapterName.ifBlank { item.book.author.ifBlank { "未开始" } } +
+                                    if (item.pageIndex > 0) " (第${item.pageIndex + 1}页)" else "",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 maxLines = 1,
