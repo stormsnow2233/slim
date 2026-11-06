@@ -13,6 +13,7 @@ captures/
 *.apk.idsig
 *.aab
 output/
+.kotlin/
 
 # 签名文件与私有密钥
 *.jks

@@ -21,6 +21,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
+import androidx.compose.material.icons.automirrored.rounded.FormatListBulleted
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowLeft
 import androidx.compose.material.icons.automirrored.rounded.KeyboardArrowRight
 import androidx.compose.material.icons.rounded.*
@@ -100,7 +101,7 @@ fun ReaderScreen(
         withContext(Dispatchers.IO) {
             val src = Sources.byId(book.sourceId)
             val cached = store.loadContent(ch.url)
-            if (cached != null) {
+            if (cached != null && !BookRepo.isTranscodeOrPiracyError(cached) && !BookRepo.isSoftError(cached)) {
                 content = Content(ch.name, cached)
                 loading = false
             } else if (src == null) {
@@ -238,8 +239,15 @@ fun ReaderScreen(
                         }
                     }) { Text("重试") }
                     Spacer(Modifier.height(12.dp))
-                    OutlinedButton(onClick = { if (index < chapters.size - 1) index++ }) {
-                        Text("换下一章")
+                    Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                        OutlinedButton(onClick = { if (index < chapters.size - 1) index++ }) {
+                            Text("下一章")
+                        }
+                        OutlinedButton(onClick = { showToc = true }) {
+                            Icon(Icons.AutoMirrored.Rounded.FormatListBulleted, null, Modifier.size(16.dp))
+                            Spacer(Modifier.width(4.dp))
+                            Text("选择章节")
+                        }
                     }
                     Spacer(Modifier.height(12.dp))
                     if (altBooks.isEmpty()) {

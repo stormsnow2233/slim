@@ -181,6 +181,15 @@ object BookRepo {
                     continue
                 }
 
+                val lowerBody = resp.body.lowercase()
+                if (lowerBody.contains("<h1>welcome</h1>") || lowerBody.contains("just a moment") || lowerBody.contains("cf-browser-verification")) {
+                    val st = SourceStatus.ACCESS_RESTRICTED
+                    val err = "触发源站浏览器安全验证（Cloudflare/WAF），需在书源管理中网页验证"
+                    val res = SourceResult(src.id, src.name, false, emptyList(), err, System.currentTimeMillis() - t0, st, 403)
+                    recordFailure(src.id, st, 403, err)
+                    return res
+                }
+
                 // 搜一次就被 302 到书页的站点（速读谷），书页本身就是唯一结果。
                 if (resp.via.isNotBlank() && resp.via != full) {
                     singleBookFromPage(src, resp, full, key)?.let { one ->
@@ -636,13 +645,29 @@ object BookRepo {
         return Result.success(Toc(list, cover, intro, author))
     }
 
-    /** 软错误页识别（源站 HTTP 200 但内容是报错/空壳/下架） */
+    /** 识别盗版转码失败、广告推销、防盗占位等伪正文 */
+    fun isTranscodeOrPiracyError(text: String): Boolean {
+        if (text.isBlank()) return false
+        val lower = text.lowercase()
+        return text.contains("转码失败") ||
+            text.contains("换源切换源站阅读") ||
+            text.contains("前往源网站进行阅读") ||
+            text.contains("防盗采集") ||
+            text.contains("内容正在手打中") ||
+            text.contains("防采集系统") ||
+            lower.contains("<h1>welcome</h1>") ||
+            lower.contains("welcome to nginx")
+    }
+
+    /** 软错误页识别（源站 HTTP 200 但内容是报错/空壳/下架/转码失败） */
     fun isSoftError(body: String): Boolean {
         if (body.isBlank()) return false
+        val lower = body.lowercase()
         return body.contains("您访问的页面暂时无法访问") || body.contains("页面找不到了") ||
             body.contains("页面不存在") || body.contains("系统繁忙") || body.contains("访问过于频繁") ||
             body.contains("暂时无法访问哦") || body.contains("本书已下架") || body.contains("因版权问题") ||
-            body.contains("文章不存在")
+            body.contains("文章不存在") || isTranscodeOrPiracyError(body) ||
+            lower.contains("just a moment") || lower.contains("cf-browser-verification")
     }
 
     /** 正文 */
@@ -684,10 +709,18 @@ object BookRepo {
             return Result.failure(Exception(msg))
         }
 
-        if (isSoftError(resp.body)) {
+        if (isSoftError(resp.body) || isTranscodeOrPiracyError(resp.body)) {
+            val lower = resp.body.lowercase()
             val isTakenDown = resp.body.contains("本书已下架") || resp.body.contains("因版权问题") || resp.body.contains("文章不存在")
-            val msg = if (isTakenDown) "该书籍在源站已下架（因版权或源站调整下线），换个源搜同名书试试"
-            else "源站返回「页面暂时无法访问」（该老书在手机站未开放或章节已下线），换个源搜同名书试试"
+            val isTranscode = resp.body.contains("转码失败") || resp.body.contains("换源切换源站阅读") || resp.body.contains("前往源网站进行阅读")
+            val isChallenge = lower.contains("<h1>welcome</h1>") || lower.contains("just a moment") || lower.contains("cf-browser-verification")
+            val msg = when {
+                isTakenDown -> "该书籍在源站已下架（因版权或源站调整下线），换个源搜同名书试试"
+                isTranscode -> "源站转码失败或该章节未收录（返回转码失败/推荐占位），建议换源阅读"
+                isChallenge -> "源站触发浏览器安全验证（Cloudflare/WAF），请在书源管理中完成网页验证"
+                src.id == "sfacg" -> "该章节在SF手机站暂未开放或已下线（如外链/公告），建议换下一章或选择目录"
+                else -> "源站返回「页面暂时无法访问」（该老书在手机站未开放或章节已下线），换个源搜同名书试试"
+            }
             return Result.failure(Exception(msg))
         }
 
@@ -771,6 +804,9 @@ object BookRepo {
 
         val cleaned = Rules.stripAds(html)
         val text = Rules.htmlToParagraphs(cleaned, chapter.url)
+        if (isTranscodeOrPiracyError(text)) {
+            return Result.failure(Exception("源站转码失败或该章节未收录（返回转码失败/推荐占位），建议换源阅读"))
+        }
         val title = doc.selectFirst("h1")?.text()?.trim().orEmpty().ifBlank { chapter.name }
         val hasImages = text.contains("<!--image-->")
         val len = text.replace(Regex("\\s"), "").length

@@ -107,4 +107,18 @@ class Wenku8AndReaderTest {
         assertTrue("取回密码链接应被判定为假书", isFake3)
         assertFalse("真实小说不应被判定为假书", isReal)
     }
+
+    @Test
+    fun testTranscodeAndPiracyErrorDetection() {
+        val piracyError1 = "转码失败！请您使用右上换源切换源站阅读 或者直接前往源网站进行阅读！ 热门推荐：我名黄天"
+        val piracyError2 = "<html><body><h1>Welcome</h1></body></html>"
+        val normalText = "在风水极好的不知名小山上，坐落着一座破败的道观。"
+
+        assertTrue("转码失败及盗版伪正文应被准确识别", BookRepo.isTranscodeOrPiracyError(piracyError1))
+        assertTrue("转码失败应属于软错误页", BookRepo.isSoftError(piracyError1))
+        assertTrue("Welcome 反爬拦截应被准确识别", BookRepo.isTranscodeOrPiracyError(piracyError2))
+        assertTrue("Welcome 应属于软错误页", BookRepo.isSoftError(piracyError2))
+        assertFalse("正常正文不应被识别为错误", BookRepo.isTranscodeOrPiracyError(normalText))
+        assertFalse("正常正文不应被识别为软错误", BookRepo.isSoftError(normalText))
+    }
 }

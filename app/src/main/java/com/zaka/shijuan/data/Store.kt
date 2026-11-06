@@ -338,6 +338,7 @@ class Store(context: Context) {
 
     // ── 正文缓存（离线看过的章节） ──
     fun saveContent(url: String, text: String) {
+        if (text.isBlank() || BookRepo.isTranscodeOrPiracyError(text)) return
         sp.edit().putString("c_${url.hashCode()}", text).apply()
     }
 

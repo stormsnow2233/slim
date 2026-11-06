@@ -376,7 +376,7 @@ object Sources {
                 // 阅读器只排文字，从这些章点进去必然空白——整卷跳过，直接落到「第一卷」
                 volume = "div.mulu",
                 skipVolume = "(人设|设定集|书友画廊|画廊|插画|插图|图集|彩图|线稿)",
-                skip = "(插图|插画|图集|人设|设定集|彩图|线稿|图片版|漫画版)",
+                skip = "(插图|插画|图集|人设|设定集|彩图|线稿|图片版|漫画版|改命链接|链接|公告|群号|通知|下线说明)",
             ),
             content = ContentRule(body = "div.yuedu.Content_Frame > div@html || .Content_Frame > div@html || .yuedu [style*=\"text-indent\"]@html || [style*=\"text-indent\"]@html || .yuedu@html || #content@html"),
         ),

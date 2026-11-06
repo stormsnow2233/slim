@@ -31,7 +31,9 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
 import com.zaka.shijuan.data.*
 import com.zaka.shijuan.ui.*
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
@@ -121,6 +123,23 @@ fun ShijuanApp() {
     var section by remember { mutableStateOf(Section.Novel) }
     var activeUpdateInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
     val openDrawer = { uiScope.launch { drawerState.open() }; Unit }
+
+    // 启动时还原持久化的各站 Cookie（如文库会员 Cookie、Cloudflare 通过凭证）
+    LaunchedEffect(Unit) {
+        withContext(Dispatchers.IO) {
+            val saved = store.allSavedCookies()
+            saved.forEach { (host, cookies) ->
+                Net.syncCookies(host, cookies)
+            }
+            // 若文库尚未配置，注入默认有效会话并双向同步
+            listOf("wenku8.cc", "www.wenku8.cc", "wenku8.net", "www.wenku8.net").forEach { h ->
+                val current = Net.getCookiesHeader(h)
+                if (current.isBlank()) {
+                    Net.syncCookies(h, Net.WENKU8_DEFAULT_COOKIE)
+                }
+            }
+        }
+    }
 
     // 启动自动检查更新：后台静默检测，有新版本且用户未选择“不再提示”时自动弹出
     LaunchedEffect(Unit) {

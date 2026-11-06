@@ -58,12 +58,12 @@ fun CloudflareVerifyDialog(
         if (cookies.isNotBlank()) {
             Net.syncCookies(host, cookies)
             store.saveHostCookies(host, cookies)
-            // 如果是 wenku8，顺便双向同步 .cc 和 .net
+            // 如果是 wenku8，顺便双向同步 .cc 和 .net 及其 www 域名
             if (host.contains("wenku8")) {
-                Net.syncCookies("wenku8.cc", cookies)
-                Net.syncCookies("wenku8.net", cookies)
-                store.saveHostCookies("wenku8.cc", cookies)
-                store.saveHostCookies("wenku8.net", cookies)
+                listOf("wenku8.cc", "www.wenku8.cc", "wenku8.net", "www.wenku8.net").forEach { h ->
+                    Net.syncCookies(h, cookies)
+                    store.saveHostCookies(h, cookies)
+                }
             }
         }
     }
