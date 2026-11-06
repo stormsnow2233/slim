@@ -21,8 +21,10 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.pager.HorizontalPager
 import androidx.compose.foundation.pager.rememberPagerState
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.rounded.*
@@ -68,6 +70,7 @@ sealed class Route {
     data object Tabs : Route()
     data object Cache : Route()
     data object Network : Route()
+    data object Settings : Route()
     /** 自定义书源编辑；id 为 null 表示新建 */
     data class CustomSourceEdit(val id: String? = null) : Route()
     data class Detail(val book: Book) : Route()
@@ -118,16 +121,31 @@ fun ShijuanApp() {
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val uiScope = rememberCoroutineScope()
     var section by remember { mutableStateOf(Section.Novel) }
-    var showSettings by remember { mutableStateOf(false) }
+    var activeUpdateInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
     // 页签状态提到这一层：进详情、加书源回来时不会跳回第一页
     val pager = rememberPagerState(pageCount = { Tab.entries.size })
     val openDrawer = { uiScope.launch { drawerState.open() }; Unit }
 
-    if (showSettings) {
-        SettingsDialog(
-            onDismiss = { showSettings = false },
-            onOpenNetwork = { route = Route.Network },
-            onOpenCache = { route = Route.Cache },
+    // 启动自动检查更新：后台静默检测，有新版本且用户未选择“不再提示”时自动弹出
+    LaunchedEffect(Unit) {
+        if (store.autoCheckUpdate()) {
+            kotlinx.coroutines.delay(1000)
+            UpdateManager.checkUpdate().onSuccess { info ->
+                if (info.hasUpdate && info.versionName != store.ignoredUpdateVersion()) {
+                    activeUpdateInfo = info
+                }
+            }
+        }
+    }
+
+    if (activeUpdateInfo != null) {
+        UpdateDialog(
+            info = activeUpdateInfo!!,
+            onDismissRequest = { activeUpdateInfo = null },
+            onIgnoreVersion = { ver ->
+                store.setIgnoredUpdateVersion(ver)
+                activeUpdateInfo = null
+            }
         )
     }
 
@@ -152,7 +170,7 @@ fun ShijuanApp() {
                     uiScope.launch { drawerState.close() }
                 },
                 onOpenSettings = {
-                    showSettings = true
+                    route = Route.Settings
                     uiScope.launch { drawerState.close() }
                 },
             )
@@ -182,13 +200,30 @@ fun ShijuanApp() {
     ) { r ->
         when (r) {
             is Route.Tabs -> if (section == Section.Comic) {
-                ComicScreen(
-                    store = store,
-                    onOpen = { route = Route.ComicDetail(it) },
-                    onOpenDrawer = openDrawer,
-                    offline = !online,
-                    onOpenCache = { route = Route.Cache },
-                )
+                Box(Modifier.fillMaxSize()) {
+                    ComicScreen(
+                        store = store,
+                        onOpen = { route = Route.ComicDetail(it) },
+                        onOpenDrawer = openDrawer,
+                        offline = !online,
+                        onOpenCache = { route = Route.Cache },
+                    )
+                    // 左边缘右滑拉出侧边栏感应区
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.CenterStart)
+                            .fillMaxHeight()
+                            .width(32.dp)
+                            .pointerInput(Unit) {
+                                detectHorizontalDragGestures { change, dragAmount ->
+                                    if (dragAmount > 0) {
+                                        change.consume()
+                                        openDrawer()
+                                    }
+                                }
+                            }
+                    )
+                }
             } else {
                 TabHost(
                     pager = pager,
@@ -214,6 +249,14 @@ fun ShijuanApp() {
                     onEditSource = { src -> route = Route.CustomSourceEdit(src.id) },
                 )
             }
+
+            is Route.Settings -> SettingsScreen(
+                store = store,
+                onBack = { route = Route.Tabs },
+                onOpenNetwork = { route = Route.Network },
+                onOpenCache = { route = Route.Cache },
+                onShowUpdate = { activeUpdateInfo = it }
+            )
 
             is Route.ComicDetail -> ComicDetailScreen(
                 comic = r.comic,
@@ -483,195 +526,6 @@ private fun SectionDrawer(
     }
 }
 
-@Composable
-private fun SettingsDialog(
-    onDismiss: () -> Unit,
-    onOpenNetwork: () -> Unit,
-    onOpenCache: () -> Unit,
-) {
-    val ctx = LocalContext.current
-    val scope = rememberCoroutineScope()
-    var checking by remember { mutableStateOf(false) }
-    var releaseInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
-    var updateMsg by remember { mutableStateOf("") }
-    var downloading by remember { mutableStateOf(false) }
-    var downloadProgress by remember { mutableFloatStateOf(0f) }
-    var downloadedFile by remember { mutableStateOf<java.io.File?>(null) }
-
-    AlertDialog(
-        onDismissRequest = onDismiss,
-        title = { Text("设置", fontWeight = FontWeight.Bold) },
-        text = {
-            Column(Modifier.fillMaxWidth()) {
-                // 检查更新
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.fillMaxWidth().clickable {
-                        if (checking || downloading) return@clickable
-                        checking = true
-                        updateMsg = ""
-                        scope.launch {
-                            UpdateManager.checkUpdate().fold(
-                                onSuccess = { info ->
-                                    checking = false
-                                    releaseInfo = info
-                                    if (!info.hasUpdate) {
-                                        updateMsg = "已是最新版本 (v${BuildConfig.VERSION_NAME})"
-                                    }
-                                },
-                                onFailure = {
-                                    checking = false
-                                    updateMsg = "检查失败：${it.message}"
-                                }
-                            )
-                        }
-                    }.padding(12.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.Update, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("检查更新", style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                when {
-                                    checking -> "正在连接 GitHub…"
-                                    updateMsg.isNotBlank() -> updateMsg
-                                    releaseInfo?.hasUpdate == true -> "发现新版本 ${releaseInfo?.tagName}"
-                                    else -> "当前版本 v${BuildConfig.VERSION_NAME}"
-                                },
-                                fontSize = 11.sp,
-                                color = if (releaseInfo?.hasUpdate == true) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        if (checking) {
-                            CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
-                        }
-                    }
-                }
-
-                // 若发现新版本，展开 Release Notes 与下载安装按钮
-                releaseInfo?.takeIf { it.hasUpdate }?.let { rel ->
-                    Spacer(Modifier.height(10.dp))
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.4f),
-                        modifier = Modifier.fillMaxWidth().padding(horizontal = 2.dp)
-                    ) {
-                        Column(Modifier.padding(12.dp)) {
-                            Text("新版本 ${rel.tagName}", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.Bold)
-                            if (rel.changelog.isNotBlank()) {
-                                Spacer(Modifier.height(4.dp))
-                                Text(
-                                    rel.changelog,
-                                    fontSize = 12.sp,
-                                    maxLines = 6,
-                                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-                            Spacer(Modifier.height(8.dp))
-                            if (downloading) {
-                                LinearProgressIndicator(
-                                    progress = { downloadProgress },
-                                    modifier = Modifier.fillMaxWidth().height(6.dp)
-                                )
-                                Spacer(Modifier.height(4.dp))
-                                Text("下载中 ${(downloadProgress * 100).toInt()}%", fontSize = 10.sp)
-                            } else if (downloadedFile != null) {
-                                Button(
-                                    onClick = { UpdateManager.installApk(ctx, downloadedFile!!) },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("立即安装")
-                                }
-                            } else {
-                                Button(
-                                    onClick = {
-                                        downloading = true
-                                        scope.launch {
-                                            UpdateManager.downloadApk(ctx, rel.downloadUrl) { bytes, total ->
-                                                if (total > 0) downloadProgress = (bytes.toFloat() / total).coerceIn(0f, 1f)
-                                            }.fold(
-                                                onSuccess = { file ->
-                                                    downloading = false
-                                                    downloadedFile = file
-                                                    UpdateManager.installApk(ctx, file)
-                                                },
-                                                onFailure = {
-                                                    downloading = false
-                                                    updateMsg = "下载失败：${it.message}"
-                                                }
-                                            )
-                                        }
-                                    },
-                                    modifier = Modifier.fillMaxWidth()
-                                ) {
-                                    Text("下载并更新")
-                                }
-                            }
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(8.dp))
-                // 网络代理快捷入口
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.fillMaxWidth().clickable {
-                        onDismiss()
-                        onOpenNetwork()
-                    }.padding(12.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.Wifi, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("网络代理配置", style = MaterialTheme.typography.titleSmall)
-                            Text(
-                                if (Net.proxy().usable) "代理已开 · ${Net.proxy().host}" else "直连 · 可配置 HTTP/SOCKS 代理",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(8.dp))
-                // 缓存清理快捷入口
-                Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
-                    modifier = Modifier.fillMaxWidth().clickable {
-                        onDismiss()
-                        onOpenCache()
-                    }.padding(12.dp)
-                ) {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(Icons.Rounded.FolderOpen, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.width(12.dp))
-                        Column(Modifier.weight(1f)) {
-                            Text("缓存管理与清理", style = MaterialTheme.typography.titleSmall)
-                            Text("小说与漫画离线内容占用", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        }
-                    }
-                }
-
-                Spacer(Modifier.height(12.dp))
-                Text(
-                    "关于：拾卷 (Slim) 开源阅读器\n项目地址：github.com/stormsnow2233/slim",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.8f)
-                )
-            }
-        },
-        confirmButton = {
-            TextButton(onClick = onDismiss) { Text("关闭") }
-        }
-    )
-}
-
 /**
  * 四个主页面：左右滑动切换（跟手），点底栏也会滑过去。
  */
@@ -740,6 +594,22 @@ private fun TabHost(
                 )
             }
         }
+
+        // 左边缘右滑拉出侧边栏感应区：解决 HorizontalPager 全屏吞掉边缘滑出抽屉手势的问题
+        Box(
+            modifier = Modifier
+                .align(Alignment.CenterStart)
+                .fillMaxHeight()
+                .width(32.dp)
+                .pointerInput(Unit) {
+                    detectHorizontalDragGestures { change, dragAmount ->
+                        if (dragAmount > 0) {
+                            change.consume()
+                            onOpenDrawer()
+                        }
+                    }
+                }
+        )
 
         // 液态玻璃底栏
         LiquidGlassBar(

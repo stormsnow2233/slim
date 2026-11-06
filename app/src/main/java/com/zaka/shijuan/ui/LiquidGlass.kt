@@ -12,6 +12,7 @@ import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectHorizontalDragGestures
 import androidx.compose.foundation.interaction.collectIsPressedAsState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Menu
@@ -112,10 +113,15 @@ fun LiquidGlassBar(
             .clip(shape)
             .border(1.dp, borderColor, shape)
     ) {
-        // 毛玻璃底色（避免实时多层模糊引起的 GPU 掉帧）
+        // 毛玻璃底色（Android 12+ API 31+ 硬件级高斯模糊 + 细腻通透渐变）
         Box(
             Modifier
                 .matchParentSize()
+                .then(
+                    if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.S) {
+                        Modifier.blur(18.dp)
+                    } else Modifier
+                )
                 .background(Brush.verticalGradient(listOf(glassTop, glassBottom)))
         )
         // 玻璃表面流动的高光：在 drawBehind 阶段读取 sweep，不触发整体重组
@@ -160,29 +166,38 @@ fun LiquidGlassBar(
             val inset = 3.dp
             val insetPx = with(density) { inset.toPx() }
 
-            // 胶囊（只在它自己身上响应拖动，offset 在布局阶段按 lambda 读取）
+            // 胶囊拖动手势与液态微膨胀效果
+            var isDragging by remember { mutableStateOf(false) }
+            var pillDragPx by remember { mutableFloatStateOf(0f) }
+            val dragScale by animateFloatAsState(
+                targetValue = if (isDragging) 1.14f else 1f,
+                animationSpec = spring(dampingRatio = 0.50f, stiffness = 650f),
+                label = "pillDragScale"
+            )
+
+            // 胶囊位置（左右拖动跟随手指，松手吸附回目标格）
             Box(
                 Modifier
                     .offset {
                         val basePx = pageFraction().coerceIn(0f, (count - 1).toFloat()) * cellPx
-                        IntOffset((basePx + insetPx).roundToInt(), 0)
+                        IntOffset((basePx + pillDragPx + insetPx).roundToInt(), 0)
                     }
                     .width(cell - inset * 2)
                     .height(46.dp)
                     .graphicsLayer {
-                        scaleX = pillScale.value
-                        scaleY = pillScale.value
+                        scaleX = pillScale.value * dragScale
+                        scaleY = pillScale.value * dragScale
                     }
                     .clip(RoundedCornerShape(21.dp))
                     .background(
                         Brush.verticalGradient(
                             listOf(
-                                accent.copy(alpha = if (dark) 0.36f else 0.20f),
-                                accent.copy(alpha = if (dark) 0.20f else 0.11f),
+                                accent.copy(alpha = if (dark) 0.38f else 0.22f),
+                                accent.copy(alpha = if (dark) 0.22f else 0.12f),
                             )
                         )
                     )
-                    .border(1.dp, accent.copy(alpha = 0.26f), RoundedCornerShape(21.dp))
+                    .border(1.dp, accent.copy(alpha = 0.28f), RoundedCornerShape(21.dp))
             )
 
             // 五个等宽项
@@ -254,6 +269,48 @@ fun LiquidGlassBar(
                     }
                 }
             }
+
+            // 胶囊拖动感应层：抓取胶囊时激活，左右拖动胶囊跟手微膨胀，松手吸附到最近项
+            Box(
+                Modifier
+                    .offset {
+                        val basePx = pageFraction().coerceIn(0f, (count - 1).toFloat()) * cellPx
+                        IntOffset((basePx + pillDragPx + insetPx).roundToInt(), 0)
+                    }
+                    .width(cell - inset * 2)
+                    .height(46.dp)
+                    .pointerInput(count, cellPx) {
+                        detectHorizontalDragGestures(
+                            onDragStart = {
+                                isDragging = true
+                            },
+                            onDragEnd = {
+                                if (isDragging) {
+                                    val base = pageFraction().coerceIn(0f, (count - 1).toFloat()) * cellPx
+                                    val target = ((base + pillDragPx + cellPx * 0.5f) / cellPx)
+                                        .roundToInt().coerceIn(0, count - 1)
+                                    pillDragPx = 0f
+                                    isDragging = false
+                                    if (target != selected) {
+                                        bumpPill(target)
+                                        onSelect(target)
+                                    }
+                                }
+                            },
+                            onDragCancel = {
+                                pillDragPx = 0f
+                                isDragging = false
+                            },
+                            onHorizontalDrag = { change, dragAmount ->
+                                change.consume()
+                                val base = pageFraction().coerceIn(0f, (count - 1).toFloat()) * cellPx
+                                val leftLimit = -base
+                                val rightLimit = cellPx * (count - 1) - base
+                                pillDragPx = (pillDragPx + dragAmount).coerceIn(minOf(leftLimit, rightLimit), maxOf(leftLimit, rightLimit))
+                            }
+                        )
+                    }
+            )
         }
     }
 }

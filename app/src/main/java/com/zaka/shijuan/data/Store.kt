@@ -425,6 +425,19 @@ class Store(context: Context) {
         indent = sp.getBoolean("indent", true),
     )
 
+    // ── 软件更新设置 ──
+    fun autoCheckUpdate(): Boolean = sp.getBoolean("auto_check_update", true)
+
+    fun setAutoCheckUpdate(on: Boolean) {
+        sp.edit().putBoolean("auto_check_update", on).apply()
+    }
+
+    fun ignoredUpdateVersion(): String = sp.getString("ignored_update_version", "") ?: ""
+
+    fun setIgnoredUpdateVersion(version: String) {
+        sp.edit().putString("ignored_update_version", version.trim()).apply()
+    }
+
     fun saveReaderPrefs(p: ReaderPrefs) {
         sp.edit()
             .putFloat("font_size", p.fontSize)
