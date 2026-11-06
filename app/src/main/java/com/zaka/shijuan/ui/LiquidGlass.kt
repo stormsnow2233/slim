@@ -45,7 +45,9 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.graphics.lerp
 import kotlinx.coroutines.launch
+import kotlin.math.abs
 import kotlin.math.roundToInt
 
 /**
@@ -166,59 +168,122 @@ fun LiquidGlassBar(
             val inset = 3.dp
             val insetPx = with(density) { inset.toPx() }
 
-            // 胶囊拖动手势与液态微膨胀效果
+            // 胶囊位置状态（连续浮点 0f..count-1）与拖拽控制
+            val pillPos = remember { Animatable(selected.toFloat()) }
             var isDragging by remember { mutableStateOf(false) }
-            var pillDragPx by remember { mutableFloatStateOf(0f) }
-            val dragScale by animateFloatAsState(
-                targetValue = if (isDragging) 1.14f else 1f,
-                animationSpec = spring(dampingRatio = 0.50f, stiffness = 650f),
-                label = "pillDragScale"
+
+            // 未处于底栏拖拽手势时，自动与 Pager 实际翻页位移保持 1:1 连续同步
+            val currentFraction = pageFraction().coerceIn(0f, (count - 1).toFloat())
+            LaunchedEffect(currentFraction, isDragging) {
+                if (!isDragging) {
+                    if (abs(pillPos.value - currentFraction) > 0.001f) {
+                        pillPos.snapTo(currentFraction)
+                    }
+                }
+            }
+
+            // 液态流体拉伸与回弹形变 (X 轴沿拖拽方向弹性延展至 1.15x，Y 轴收缩至 0.92x，呈现水滴水银般的液态张力)
+            val stretchScaleX by animateFloatAsState(
+                targetValue = if (isDragging) 1.15f else 1f,
+                animationSpec = spring(dampingRatio = 0.52f, stiffness = 600f),
+                label = "pillStretchX"
+            )
+            val stretchScaleY by animateFloatAsState(
+                targetValue = if (isDragging) 0.92f else 1f,
+                animationSpec = spring(dampingRatio = 0.52f, stiffness = 600f),
+                label = "pillStretchY"
             )
 
-            // 胶囊位置（左右拖动跟随手指，松手吸附回目标格）
+            // 液态激活胶囊（底层，根据 pillPos 连续滑动）
             Box(
                 Modifier
                     .offset {
-                        val basePx = pageFraction().coerceIn(0f, (count - 1).toFloat()) * cellPx
-                        IntOffset((basePx + pillDragPx + insetPx).roundToInt(), 0)
+                        val x = pillPos.value * cellPx + insetPx
+                        IntOffset(x.roundToInt(), 0)
                     }
                     .width(cell - inset * 2)
                     .height(46.dp)
                     .graphicsLayer {
-                        scaleX = pillScale.value * dragScale
-                        scaleY = pillScale.value * dragScale
+                        scaleX = pillScale.value * stretchScaleX
+                        scaleY = pillScale.value * stretchScaleY
                     }
                     .clip(RoundedCornerShape(21.dp))
                     .background(
                         Brush.verticalGradient(
                             listOf(
-                                accent.copy(alpha = if (dark) 0.38f else 0.22f),
-                                accent.copy(alpha = if (dark) 0.22f else 0.12f),
+                                accent.copy(alpha = if (dark) 0.40f else 0.25f),
+                                accent.copy(alpha = if (dark) 0.24f else 0.13f),
                             )
                         )
                     )
-                    .border(1.dp, accent.copy(alpha = 0.28f), RoundedCornerShape(21.dp))
+                    .border(
+                        1.dp,
+                        Brush.verticalGradient(
+                            listOf(
+                                accent.copy(alpha = 0.45f),
+                                accent.copy(alpha = 0.20f),
+                            )
+                        ),
+                        RoundedCornerShape(21.dp)
+                    )
             )
 
-            // 五个等宽项
+            // 五个等宽项（上层 Row：统一接管全条水平拖动手势与单项点击）
             Row(
                 Modifier
                     .fillMaxWidth()
                     .height(46.dp)
+                    .pointerInput(count, cellPx) {
+                        detectHorizontalDragGestures(
+                            onDragStart = {
+                                isDragging = true
+                            },
+                            onDragEnd = {
+                                if (isDragging) {
+                                    isDragging = false
+                                    val target = pillPos.value.roundToInt().coerceIn(0, count - 1)
+                                    bumpPill(target)
+                                    scope.launch {
+                                        pillPos.animateTo(
+                                            target.toFloat(),
+                                            spring(dampingRatio = 0.52f, stiffness = 550f)
+                                        )
+                                    }
+                                    if (target != selected) {
+                                        onSelect(target)
+                                    }
+                                }
+                            },
+                            onDragCancel = {
+                                isDragging = false
+                                val target = selected.toFloat()
+                                scope.launch {
+                                    pillPos.animateTo(
+                                        target,
+                                        spring(dampingRatio = 0.55f, stiffness = 600f)
+                                    )
+                                }
+                            },
+                            onHorizontalDrag = { change, dragAmount ->
+                                change.consume()
+                                val deltaPage = dragAmount / cellPx
+                                scope.launch {
+                                    pillPos.snapTo(
+                                        (pillPos.value + deltaPage).coerceIn(0f, (count - 1).toFloat())
+                                    )
+                                }
+                            }
+                        )
+                    }
             ) {
                 labels.forEachIndexed { i, label ->
-                    val on = i == selected
-                    // 选中项图标弹起来一点，跟胶囊同步
-                    val iconScale by animateFloatAsState(
-                        targetValue = if (on) 1.18f else 1f,
-                        animationSpec = spring(dampingRatio = 0.48f, stiffness = 620f),
-                        label = "icon-$i",
-                    )
-                    val labelScale by animateFloatAsState(
-                        targetValue = if (on) 1f else 0.94f,
-                        animationSpec = spring(dampingRatio = 0.7f, stiffness = 700f),
-                        label = "label-$i",
-                    )
+                    val dist = abs(pillPos.value - i).coerceIn(0f, 1f)
+                    val activeWeight = 1f - dist
+
+                    val iconScale = 1f + 0.18f * activeWeight
+                    val labelScale = 0.94f + 0.06f * activeWeight
+                    val itemColor = lerp(ink.copy(alpha = 0.52f), accent, activeWeight)
+
                     Column(
                         modifier = Modifier
                             .weight(1f)
@@ -229,6 +294,12 @@ fun LiquidGlassBar(
                                 indication = ripple(bounded = true, color = accent),
                             ) {
                                 bumpPill(i)
+                                scope.launch {
+                                    pillPos.animateTo(
+                                        i.toFloat(),
+                                        spring(dampingRatio = 0.52f, stiffness = 550f)
+                                    )
+                                }
                                 onSelect(i)
                             },
                         horizontalAlignment = Alignment.CenterHorizontally,
@@ -244,21 +315,21 @@ fun LiquidGlassBar(
                             contentAlignment = Alignment.Center,
                         ) {
                             Icon(
-                                imageVector = if (on) iconsOn[i] else iconsOff[i],
+                                imageVector = if (activeWeight > 0.45f) iconsOn[i] else iconsOff[i],
                                 contentDescription = label,
-                                tint = if (on) accent else ink.copy(alpha = 0.52f),
+                                tint = itemColor,
                                 modifier = Modifier.size(21.dp),
                             )
                         }
                         Spacer(Modifier.height(2.dp))
                         Text(
                             text = label,
-                            fontSize = if (on) 10.5.sp else 10.sp,
+                            fontSize = if (activeWeight > 0.5f) 10.5.sp else 10.sp,
                             lineHeight = 12.sp,
-                            fontWeight = if (on) FontWeight.Bold else FontWeight.Medium,
+                            fontWeight = if (activeWeight > 0.5f) FontWeight.Bold else FontWeight.Medium,
                             textAlign = TextAlign.Center,
                             maxLines = 1,
-                            color = if (on) accent else ink.copy(alpha = 0.52f),
+                            color = itemColor,
                             modifier = Modifier
                                 .height(13.dp)
                                 .graphicsLayer {
@@ -269,48 +340,6 @@ fun LiquidGlassBar(
                     }
                 }
             }
-
-            // 胶囊拖动感应层：抓取胶囊时激活，左右拖动胶囊跟手微膨胀，松手吸附到最近项
-            Box(
-                Modifier
-                    .offset {
-                        val basePx = pageFraction().coerceIn(0f, (count - 1).toFloat()) * cellPx
-                        IntOffset((basePx + pillDragPx + insetPx).roundToInt(), 0)
-                    }
-                    .width(cell - inset * 2)
-                    .height(46.dp)
-                    .pointerInput(count, cellPx) {
-                        detectHorizontalDragGestures(
-                            onDragStart = {
-                                isDragging = true
-                            },
-                            onDragEnd = {
-                                if (isDragging) {
-                                    val base = pageFraction().coerceIn(0f, (count - 1).toFloat()) * cellPx
-                                    val target = ((base + pillDragPx + cellPx * 0.5f) / cellPx)
-                                        .roundToInt().coerceIn(0, count - 1)
-                                    pillDragPx = 0f
-                                    isDragging = false
-                                    if (target != selected) {
-                                        bumpPill(target)
-                                        onSelect(target)
-                                    }
-                                }
-                            },
-                            onDragCancel = {
-                                pillDragPx = 0f
-                                isDragging = false
-                            },
-                            onHorizontalDrag = { change, dragAmount ->
-                                change.consume()
-                                val base = pageFraction().coerceIn(0f, (count - 1).toFloat()) * cellPx
-                                val leftLimit = -base
-                                val rightLimit = cellPx * (count - 1) - base
-                                pillDragPx = (pillDragPx + dragAmount).coerceIn(minOf(leftLimit, rightLimit), maxOf(leftLimit, rightLimit))
-                            }
-                        )
-                    }
-            )
         }
     }
 }
