@@ -13,8 +13,8 @@ android {
         applicationId = "com.zaka.shijuan"
         minSdk = 24
         targetSdk = 35
-        versionCode = 39
-        versionName = "2.19"
+        versionCode = 40
+        versionName = "2.20"
         resourceConfigurations += listOf("zh", "zh-rCN")
     }
 
