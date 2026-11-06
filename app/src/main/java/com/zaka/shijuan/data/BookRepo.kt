@@ -636,12 +636,13 @@ object BookRepo {
         return Result.success(Toc(list, cover, intro, author))
     }
 
-    /** 软错误页识别（源站 HTTP 200 但内容是报错/空壳） */
+    /** 软错误页识别（源站 HTTP 200 但内容是报错/空壳/下架） */
     fun isSoftError(body: String): Boolean {
         if (body.isBlank()) return false
         return body.contains("您访问的页面暂时无法访问") || body.contains("页面找不到了") ||
             body.contains("页面不存在") || body.contains("系统繁忙") || body.contains("访问过于频繁") ||
-            body.contains("暂时无法访问哦")
+            body.contains("暂时无法访问哦") || body.contains("本书已下架") || body.contains("因版权问题") ||
+            body.contains("文章不存在")
     }
 
     /** 正文 */
@@ -684,7 +685,10 @@ object BookRepo {
         }
 
         if (isSoftError(resp.body)) {
-            return Result.failure(Exception("源站返回「页面暂时无法访问」（该老书在手机站未开放或章节已下线），换个源搜同名书试试"))
+            val isTakenDown = resp.body.contains("本书已下架") || resp.body.contains("因版权问题") || resp.body.contains("文章不存在")
+            val msg = if (isTakenDown) "该书籍在源站已下架（因版权或源站调整下线），换个源搜同名书试试"
+            else "源站返回「页面暂时无法访问」（该老书在手机站未开放或章节已下线），换个源搜同名书试试"
+            return Result.failure(Exception(msg))
         }
 
         val doc = Rules.parse(resp.body)

@@ -253,19 +253,38 @@ class Dm5FamilySource(
                 Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })),
             )
         }
-        val list = CHAP.findAll(r.body).mapNotNull { m ->
+        val body = r.body
+        // 关键防护：限定在真正的章节目录容器内解析，坚决不扫页面底部的「相关推荐/热门排行/猜你喜欢」
+        // 避免其它推荐漫画的「最新第X话」被误当成当前漫画的话数混入
+        val container = Regex(
+            """<div[^>]*class="[^"]*detail-list-2[^"]*"[^>]*>([\s\S]*?)</div>\s*(?:<div class="detail-list-comment"|<div id="comment|<footer)""",
+            RegexOption.IGNORE_CASE,
+        ).find(body)?.groupValues?.get(1)
+            ?: Regex("""<ul[^>]*id="detail-list-select"[^>]*>([\s\S]*?)</ul>""", RegexOption.IGNORE_CASE)
+                .find(body)?.groupValues?.get(1)
+            ?: Regex("""<div[^>]*class="[^"]*(?:detail-list-1|detail-list-item)[^"]*"[^>]*>([\s\S]*?)</div>\s*<footer""", RegexOption.IGNORE_CASE)
+                .find(body)?.groupValues?.get(1)
+
+        val targetHtml = container ?: body
+
+        val list = CHAP.findAll(targetHtml).mapNotNull { m ->
             val attrs = m.groupValues[1]
             val href = m.groupValues[2]
             val inner = m.groupValues[3]
-            // 只认目录项：class 里有 chapteritem，或内部带详情标题节点，或正文就是个话数
             var title = stripTags(inner).trim()
-            // 漫画 BZ 的目录项是 <div class="detail-list-item"><a/></div>，
-            // class 在 a 外面，括号里只剩个话数（1151），所以纯数字也算目录项
             val digitOnly = title.matches(Regex("""\d{1,5}"""))
-            val isItem = attrs.contains("chapteritem") || inner.contains("detail-list-2-info") ||
-                inner.contains("detail-list-item") || digitOnly ||
-                title.contains("话") || title.contains("章") || title.contains("回") ||
-                title.contains("卷") || href.matches(Regex("""^/m\d+/?$"""))
+            // 严格的章节判定：必须明确带 chapteritem、detail-list-2-info、detail-list-item、detail-list-title
+            // 绝不能仅凭一个通用正则无脑放行其它漫画的推荐链接
+            val isExplicitItem = attrs.contains("chapteritem") ||
+                inner.contains("detail-list-2-info") ||
+                inner.contains("detail-list-item") ||
+                attrs.contains("detail-list-title")
+            val isItem = if (container != null) {
+                isExplicitItem || digitOnly || title.contains("话") || title.contains("章") || title.contains("回") || title.contains("卷")
+            } else {
+                // 如果没匹配到专门容器，只允许具备明确 chapteritem 特征的项，防止混串
+                isExplicitItem
+            }
             if (!isItem) return@mapNotNull null
             if (digitOnly) title = "第${title}话"
             if (title.isBlank()) title = TITLE_ATTR.find(attrs)?.groupValues?.get(1)?.trim().orEmpty()
@@ -276,6 +295,10 @@ class Dm5FamilySource(
                 sourceId = id,
             )
         }.distinctBy { it.url }.toList().reversed()
+
+        if (list.isEmpty()) {
+            throw IllegalStateException("该漫画在源站已下架或暂无章节，请切换其他漫画源")
+        }
         return list.mapIndexed { i, c -> c.copy(index = i) }
     }
 

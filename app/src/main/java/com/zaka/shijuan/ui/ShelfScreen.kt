@@ -15,6 +15,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoStories
+import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -74,7 +75,7 @@ fun ShelfScreen(
             }
             if (!offline) {
                 FilledTonalIconButton(onClick = onBrowse) {
-                    Icon(Icons.Rounded.Add, contentDescription = "找书")
+                    Icon(Icons.Rounded.Search, contentDescription = "找书")
                 }
             }
         }
@@ -116,10 +117,12 @@ fun ShelfScreen(
         } else {
             LazyVerticalGrid(
                 columns = GridCells.Adaptive(minSize = 104.dp),
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 104.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 8.dp, bottom = 24.dp),
                 horizontalArrangement = Arrangement.spacedBy(14.dp),
                 verticalArrangement = Arrangement.spacedBy(18.dp),
-                modifier = Modifier.fillMaxSize(),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .navigationBarsPadding(),
             ) {
                 if (offShelf.isNotEmpty()) {
                     item(span = { GridItemSpan(maxLineSpan) }, key = "recent_header") {

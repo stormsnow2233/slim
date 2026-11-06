@@ -12,7 +12,6 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.slideInVertically
 import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
-import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
@@ -21,12 +20,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
-import androidx.compose.foundation.gestures.detectHorizontalDragGestures
-import androidx.compose.foundation.pager.HorizontalPager
-import androidx.compose.foundation.pager.rememberPagerState
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.outlined.*
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -53,24 +47,19 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-enum class Tab(val label: String, val on: ImageVector, val off: ImageVector) {
-    Shelf("书架", Icons.Rounded.Book, Icons.Outlined.Book),
-    Search("搜索", Icons.Rounded.Search, Icons.Outlined.Search),
-    Sources("书源", Icons.Rounded.Layers, Icons.Outlined.Layers),
-    Mine("我的", Icons.Rounded.Person, Icons.Outlined.Person),
-}
-
 /** 侧边栏里的两件事：小说 / 漫画 */
 enum class Section(val label: String, val desc: String, val icon: ImageVector) {
-    Novel("小说", "多源搜索 · 书架 · 书源", Icons.Rounded.Book),
+    Novel("小说", "多源搜索 · 书架 · 18+ 源", Icons.Rounded.Book),
     Comic("漫画", "动漫屋 · 漫画人 · 拷贝漫画", Icons.Rounded.PhotoLibrary),
 }
 
 sealed class Route {
-    data object Tabs : Route()
+    data object Main : Route()
+    data object Search : Route()
+    data object Sources : Route()
+    data object Settings : Route()
     data object Cache : Route()
     data object Network : Route()
-    data object Settings : Route()
     /** 自定义书源编辑；id 为 null 表示新建 */
     data class CustomSourceEdit(val id: String? = null) : Route()
     data class Detail(val book: Book) : Route()
@@ -100,7 +89,7 @@ fun ShijuanApp() {
         0
     }
     val online by Offline.online.collectAsState()
-    var route by remember { mutableStateOf<Route>(Route.Tabs) }
+    var route by remember { mutableStateOf<Route>(Route.Main) }
     var shelf by remember { mutableStateOf(store.shelf()) }
     var enabled by remember { mutableStateOf(store.enabledSources()) }
     var records by remember { mutableStateOf(store.records()) }
@@ -118,11 +107,12 @@ fun ShijuanApp() {
         records = store.records()
     }
 
-    BackHandler(enabled = route !is Route.Tabs) {
+    BackHandler(enabled = route !is Route.Main) {
         route = when (val r = route) {
             is Route.ComicRead -> Route.ComicDetail(r.comic)
             is Route.Reader -> Route.Detail(r.book)
-            else -> Route.Tabs
+            is Route.CustomSourceEdit -> Route.Sources
+            else -> Route.Main
         }
     }
 
@@ -130,8 +120,6 @@ fun ShijuanApp() {
     val uiScope = rememberCoroutineScope()
     var section by remember { mutableStateOf(Section.Novel) }
     var activeUpdateInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
-    // 页签状态提到这一层：进详情、加书源回来时不会跳回第一页
-    val pager = rememberPagerState(pageCount = { Tab.entries.size })
     val openDrawer = { uiScope.launch { drawerState.open() }; Unit }
 
     // 启动自动检查更新：后台静默检测，有新版本且用户未选择“不再提示”时自动弹出
@@ -159,14 +147,18 @@ fun ShijuanApp() {
 
     ModalNavigationDrawer(
         drawerState = drawerState,
-        // 只有主界面允许边缘滑动拉出，进了详情/阅读器就别抢手势
-        gesturesEnabled = route is Route.Tabs,
+        // 主界面允许从屏幕左边缘轻划拉出侧边栏
+        gesturesEnabled = route is Route.Main,
         drawerContent = {
             SectionDrawer(
                 current = section,
                 onPick = { s ->
                     section = s
-                    route = Route.Tabs
+                    route = Route.Main
+                    uiScope.launch { drawerState.close() }
+                },
+                onOpenSources = {
+                    route = Route.Sources
                     uiScope.launch { drawerState.close() }
                 },
                 onOpenCache = {
@@ -181,159 +173,152 @@ fun ShijuanApp() {
                     route = Route.Settings
                     uiScope.launch { drawerState.close() }
                 },
+                enabledSourcesCount = enabled.size,
             )
         },
     ) {
-
-    Column(
-        Modifier
-            .fillMaxSize()
-            .then(
-                if (!online) Modifier.consumeWindowInsets(WindowInsets.statusBars)
-                else Modifier
-            )
-    ) {
-        if (!online) {
-            OfflineBar(onRetry = { Offline.refresh(ctx.applicationContext) })
-        }
-
-    Box(Modifier.weight(1f)) {
-    AnimatedContent(
-        targetState = route,
-        transitionSpec = {
-            (fadeIn(tween(240)) + slideInVertically(tween(260)) { it / 18 }) togetherWith
-                (fadeOut(tween(170)) + slideOutVertically(tween(200)) { -it / 26 })
-        },
-        label = "route",
-    ) { r ->
-        when (r) {
-            is Route.Tabs -> if (section == Section.Comic) {
-                Box(Modifier.fillMaxSize()) {
-                    ComicScreen(
-                        store = store,
-                        onOpen = { route = Route.ComicDetail(it) },
-                        onOpenDrawer = openDrawer,
-                        offline = !online,
-                        onOpenCache = { route = Route.Cache },
-                    )
-                    // 左边缘右滑拉出侧边栏感应区
-                    Box(
-                        modifier = Modifier
-                            .align(Alignment.CenterStart)
-                            .fillMaxHeight()
-                            .width(32.dp)
-                            .pointerInput(Unit) {
-                                detectHorizontalDragGestures { change, dragAmount ->
-                                    if (dragAmount > 0) {
-                                        change.consume()
-                                        openDrawer()
-                                    }
-                                }
-                            }
-                    )
-                }
-            } else {
-                TabHost(
-                    pager = pager,
-                    store = store,
-                    shelf = shelfShown,
-                    records = recordsShown,
-                    enabled = enabled,
-                    online = online,
-                    onOpenDrawer = openDrawer,
-                    onOpenBook = { route = Route.Detail(it) },
-                    onRemoveShelf = { item ->
-                        store.removeFromShelf(item.book.url, item.book.sourceId)
-                        refreshShelf()
-                    },
-                    onOpenRecord = { rec -> route = Route.Detail(rec.book) },
-                    onRemoveRecord = { book ->
-                        store.removeRecord(book)
-                        refreshShelf()
-                    },
-                    onOpenComic = { route = Route.ComicDetail(it) },
-                    onToggleSource = { id, on -> enabled = store.setSourceEnabled(id, on) },
-                    onAddSource = { route = Route.CustomSourceEdit(null) },
-                    onEditSource = { src -> route = Route.CustomSourceEdit(src.id) },
+        Column(
+            Modifier
+                .fillMaxSize()
+                .then(
+                    if (!online) Modifier.consumeWindowInsets(WindowInsets.statusBars)
+                    else Modifier
                 )
+        ) {
+            if (!online) {
+                OfflineBar(onRetry = { Offline.refresh(ctx.applicationContext) })
             }
 
-            is Route.Settings -> SettingsScreen(
-                store = store,
-                onBack = { route = Route.Tabs },
-                onOpenNetwork = { route = Route.Network },
-                onOpenCache = { route = Route.Cache },
-                onShowUpdate = { activeUpdateInfo = it }
-            )
+            Box(Modifier.weight(1f)) {
+                AnimatedContent(
+                    targetState = route,
+                    transitionSpec = {
+                        (fadeIn(tween(240)) + slideInVertically(tween(260)) { it / 18 }) togetherWith
+                            (fadeOut(tween(170)) + slideOutVertically(tween(200)) { -it / 26 })
+                    },
+                    label = "route",
+                ) { r ->
+                    when (r) {
+                        is Route.Main -> if (section == Section.Comic) {
+                            ComicScreen(
+                                store = store,
+                                onOpen = { route = Route.ComicDetail(it) },
+                                onOpenDrawer = openDrawer,
+                                offline = !online,
+                                onOpenCache = { route = Route.Cache },
+                            )
+                        } else {
+                            ShelfScreen(
+                                shelf = shelfShown,
+                                records = recordsShown,
+                                onOpen = { item -> route = Route.Detail(item.book) },
+                                onRemove = { item ->
+                                    store.removeFromShelf(item.book.url, item.book.sourceId)
+                                    refreshShelf()
+                                },
+                                onOpenRecord = { rec -> route = Route.Detail(rec.book) },
+                                onRemoveRecord = { book ->
+                                    store.removeRecord(book)
+                                    refreshShelf()
+                                },
+                                onBrowse = { route = Route.Search },
+                                onOpenDrawer = openDrawer,
+                                offline = !online,
+                            )
+                        }
 
-            is Route.ComicDetail -> ComicDetailScreen(
-                comic = r.comic,
-                store = store,
-                onBack = { route = Route.Tabs },
-                onRead = { c, chs, idx -> route = Route.ComicRead(c, chs, idx) },
-            )
+                        is Route.Search -> SearchScreen(
+                            store = store,
+                            enabled = enabled,
+                            onOpenBook = { route = Route.Detail(it) },
+                            onOpenDrawer = openDrawer,
+                            onBack = { route = Route.Main },
+                        )
 
-            is Route.ComicRead -> ComicReaderScreen(
-                comic = r.comic,
-                chapters = r.chapters,
-                startIndex = r.index,
-                store = store,
-                onBack = { route = Route.ComicDetail(r.comic) },
-            )
+                        is Route.Sources -> SourcesScreen(
+                            store = store,
+                            enabled = enabled,
+                            onToggle = { id, on -> enabled = store.setSourceEnabled(id, on) },
+                            onOpenDrawer = openDrawer,
+                            onBack = { route = Route.Main },
+                            onAddSource = { route = Route.CustomSourceEdit(null) },
+                            onEditSource = { src -> route = Route.CustomSourceEdit(src.id) },
+                        )
 
-            is Route.Detail -> DetailScreen(
-                book = r.book,
-                store = store,
-                onBack = { route = Route.Tabs },
-                onRead = { book, chapters, idx ->
-                    route = Route.Reader(book, chapters, idx)
-                },
-                onShelfChanged = { refreshShelf() },
-            )
+                        is Route.Settings -> SettingsScreen(
+                            store = store,
+                            onBack = { route = Route.Main },
+                            onOpenNetwork = { route = Route.Network },
+                            onOpenCache = { route = Route.Cache },
+                            onOpenSources = { route = Route.Sources },
+                            onShowUpdate = { activeUpdateInfo = it },
+                        )
 
-            is Route.Reader -> ReaderScreen(
-                book = r.book,
-                chapters = r.chapters,
-                startIndex = r.index,
-                store = store,
-                onBack = { route = Route.Detail(r.book) },
-                onSwitchBook = { other -> route = Route.Detail(other) },
-                onProgress = { ci, cn, p, total ->
-                    store.updateProgress(r.book, ci, cn, p, total)
-                    refreshShelf()
-                },
-            )
+                        is Route.Cache -> CacheScreen(
+                            store = store,
+                            onBack = { route = Route.Main },
+                            onOpenComic = { c -> route = Route.ComicDetail(c) },
+                        )
 
-            is Route.Cache -> CacheScreen(
-                store = store,
-                onBack = { route = Route.Tabs },
-                onOpenComic = { c -> route = Route.ComicDetail(c) },
-            )
+                        is Route.Network -> NetworkScreen(
+                            store = store,
+                            onBack = { route = Route.Main },
+                        )
 
-            is Route.Network -> NetworkScreen(
-                store = store,
-                onBack = { route = Route.Tabs },
-            )
+                        is Route.CustomSourceEdit -> CustomSourceEditScreen(
+                            initial = r.id?.let { Sources.byId(it) },
+                            onBack = { route = Route.Sources },
+                            onSaved = {
+                                enabled = store.enabledSources()
+                                route = Route.Sources
+                            },
+                            onDeleted = {
+                                enabled = store.enabledSources()
+                                route = Route.Sources
+                            },
+                        )
 
-            is Route.CustomSourceEdit -> CustomSourceEditScreen(
-                initial = r.id?.let { Sources.byId(it) },
-                onBack = { route = Route.Tabs },
-                onSaved = {
-                    enabled = store.enabledSources()
-                    route = Route.Tabs
-                    // 加完/改完停在书源页，能立刻看到刚加的源
-                    uiScope.launch { pager.animateScrollToPage(Tab.Sources.ordinal) }
-                },
-                onDeleted = {
-                    enabled = store.enabledSources()
-                    route = Route.Tabs
-                    uiScope.launch { pager.animateScrollToPage(Tab.Sources.ordinal) }
-                },
-            )
+                        is Route.Detail -> DetailScreen(
+                            book = r.book,
+                            store = store,
+                            onBack = { route = Route.Main },
+                            onRead = { book, chapters, idx ->
+                                route = Route.Reader(book, chapters, idx)
+                            },
+                            onShelfChanged = { refreshShelf() },
+                        )
+
+                        is Route.Reader -> ReaderScreen(
+                            book = r.book,
+                            chapters = r.chapters,
+                            startIndex = r.index,
+                            store = store,
+                            onBack = { route = Route.Detail(r.book) },
+                            onSwitchBook = { other -> route = Route.Detail(other) },
+                            onProgress = { ci, cn, p, total ->
+                                store.updateProgress(r.book, ci, cn, p, total)
+                                refreshShelf()
+                            },
+                        )
+
+                        is Route.ComicDetail -> ComicDetailScreen(
+                            comic = r.comic,
+                            store = store,
+                            onBack = { route = Route.Main },
+                            onRead = { c, chs, idx -> route = Route.ComicRead(c, chs, idx) },
+                        )
+
+                        is Route.ComicRead -> ComicReaderScreen(
+                            comic = r.comic,
+                            chapters = r.chapters,
+                            startIndex = r.index,
+                            store = store,
+                            onBack = { route = Route.ComicDetail(r.comic) },
+                        )
+                    }
+                }
+            }
         }
-    }
-    }
-    }
     }
 }
 
@@ -364,21 +349,24 @@ private fun OfflineBar(onRetry: () -> Unit) {
 }
 
 /**
- * 侧边栏：就两件事，小说和漫画。
+ * 侧边栏：小说 / 漫画模式切换、书源管理、缓存、网络、设置。
  */
 @Composable
 private fun SectionDrawer(
     current: Section,
     onPick: (Section) -> Unit,
+    onOpenSources: () -> Unit = {},
     onOpenCache: () -> Unit = {},
     onOpenNetwork: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
+    enabledSourcesCount: Int = 0,
 ) {
     ModalDrawerSheet(
         drawerShape = RoundedCornerShape(topEnd = 26.dp, bottomEnd = 26.dp),
-        modifier = Modifier.width(268.dp),
+        modifier = Modifier.width(276.dp),
     ) {
-        Spacer(Modifier.height(28.dp))
+        Spacer(Modifier.statusBarsPadding())
+        Spacer(Modifier.height(16.dp))
         Column(Modifier.padding(horizontal = 22.dp)) {
             Text(
                 "拾卷",
@@ -444,6 +432,33 @@ private fun SectionDrawer(
         Spacer(Modifier.height(10.dp))
         HorizontalDivider(Modifier.padding(horizontal = 22.dp))
         Spacer(Modifier.height(10.dp))
+
+        // 书源管理入口
+        Row(
+            modifier = Modifier
+                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp))
+                .clickable { onOpenSources() }
+                .padding(horizontal = 14.dp, vertical = 12.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Icon(
+                imageVector = Icons.Rounded.Layers,
+                contentDescription = "书源管理",
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                modifier = Modifier.size(22.dp),
+            )
+            Spacer(Modifier.width(12.dp))
+            Column(Modifier.weight(1f)) {
+                Text("书源管理", style = MaterialTheme.typography.titleMedium)
+                Text(
+                    "已启用 $enabledSourcesCount 个 · 体检与自定义",
+                    fontSize = 11.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
 
         // 缓存管理：哪本存了多少、存全没有、不要了怎么删
         Row(
@@ -524,120 +539,13 @@ private fun SectionDrawer(
             Column(Modifier.weight(1f)) {
                 Text("设置", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "检查更新 · 关于",
+                    "阅读偏好 · 自动更新 · 关于",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
         }
-        Spacer(Modifier.height(16.dp))
-    }
-}
-
-/**
- * 四个主页面：左右滑动切换（跟手），点底栏也会滑过去。
- */
-@OptIn(ExperimentalFoundationApi::class)
-@Composable
-private fun TabHost(
-    pager: androidx.compose.foundation.pager.PagerState,
-    store: Store,
-    shelf: List<ShelfItem>,
-    records: List<ReadingRecord>,
-    enabled: Set<String>,
-    online: Boolean = true,
-    onOpenDrawer: () -> Unit,
-    onOpenBook: (Book) -> Unit,
-    onRemoveShelf: (ShelfItem) -> Unit,
-    onOpenRecord: (ReadingRecord) -> Unit,
-    onRemoveRecord: (Book) -> Unit,
-    onOpenComic: (Comic) -> Unit,
-    onToggleSource: (String, Boolean) -> Unit,
-    onAddSource: () -> Unit = {},
-    onEditSource: (Source) -> Unit = {},
-) {
-    val scope = rememberCoroutineScope()
-    val tabs = Tab.entries
-
-    Box(Modifier.fillMaxSize()) {
-        HorizontalPager(
-            state = pager,
-            modifier = Modifier.fillMaxSize(),
-            beyondViewportPageCount = 1,
-            pageSpacing = 0.dp,
-        ) { page ->
-            when (tabs[page]) {
-                Tab.Shelf -> ShelfScreen(
-                    shelf = shelf,
-                    records = records,
-                    onOpen = { item -> onOpenBook(item.book) },
-                    onRemove = { item -> onRemoveShelf(item) },
-                    onOpenRecord = onOpenRecord,
-                    onRemoveRecord = onRemoveRecord,
-                    onBrowse = { scope.launch { pager.animateScrollToPage(1) } },
-                    onOpenDrawer = onOpenDrawer,
-                    offline = !online,
-                )
-
-                Tab.Search -> SearchScreen(
-                    store = store,
-                    enabled = enabled,
-                    onOpenBook = { onOpenBook(it) },
-                    onOpenDrawer = onOpenDrawer,
-                )
-
-                Tab.Sources -> SourcesScreen(
-                    store = store,
-                    enabled = enabled,
-                    onToggle = { id, on -> onToggleSource(id, on) },
-                    onOpenDrawer = onOpenDrawer,
-                    onAddSource = onAddSource,
-                    onEditSource = onEditSource,
-                )
-
-                Tab.Mine -> MineScreen(
-                    store = store,
-                    shelfCount = shelf.size,
-                    enabledCount = enabled.size,
-                    onOpenDrawer = onOpenDrawer,
-                )
-            }
-        }
-
-        // 左边缘右滑拉出侧边栏感应区：解决 HorizontalPager 全屏吞掉边缘滑出抽屉手势的问题
-        Box(
-            modifier = Modifier
-                .align(Alignment.CenterStart)
-                .fillMaxHeight()
-                .width(32.dp)
-                .pointerInput(Unit) {
-                    detectHorizontalDragGestures { change, dragAmount ->
-                        if (dragAmount > 0) {
-                            change.consume()
-                            onOpenDrawer()
-                        }
-                    }
-                }
-        )
-
-        // 液态玻璃底栏
-        LiquidGlassBar(
-            labels = tabs.map { it.label },
-            iconsOn = tabs.map { it.on },
-            iconsOff = tabs.map { it.off },
-            selected = pager.currentPage,
-            onSelect = { i ->
-                scope.launch {
-                    pager.animateScrollToPage(i)
-                }
-            },
-            pageFraction = { pager.currentPage + pager.currentPageOffsetFraction },
-            modifier = Modifier
-                .align(Alignment.BottomCenter)
-                .fillMaxWidth()
-                .navigationBarsPadding()
-                .padding(horizontal = 12.dp, vertical = 10.dp)
-                .padding(bottom = 4.dp),
-        )
+        Spacer(Modifier.navigationBarsPadding())
+        Spacer(Modifier.height(8.dp))
     }
 }

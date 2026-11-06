@@ -180,6 +180,30 @@ fun CloudflareVerifyDialog(
                                 }
                             }
                             webViewClient = object : WebViewClient() {
+                                override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
+                                    val target = request?.url?.toString().orEmpty()
+                                    val h = request?.url?.host.orEmpty().lowercase()
+                                    // 阻断流氓第三方广告网站劫持重定向（只允许目标源站及其正规跳转）
+                                    val allowedHost = runCatching { java.net.URI(url).host }.getOrNull()?.lowercase().orEmpty()
+                                    val isAllowed = h == allowedHost ||
+                                        (allowedHost.contains("wenku8") && (h.contains("wenku8.cc") || h.contains("wenku8.net") || h.contains("wenku8.com"))) ||
+                                        h.endsWith(".$allowedHost")
+                                    if (!isAllowed && target.startsWith("http")) {
+                                        return true // 拦截恶意广告重定向
+                                    }
+                                    return false
+                                }
+
+                                override fun shouldInterceptRequest(view: WebView?, request: android.webkit.WebResourceRequest?): android.webkit.WebResourceResponse? {
+                                    val h = request?.url?.host.orEmpty().lowercase()
+                                    // 拦截常见流氓广告与弹窗劫持脚本域名
+                                    if (h.contains("609999.xyz") || h.contains("clarity.ms") || h.contains("hm.baidu.com") ||
+                                        h.contains("google-analytics") || h.contains("doubleclick") || h.contains("cpro.baidu.com")) {
+                                        return android.webkit.WebResourceResponse("text/javascript", "UTF-8", java.io.ByteArrayInputStream(ByteArray(0)))
+                                    }
+                                    return null
+                                }
+
                                 override fun onPageStarted(view: WebView?, startUrl: String?, favicon: Bitmap?) {
                                     super.onPageStarted(view, startUrl, favicon)
                                     startUrl?.let { doSync(it) }

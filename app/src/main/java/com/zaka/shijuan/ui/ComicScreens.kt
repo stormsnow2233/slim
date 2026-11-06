@@ -709,11 +709,11 @@ fun ComicDetailScreen(
     onBack: () -> Unit,
     onRead: (Comic, List<ComicChapter>, Int) -> Unit,
 ) {
-    var full by remember { mutableStateOf(comic) }
-    var chapters by remember { mutableStateOf<List<ComicChapter>>(emptyList()) }
-    var loading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf("") }
-    var offlineNote by remember { mutableStateOf("") }
+    var full by remember(comic.url) { mutableStateOf(comic) }
+    var chapters by remember(comic.url) { mutableStateOf<List<ComicChapter>>(emptyList()) }
+    var loading by remember(comic.url) { mutableStateOf(true) }
+    var error by remember(comic.url) { mutableStateOf("") }
+    var offlineNote by remember(comic.url) { mutableStateOf("") }
     var tick by remember { mutableStateOf(0) }
     var shelfTick by remember { mutableStateOf(0) }
     val ctx = LocalContext.current
@@ -1004,11 +1004,11 @@ fun ComicReaderScreen(
     store: Store,
     onBack: () -> Unit,
 ) {
-    var index by remember { mutableIntStateOf(startIndex.coerceIn(0, (chapters.size - 1).coerceAtLeast(0))) }
-    var images by remember { mutableStateOf<List<String>>(emptyList()) }
-    var pageHeaders by remember { mutableStateOf<Map<String, String>>(emptyMap()) }
-    var loading by remember { mutableStateOf(true) }
-    var error by remember { mutableStateOf("") }
+    var index by remember(comic.url, startIndex) { mutableIntStateOf(startIndex.coerceIn(0, (chapters.size - 1).coerceAtLeast(0))) }
+    var images by remember(comic.url, index) { mutableStateOf<List<String>>(emptyList()) }
+    var pageHeaders by remember(comic.url) { mutableStateOf<Map<String, String>>(emptyMap()) }
+    var loading by remember(comic.url, index) { mutableStateOf(true) }
+    var error by remember(comic.url, index) { mutableStateOf("") }
     var attempt by remember { mutableStateOf(0) }
     var chrome by remember { mutableStateOf(true) }
     var showSettings by remember { mutableStateOf(false) }

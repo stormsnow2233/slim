@@ -37,10 +37,12 @@ fun SettingsScreen(
     onBack: () -> Unit,
     onOpenNetwork: () -> Unit,
     onOpenCache: () -> Unit,
+    onOpenSources: () -> Unit,
     onShowUpdate: (ReleaseInfo) -> Unit,
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
+    var prefs by remember { mutableStateOf(store.readerPrefs()) }
     var autoCheck by remember { mutableStateOf(store.autoCheckUpdate()) }
     var comicMode by remember { mutableStateOf(store.comicMode()) }
     var comicZoom by remember { mutableStateOf(store.comicZoom()) }
@@ -70,6 +72,96 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
+            // ── 书源管理 ──
+            SettingsGroupHeader("书源与内容")
+
+            val enabledCount = remember { store.enabledSources().size }
+            SettingsNavigationItem(
+                title = "书源管理",
+                subtitle = "已启用 $enabledCount 个书源 · 包含轻小说文库、笔趣阁等 18+ 源与自定义源",
+                icon = Icons.Rounded.Layers,
+                onClick = onOpenSources,
+            )
+
+            Spacer(Modifier.height(22.dp))
+
+            // ── 小说阅读偏好 ──
+            SettingsGroupHeader("小说阅读偏好")
+
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 4.dp),
+            ) {
+                Column(Modifier.padding(16.dp)) {
+                    Text(
+                        "正文字号 ${prefs.fontSize.toInt()} sp",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Slider(
+                        value = prefs.fontSize,
+                        onValueChange = {
+                            prefs = prefs.copy(fontSize = it)
+                            store.saveReaderPrefs(prefs)
+                        },
+                        valueRange = 14f..30f,
+                        steps = 15,
+                    )
+                    Spacer(Modifier.height(6.dp))
+                    Text(
+                        "正文行距 ${String.format(java.util.Locale.US, "%.2f", prefs.lineHeight)} 倍",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.SemiBold,
+                    )
+                    Slider(
+                        value = prefs.lineHeight,
+                        onValueChange = {
+                            prefs = prefs.copy(lineHeight = it)
+                            store.saveReaderPrefs(prefs)
+                        },
+                        valueRange = 1.2f..2.4f,
+                        steps = 11,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Text(
+                                "翻页模式",
+                                style = MaterialTheme.typography.titleMedium,
+                                fontWeight = FontWeight.SemiBold,
+                            )
+                            Text(
+                                if (prefs.pageMode == 0) "上下连续平滑滚动" else "左右仿真点击/滑动翻页",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        FilterChip(
+                            selected = prefs.pageMode == 0,
+                            onClick = {
+                                prefs = prefs.copy(pageMode = 0)
+                                store.saveReaderPrefs(prefs)
+                            },
+                            label = { Text("上下滚动") },
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        FilterChip(
+                            selected = prefs.pageMode == 1,
+                            onClick = {
+                                prefs = prefs.copy(pageMode = 1)
+                                store.saveReaderPrefs(prefs)
+                            },
+                            label = { Text("左右翻页") },
+                        )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(22.dp))
+
             // ── 软件更新 ──
             SettingsGroupHeader("版本与更新")
 
@@ -173,6 +265,36 @@ fun SettingsScreen(
                 icon = Icons.Rounded.CleaningServices,
                 onClick = onOpenCache
             )
+
+            Spacer(Modifier.height(10.dp))
+
+            Surface(
+                shape = RoundedCornerShape(16.dp),
+                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(16.dp))
+                    .clickable {
+                        store.clearHistory()
+                        Toast.makeText(ctx, "搜索历史已清空", Toast.LENGTH_SHORT).show()
+                    }
+                    .padding(16.dp),
+            ) {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Rounded.History,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp),
+                    )
+                    Spacer(Modifier.width(14.dp))
+                    Column(Modifier.weight(1f)) {
+                        Text("清空搜索历史", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                        Spacer(Modifier.height(2.dp))
+                        Text("一键清除小说和漫画搜索框的历史关键词记录", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
 
             Spacer(Modifier.height(22.dp))
 

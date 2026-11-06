@@ -320,9 +320,12 @@ object Sources {
             base = "https://www.wenku8.cc",
             mirrors = listOf("http://www.wenku8.cc", "https://www.wenku8.net"),
             charset = "gbk", status = "verified",
+            enabledByDefault = true,
             note = "双载点直连 + 官方整本打包，收录日本轻小说与插图",
             search = SearchRule(
-                url = "/modules/article/search.php?searchtype=articlename&searchkey={key}",
+                url = "/so.php",
+                method = "POST",
+                body = "searchtype=articlename&searchkey={key}&charset=gbk",
                 keyCharset = "gbk",
                 list = "#content table td > div, table td > div[style*='width'], table.grid tr, .grid tr",
                 fields = mapOf(

@@ -307,6 +307,43 @@ object Net {
     // 默认内置的常用书源凭证（如文库8会员Cookie，免除关站拦截与会员章节访问限制）
     const val WENKU8_DEFAULT_COOKIE = "jieqiUserInfo=jieqiUserId%3D1947674%2CjieqiUserName%3Dwanmiaohai%2CjieqiUserGroup%3D3%2CjieqiUserVip%3D0%2CjieqiUserPassword%3D9472cb36a664a6eb22d122aad30e3ca6%2CjieqiUserName_un%3Dwanmiaohai%2CjieqiUserHonor_un%3D%26%23x65B0%3B%26%23x624B%3B%26%23x4E0A%3B%26%23x8DEF%3B%2CjieqiUserGroupName_un%3D%26%23x666E%3B%26%23x901A%3B%26%23x4F1A%3B%26%23x5458%3B%2CjieqiUserLogin%3D1793930437; jieqiVisitInfo=jieqiUserLogin%3D1793930437%2CjieqiUserId%3D1947674"
 
+    @Volatile private var isLoggingInWenku8 = false
+
+    /** 自动为轻小说文库刷新或建立登录凭证（解决关站拦截、新用户注册提示与会员访问限制） */
+    fun ensureWenku8Login(): Boolean {
+        if (isLoggingInWenku8) return false
+        isLoggingInWenku8 = true
+        return try {
+            val fb = FormBody.Builder()
+                .add("username", "wanmiaohai")
+                .add("password", "Yuankuaile123")
+                .add("usecookie", "315360000")
+                .add("action", "login")
+                .build()
+            val req = Request.Builder()
+                .url("https://www.wenku8.cc/login.php?do=submit")
+                .post(fb)
+                .header("User-Agent", UA)
+                .header("Referer", "https://www.wenku8.cc/")
+                .build()
+            client.newCall(req).execute().use { resp ->
+                val setCookies = resp.headers("Set-Cookie")
+                if (setCookies.isNotEmpty()) {
+                    val combined = setCookies.joinToString("; ") { it.substringBefore(';') }
+                    syncCookies("wenku8.cc", combined)
+                    syncCookies("www.wenku8.cc", combined)
+                    syncCookies("wenku8.net", combined)
+                    syncCookies("www.wenku8.net", combined)
+                    true
+                } else false
+            }
+        } catch (_: Exception) {
+            false
+        } finally {
+            isLoggingInWenku8 = false
+        }
+    }
+
     fun get(
         url: String,
         charset: String = "utf-8",
@@ -340,7 +377,12 @@ object Net {
             }
         }
         headers.forEach { (k, v) -> builder.header(k, v) }
-        val resp = exec(builder.build(), charset, fast = fast, slow = isSlow)
+        var resp = exec(builder.build(), charset, fast = fast, slow = isSlow)
+        if (url.contains("wenku8") && (resp.body.contains("本站正式关闭") || resp.body.contains("用户登录") || resp.code == 403)) {
+            if (ensureWenku8Login()) {
+                resp = exec(builder.build(), charset, fast = fast, slow = isSlow)
+            }
+        }
         if (useCache && resp.ok) synchronized(pageCache) { pageCache[key] = resp }
         return resp
     }
@@ -383,14 +425,22 @@ object Net {
             }
         }
         headers.forEach { (k, v) -> builder.header(k, v) }
-        return exec(builder.build(), charset, fast = fast, slow = isSlow)
+        var resp = exec(builder.build(), charset, fast = fast, slow = isSlow)
+        if (url.contains("wenku8") && (resp.body.contains("本站正式关闭") || resp.body.contains("用户登录") || resp.code == 403)) {
+            if (ensureWenku8Login()) {
+                resp = exec(builder.build(), charset, fast = fast, slow = isSlow)
+            }
+        }
+        return resp
     }
 
     fun getBytes(url: String, referer: String = ""): ByteArray? = runCatching {
         val b = Request.Builder().url(safeUrl(url)).header("User-Agent", UA)
         if (referer.isNotBlank()) b.header("Referer", referer)
         if (url.contains("wenku8")) {
-            b.header("Cookie", WENKU8_DEFAULT_COOKIE)
+            val host = runCatching { safeUrl(url).toHttpUrlOrNull()?.host }.getOrNull() ?: "wenku8.cc"
+            val ck = getCookiesHeader(host).ifBlank { WENKU8_DEFAULT_COOKIE }
+            b.header("Cookie", ck)
         }
         client.newCall(b.build()).execute().use { r ->
             if (!r.isSuccessful) null else r.body?.bytes()

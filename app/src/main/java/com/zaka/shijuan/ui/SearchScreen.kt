@@ -11,6 +11,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -46,6 +47,7 @@ fun SearchScreen(
     enabled: Set<String>,
     onOpenBook: (Book) -> Unit,
     onOpenDrawer: () -> Unit = {},
+    onBack: (() -> Unit)? = null,
 ) {
     var keyword by remember { mutableStateOf("") }
     var results by remember { mutableStateOf<Map<String, SourceResult>>(emptyMap()) }
@@ -156,7 +158,13 @@ fun SearchScreen(
                 .padding(start = 16.dp, end = 16.dp, top = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            DrawerButton(onClick = onOpenDrawer)
+            if (onBack != null) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                }
+            } else {
+                DrawerButton(onClick = onOpenDrawer)
+            }
             Spacer(Modifier.width(8.dp))
             TextField(
                 value = keyword,
@@ -367,7 +375,7 @@ fun SearchScreen(
                 Text("试试这些", style = MaterialTheme.typography.titleMedium)
                 Spacer(Modifier.height(4.dp))
                 FlowRowChips(
-                    listOf("斗破苍穹", "诡秘之主", "十日终焉", "凡人修仙传", "三体", "大奉打更人", "剑来", "遮天")
+                    listOf("魔王", "邻家天使", "斗破苍穹", "诡秘之主", "十日终焉", "凡人修仙传", "三体", "大奉打更人", "剑来", "遮天")
                 ) { doSearch(it) }
                 Spacer(Modifier.height(20.dp))
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -398,8 +406,11 @@ fun SearchScreen(
             )
         } else {
             LazyColumn(
-                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 104.dp),
+                contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 4.dp, bottom = 24.dp),
                 verticalArrangement = Arrangement.spacedBy(2.dp),
+                modifier = Modifier
+                    .fillMaxSize()
+                    .navigationBarsPadding(),
             ) {
                 items(merged, key = { it.name + it.primary.sourceId }) { m ->
                     Box(Modifier.animateItem()) { BookRow(m, onOpenBook) }

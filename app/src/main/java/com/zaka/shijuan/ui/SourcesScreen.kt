@@ -9,6 +9,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.NetworkCheck
 import androidx.compose.material3.*
@@ -38,6 +39,7 @@ fun SourcesScreen(
     enabled: Set<String>,
     onToggle: (String, Boolean) -> Unit,
     onOpenDrawer: () -> Unit = {},
+    onBack: (() -> Unit)? = null,
     onAddSource: () -> Unit = {},
     onEditSource: (Source) -> Unit = {},
 ) {
@@ -84,7 +86,13 @@ fun SourcesScreen(
                 .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 8.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            DrawerButton(onClick = onOpenDrawer)
+            if (onBack != null) {
+                IconButton(onClick = onBack) {
+                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                }
+            } else {
+                DrawerButton(onClick = onOpenDrawer)
+            }
             Spacer(Modifier.width(10.dp))
             Column(Modifier.weight(1f)) {
                 Text("书源", style = MaterialTheme.typography.headlineLarge)
@@ -135,8 +143,11 @@ fun SourcesScreen(
         }
 
         LazyColumn(
-            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 104.dp),
+            contentPadding = PaddingValues(start = 16.dp, end = 16.dp, bottom = 24.dp),
             verticalArrangement = Arrangement.spacedBy(8.dp),
+            modifier = Modifier
+                .fillMaxSize()
+                .navigationBarsPadding(),
         ) {
             groups.forEach { (group, list) ->
                 item {
