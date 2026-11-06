@@ -36,6 +36,13 @@ data class TocRule(
     val url: String = "@href",
     // 目录页地址模板：{id} = 书号，{book} = 原书页。留空表示目录就在书页里
     val page: String = "",
+    // 章节名正则：命中的章节直接不进目录。用于站点把插图页/人设页当成章节列出来的情况
+    // （这些章节正文只有图片，阅读器只显示文字，点进去必然空白）
+    val skip: String = "",
+    // 目录按「卷」分块时的卷标题选择器（SF：div.mulu 写着「人设」「第一卷 …」）
+    val volume: String = "",
+    // 卷名正则：命中整卷跳过。SF 的「人设」「书友画廊」整卷都是图片，收进来只会让人点开一片空白
+    val skipVolume: String = "",
 )
 
 data class ContentRule(
@@ -187,7 +194,8 @@ object Sources {
         Source(
             id = "sudugu", name = "速读谷", group = "综合",
             base = "https://www.sudugu.cc", charset = "utf-8", status = "local",
-            note = "【备用】域名已搬至 sudugu.cc，国内老书冷门书",
+            note = "【推荐】老书冷门书全，搜索会直接跳到书页（已适配），正文干净",
+            enabledByDefault = true,
             search = SearchRule(
                 url = "/modules/article/search.php", method = "POST",
                 body = "searchkey={key}&action=login&searchtype=all&submit=",
@@ -202,6 +210,7 @@ object Sources {
                 auto = true,
             ),
             detail = DetailRule(name = "h1@text", author = ".author@text", intro = ".intro@text"),
+            // 列表第一项常是「第1章」的重名分隔项，正文是空的，从第二项开始才是真章节
             toc = TocRule(list = "#list a", name = "@text", url = "@href"),
             content = ContentRule(body = ".con@html"),
         ),
@@ -209,7 +218,7 @@ object Sources {
         Source(
             id = "shoujix", name = "手机小说", group = "综合",
             base = "https://www.shoujix.com", charset = "gbk", status = "local",
-            note = "【备用】源站返回空壳页",
+            note = "【停用】源站没有搜索入口（任何查询都返回同一张导航页），只能用直链看书",
             search = SearchRule(
                 url = "/modules/article/search.php", method = "POST",
                 body = "searchkey={key}",
@@ -247,24 +256,29 @@ object Sources {
 
         // ─────────── 正版源 ───────────
         Source(
-            id = "qidian", name = "起点中文网", group = "正版",
-            base = "https://www.qidian.com", mirrors = listOf("https://m.qidian.com"),
-            charset = "utf-8", status = "local",
-            note = "【备用】起点反爬 202 拦截",
+            id = "17k", name = "17K小说网", group = "正版",
+            base = "https://www.17k.com",
+            charset = "utf-8", status = "verified",
+            note = "【正版】17K 站内书，前若干章免费（后面的章节源站要购买）。目录走 /list/{id}.html",
+            enabledByDefault = true,
             search = SearchRule(
-                url = "/so/{key}.html", auto = true,
-                list = "ul.book-img-text > li, .book-mid-info",
+                // 站内搜索是独立域名 search.17k.com，参数名就是 c.q
+                url = "https://search.17k.com/search.xhtml?c.q={key}",
+                list = "div.textlist",
                 fields = mapOf(
-                    "name" to ".book-mid-info h2 a@text",
-                    "bookUrl" to ".book-mid-info h2 a@href",
-                    "cover" to ".book-img-box img@src",
-                    "author" to ".author a.name@text",
-                    "intro" to ".intro@text",
+                    "name" to ".textmiddle dt a@text",
+                    "bookUrl" to ".textmiddle dt a@href",
+                    "cover" to ".textleft img@src",
+                    "author" to ".textmiddle .ls a@text",
+                    "intro" to ".textmiddle li p@text",
                 ),
             ),
-            detail = DetailRule(name = "h1@text", author = ".author a@text", cover = ".book-img img@src", intro = ".book-intro@text"),
-            toc = TocRule(list = ".catalog-content-wrap a[href*=\"/chapter\"], .volume-wrap a[href*=\"/chapter\"]", name = "@text", url = "@href"),
-            content = ContentRule(body = ".read-content@html || .content@html"),
+            detail = DetailRule(
+                name = "h1@text", author = "div.author a@text",
+                cover = "#bookCover img@src", intro = ".intro@text",
+            ),
+            toc = TocRule(list = "a[href*=/chapter/]", name = "@text", url = "@href", page = "/list/{id}.html"),
+            content = ContentRule(body = ".readArea div.p@html || .readArea@html"),
         ),
 
 
@@ -334,7 +348,15 @@ object Sources {
                 intro = ".book_bk_qs1@text",
             ),
             // 书页 /b/{id}/ 没有章节列表，目录另有一页 /i/{id}/
-            toc = TocRule(list = "ul.mulu_list a", name = "@text", url = "@href", page = "https://m.sfacg.com/i/{id}/"),
+            toc = TocRule(
+                list = "ul.mulu_list a", name = "@text", url = "@href",
+                page = "https://m.sfacg.com/i/{id}/",
+                // SF 的目录按卷切开，「人设」「书友画廊」整卷都是图片（正文区只有一个 <img>），
+                // 阅读器只排文字，从这些章点进去必然空白——整卷跳过，直接落到「第一卷」
+                volume = "div.mulu",
+                skipVolume = "(人设|设定集|书友画廊|画廊|插画|插图|图集|彩图|线稿)",
+                skip = "(插图|插画|图集|人设|设定集|彩图|线稿|图片版|漫画版)",
+            ),
             content = ContentRule(body = "div.yuedu.Content_Frame > div@html || .Content_Frame > div@html || .yuedu [style*=\"text-indent\"]@html || [style*=\"text-indent\"]@html || .yuedu@html || #content@html"),
         ),
 

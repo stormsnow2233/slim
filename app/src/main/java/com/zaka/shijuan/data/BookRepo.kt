@@ -72,7 +72,15 @@ object BookRepo {
 
                 if (!resp.ok) { lastErr = resp.error; continue }
 
-                val books = parseSearchPage(src, resp.body, resp.via.ifBlank { full }, rule)
+                // 搜一次就被 302 到书页的站点（速读谷），书页本身就是唯一结果。
+                // 必须先判这个：那种页面上有一堆章节链接，auto 兜底会把章节目录当成「搜索列表」。
+                if (resp.via.isNotBlank() && resp.via != full) {
+                    singleBookFromPage(src, resp, full, key)?.let { one ->
+                        ActiveBases[src.id] = base
+                        return SourceResult(src.id, src.name, true, listOf(one), "", System.currentTimeMillis() - t0)
+                    }
+                }
+                val books = parseSearchPage(src, resp.body, resp.via.ifBlank { full }, rule, key)
                 if (books.isNotEmpty()) {
                     ActiveBases[src.id] = base
                     return SourceResult(src.id, src.name, true, books, "", System.currentTimeMillis() - t0)
@@ -80,7 +88,10 @@ object BookRepo {
                 // 失败要分清楚：站点上真没这本书 ≠ 站点改版解析不出来。
                 // 以前两种情况都甩一句「没认出书籍列表」，看着就像源死了。
                 val rows = Rules.countList(Rules.parse(resp.body).body(), rule.list)
+                val noEcho = key.isNotBlank() && !resp.body.contains(key, ignoreCase = true)
                 lastErr = when {
+                    // 结果页上连搜索词都没有，说明站点把请求甩回了首页/导航页，根本没有搜索结果
+                    noEcho -> "站点搜索不可用（返回的是导航/首页，不是结果页）"
                     rows > 0 -> "站点改版，列表 ${rows} 项但取不到书名"
                     looksLikeNoResult(resp.body) -> "这个站没有这本书"
                     else -> "没搜到这本书"
@@ -156,7 +167,7 @@ object BookRepo {
         ).any { heads.contains(it, ignoreCase = true) }
     }
 
-    private fun parseSearchPage(src: Source, html: String, pageUrl: String, rule: SearchRule): List<Book> {
+    private fun parseSearchPage(src: Source, html: String, pageUrl: String, rule: SearchRule, key: String = ""): List<Book> {
         val doc = Rules.parse(html)
         var rows: List<Map<String, String>> = emptyList()
         if (rule.list.isNotBlank() && rule.fields.isNotEmpty()) {
@@ -179,12 +190,61 @@ object BookRepo {
                 wordCount = row["wordCount"].orEmpty(),
             )
         }
-        if (books.isEmpty() && rule.auto) {
+        // auto 兜底最容易翻车：站点没有搜索结果时，页面上的导航/推荐位也会被当成「书籍列表」，
+        // 于是列表里全是书名不对、点进去是伪目录的条目。要求页面里真出现了搜索词才采纳。
+        val echoKey = key.isBlank() || html.contains(key, ignoreCase = true)
+        if (books.isEmpty() && rule.auto && echoKey) {
             books = Rules.autoList(doc, pageUrl).map {
                 it.copy(sourceId = src.id, sourceName = src.name)
             }
         }
         return books.take(60)
+    }
+
+    /** 一次 meta 取值：property 和 name 两种写法都认 */
+    private fun metaText(doc: org.jsoup.nodes.Document, key: String): String {
+        val el = doc.selectFirst("meta[property=\"$key\"]") ?: doc.selectFirst("meta[name=\"$key\"]")
+            ?: return ""
+        return el.attr("content").replace(Regex("\\s+"), " ").trim()
+    }
+
+    /** 一眼像「书页」：og:type=book，或者标题里写着「最新章节 / 全文阅读」（速读谷的书页标题就是这样） */
+    private fun looksLikeBookPage(doc: org.jsoup.nodes.Document): Boolean {
+        if (metaText(doc, "og:type").equals("book", true)) return true
+        val title = runCatching { doc.title() }.getOrDefault("")
+        return title.contains("最新章节") || title.contains("全文阅读") || title.contains("无弹窗")
+    }
+
+    /**
+     * 有的站拿搜索词一查就直接 302 到书页（速读谷就是这样：搜「凡人修仙传」直接落到 /191/）。
+     * 这时把落地的书页本身当成「唯一一条结果」，比丢一句「没搜到这本书」有用得多。
+     */
+    private fun singleBookFromPage(src: Source, resp: Net.Resp, requestUrl: String, key: String): Book? {
+        val landed = resp.via.ifBlank { requestUrl }
+        if (landed == requestUrl || landed == src.base || landed == src.base + "/") return null
+        val doc = runCatching { Rules.parse(resp.body) }.getOrNull() ?: return null
+        if (!looksLikeBookPage(doc)) return null
+        val pageText = runCatching { doc.body()?.text().orEmpty() }.getOrDefault("")
+        if (key.isNotBlank() && !pageText.contains(key)) return null
+        // og:title 常见形态：《书名》作者著-站名；标题常见形态：书名-站名-作者小说-最新章节…
+        val raw = metaText(doc, "og:novel:book_name")
+            .ifBlank { metaText(doc, "og:title") }
+            .ifBlank { metaText(doc, "title") }
+            .ifBlank { runCatching { doc.selectFirst("h1")?.text().orEmpty() }.getOrDefault("") }
+            .ifBlank { runCatching { doc.title() }.getOrDefault("") }
+        val name = (listOf(Regex("^《(.+?)》"), Regex("^(.+?)[-_|｜（(]"))
+            .firstNotNullOfOrNull { p -> p.find(raw)?.groupValues?.get(1)?.trim()?.takeIf { it.length >= 2 } }
+            ?: raw).replace(Regex("[《》]"), "").trim()
+        if (name.isBlank()) return null
+        return Book(
+            name = name,
+            author = metaText(doc, "og:novel:author").ifBlank { metaText(doc, "author") },
+            cover = metaText(doc, "og:image"),
+            intro = metaText(doc, "og:description").ifBlank { metaText(doc, "description") }.take(400),
+            url = landed,
+            sourceId = src.id,
+            sourceName = src.name,
+        )
     }
 
     /** 详情页：补作者/封面/简介（失败不致命） */
@@ -246,6 +306,22 @@ object BookRepo {
     /** 从一张页面上按规则 / 兜底认出章节列表 */
     internal fun parseTocList(doc: org.jsoup.nodes.Document, pageUrl: String, t: TocRule?): List<Chapter> {
         var list: List<Chapter> = emptyList()
+        val skipVol = t?.skipVolume?.takeIf { it.isNotBlank() }?.let { runCatching { Regex(it) }.getOrNull() }
+
+        /** 这个章节属于哪一卷：往上找几层，看前一个兄弟是不是卷标题（SF 是 div.mulu > div.Content_Frame > ul.mulu_list > a） */
+        fun volumeOf(el: org.jsoup.nodes.Element): String {
+            val sel = t?.volume.orEmpty()
+            if (sel.isBlank()) return ""
+            var n: org.jsoup.nodes.Element? = el
+            var depth = 0
+            while (n != null && depth++ < 5) {
+                val prev = n.previousElementSibling()
+                if (prev != null && runCatching { prev.`is`(sel) }.getOrDefault(false))
+                    return prev.text().replace(Regex("\\s+"), " ").trim()
+                n = n.parent()
+            }
+            return ""
+        }
 
         if (t != null && t.list.isNotBlank()) {
             for (branch in t.list.split("||")) {
@@ -254,6 +330,8 @@ object BookRepo {
                 val elements = runCatching { doc.select(sel) }.getOrDefault(emptyList())
                 if (elements.isEmpty()) continue
                 val parsed = elements.mapIndexedNotNull { idx, el ->
+                    // 整卷都是插图/人设的话（SF 每本书几乎都有），这一卷的章节一个都不要
+                    if (skipVol != null && skipVol.containsMatchIn(volumeOf(el))) return@mapIndexedNotNull null
                     val target = if (el.tagName().equals("a", true)) el else el.selectFirst("a") ?: el
                     val name = when {
                         t.name.isBlank() || t.name == "@text" || t.name == "text" ->
@@ -288,13 +366,16 @@ object BookRepo {
             val auto = Rules.autoList(doc, pageUrl, chapterMode = true)
             if (auto.size >= 2) list = auto.mapIndexed { i, b -> Chapter(b.name, b.url, i) }
         }
-        // 去重 + 去导航
+        // 去重 + 去导航 + 去读不了的章节（插图页/人设页这类只有图片的章节，规则里用 skip 指定）
         val nav = setOf("上一页", "下一页", "首页", "尾页", "目录", "返回", "加入书签", "上一章", "下一章")
+        val skip = t?.skip?.takeIf { it.isNotBlank() }?.let { runCatching { Regex(it) }.getOrNull() }
         val seen = HashSet<String>()
-        return list.filter { c ->
-            if (c.name in nav) return@filter false
-            if (!seen.add(c.url)) return@filter false
-            true
+        var idx = 0
+        return list.mapNotNull { c ->
+            if (c.name in nav) return@mapNotNull null
+            if (!seen.add(c.url)) return@mapNotNull null
+            if (skip != null && skip.containsMatchIn(c.name)) return@mapNotNull null
+            c.copy(index = idx++)
         }
     }
 
@@ -344,7 +425,16 @@ object BookRepo {
                 }
             }
         }
-        if (list.isEmpty()) return Result.failure(Exception("没认出章节目录，可能这站改版了"))
+        if (list.isEmpty()) {
+            // 正文区几乎没字、脚本却一大把：这站的目录是前端渲染出来的，静态抓永远拿不到
+            val textLen = runCatching {
+                doc.body()?.text()?.replace(Regex("\\s"), "")?.length ?: 0
+            }.getOrDefault(0)
+            val scripts = runCatching { doc.select("script").size }.getOrDefault(0)
+            if (textLen < 400 && scripts >= 3)
+                return Result.failure(Exception("这站的目录靠 JS 渲染，App 抓静态页面拿不到（起点这类站点都这样），换别的源搜同名书吧"))
+            return Result.failure(Exception("没认出章节目录，可能这站改版了"))
+        }
         // 认出来的东西跟书籍页同形（/b/123/ 对 /b/456/）说明抓的是书页上的推荐书单，不是章节
         if (!tocLooksReal(book.url, list))
             return Result.failure(Exception("这页上认不出章节目录（抓到的是书籍列表），可能这站改版了"))
@@ -472,6 +562,12 @@ object BookRepo {
                 return Result.failure(Exception("这章是源站的付费/VIP 章节，得先在源站登录购买才能看，建议换个源搜同名书"))
             if (isErrorPage(doc))
                 return Result.failure(Exception("源站返回「暂时无法访问」（该老书在手机站未开放或已下线），建议换个源搜同名书"))
+            // 正文区里只有图片：插图画/人设页这类章节（SF 每本书开头常有好几章），阅读器只排文字，怎么抓都是空的
+            // 只数「取到的正文块」里的 img：html 为空时整页数会把站标/广告图也算进去，误判成插图章
+            val imgs = if (html.isBlank()) 0
+            else Regex("<img", RegexOption.IGNORE_CASE).findAll(html).count()
+            if (imgs > 0)
+                return Result.failure(Exception("这章是插图/图片章（正文全是图片），App 只显示文字，翻到下一章看正文吧"))
         }
         if (html.isBlank()) {
             if (isErrorPage(doc))
@@ -508,6 +604,8 @@ object BookRepo {
         if (len < 120) {
             if (isErrorPage(doc))
                 return Result.failure(Exception("源站返回「暂时无法访问」（该老书在手机站未开放或已下线），建议换个源搜同名书"))
+            if (len == 0)
+                return Result.failure(Exception("源站这一章是空的（有的站把同一章挂了两条，其中一条只有标题），翻到下一章吧"))
             if (doc.select("a[href]").size >= 12)
                 return Result.failure(Exception("抓到的这页是书籍页/目录页，不是正文，可能这站改版了"))
             return Result.failure(Exception("正文内容过短（仅 ${len} 字），可能触发源站拦截或防盗提示"))
@@ -539,6 +637,9 @@ object BookRepo {
      */
     fun tocLooksReal(bookUrl: String, chapters: List<Chapter>): Boolean {
         if (chapters.isEmpty()) return false
+        // 章节名大量重复 = 抓到的是站点导航/栏目菜单（「手机小说」「全部小说」这类），不是章节
+        val distinct = chapters.map { it.name }.distinct().size
+        if (chapters.size >= 8 && distinct * 3 < chapters.size) return false
         if (chapters.size >= 15) return true
         val bookShape = shapeOf(bookUrl)
         if (bookShape.isBlank()) return true
@@ -626,11 +727,33 @@ object BookRepo {
             .getOrElse { return Triple(true, "目录：${it.message}", "") }
         val list = toc.getOrElse { return Triple(true, "目录：${it.message}", "") }
         if (list.chapters.size < 2) return Triple(true, "目录：只认出 ${list.chapters.size} 章", "")
-        val ch = runCatching { getChapter(src, list.chapters.first()) }
-            .getOrElse { return Triple(true, "目录 ${list.chapters.size} 章 · 正文：${it.message}", "") }
-        val c = ch.getOrElse { return Triple(true, "目录 ${list.chapters.size} 章 · 正文：${it.message}", "") }
-        val n = c.text.count { !it.isWhitespace() }
-        return Triple(true, "目录 ${list.chapters.size} 章 · 正文 ${n} 字", "")
+        // 目录开头常有插图页/人设页/公告，本来就没有正文可抓。只测第一章会把好源误判成
+        // 「正文内容过短」（SF 之前就是这么被冤枉的）。第一章不行就补测中间、四分之一处：
+        // 中间的章节几乎不可能是插图页，能真实反映这个源到底给不给正文。
+        val probes = listOfNotNull(
+            list.chapters.firstOrNull(),
+            list.chapters.getOrNull(list.chapters.size / 2),
+            list.chapters.getOrNull(list.chapters.size / 4),
+        ).distinctBy { it.url }
+        var lastErr = ""
+        var tried = 0
+        for (ch in probes) {
+            tried++
+            val res = runCatching { getChapter(src, ch) }
+            val out = res.getOrNull()?.getOrNull()
+            if (out == null) {
+                val e = res.getOrNull()?.exceptionOrNull() ?: res.exceptionOrNull()
+                lastErr = e?.message ?: "正文取不到"
+                continue
+            }
+            val n = out.text.count { !it.isWhitespace() }
+            if (n >= 120) {
+                val where = if (tried == 1) "" else "（换到第 ${ch.index + 1} 章试的）"
+                return Triple(true, "目录 ${list.chapters.size} 章 · 正文 $n 字$where", "")
+            }
+            lastErr = "正文内容过短（仅 $n 字）"
+        }
+        return Triple(true, "目录 ${list.chapters.size} 章 · 正文：${lastErr.ifBlank { "抽了 $tried 章都取不到正文" }}", "")
     }
 
     private val failedUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()

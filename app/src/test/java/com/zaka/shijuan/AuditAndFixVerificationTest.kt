@@ -355,7 +355,79 @@ class AuditAndFixVerificationTest {
         val def = Sources.defaultEnabled
         assertTrue(def.contains("biqugese"))
         assertTrue(def.contains("sfacg"))
+        assertTrue("17K 是替换起点之后的可用正版源，应默认开启", def.contains("17k"))
+        assertTrue("速读谷搜索重定向已适配，应默认开启", def.contains("sudugu"))
+        assertNull("起点全站 JS 渲染，静态抓不到目录和正文，源已下线", Sources.byId("qidian"))
         assertFalse("novel8 requires JS rendering for chapter text and should not be enabled by default", def.contains("novel8"))
         assertFalse("ptwxz rule is fragile and should not be enabled by default", def.contains("ptwxz"))
+    }
+
+    // ─────────── 书源回归（联网）：对应「很多源刷不到正文 / SF 有目录没正文 / 有源抓不到目录」三类报障 ───────────
+
+    @Test
+    fun testSfTocSkipsImageChaptersAndBodyReadable() {
+        val src = Sources.byId("sfacg")!!
+        val res = BookRepo.searchSource(src, "魔王")
+        assertTrue("SF 搜索应该能用：${res.error}", res.ok && res.books.isNotEmpty())
+        val toc = BookRepo.getToc(src, res.books.first()).getOrNull()
+        assertNotNull("SF 目录应该能抓到", toc)
+        val chapters = toc!!.chapters
+        assertTrue("SF 目录至少应有几十章，实际 ${chapters.size}", chapters.size > 20)
+        assertTrue(
+            "插图/人设章不该再占目录开头：${chapters.take(6).map { it.name }}",
+            chapters.take(6).none { Regex("插图|插画|人设|图集|设定集").containsMatchIn(it.name) },
+        )
+        val first = chapters.first()
+        val content = BookRepo.getChapter(src, first)
+        assertTrue(
+            "SF 目录第一章「${first.name}」应有正文：${content.exceptionOrNull()?.message}",
+            content.isSuccess && content.getOrNull()!!.text.length > 200,
+        )
+    }
+
+    @Test
+    fun testSuduguSearchResolvesRedirectedBookPage() {
+        val src = Sources.byId("sudugu")!!
+        // 速读谷是台慢机器，搜索 POST 偶尔会超时；这里重试两轮，测的是「302 到书页能不能认出来」，不是站点可用性
+        var res = BookRepo.searchSource(src, "凡人修仙传")
+        repeat(2) {
+            if (!res.ok || res.books.isEmpty()) {
+                Thread.sleep(1500)
+                res = BookRepo.searchSource(src, "凡人修仙传")
+            }
+        }
+        assertTrue("速读谷搜索应把 302 落地的书页当成结果：${res.error}", res.ok && res.books.isNotEmpty())
+        val book = res.books.first()
+        assertTrue("取到的应该是书而不是章节页：${book.name} ${book.url}",
+            book.name.contains("凡人修仙传") && Regex("/\\d+/$").containsMatchIn(book.url))
+        val tocRes = BookRepo.getToc(src, book)
+        assertNotNull("书页上应能认出目录：${tocRes.exceptionOrNull()?.message}", tocRes.getOrNull())
+        assertTrue("目录章数 ${tocRes.getOrNull()!!.chapters.size}", tocRes.getOrNull()!!.chapters.size > 100)
+    }
+
+    @Test
+    fun testHealthDeepSamplesPastImageChapters() {
+        val (ok, detail, _) = BookRepo.healthDeep(Sources.byId("sfacg")!!)
+        assertTrue("SF 体检应通过，实际：$detail", ok)
+        assertTrue("SF 体检应报出正文字数，实际：$detail", detail.contains("正文") && Regex("正文 \\d+ 字").containsMatchIn(detail))
+        assertFalse("SF 体检不该再把插图章判成正文过短：$detail", detail.contains("正文内容过短"))
+    }
+
+    @Test
+    fun test17kSourceEndToEnd() {
+        val src = Sources.byId("17k")!!
+        val res = BookRepo.searchSource(src, "近战狂兵")
+        assertTrue("17K 搜索应该能用：${res.error}", res.ok && res.books.isNotEmpty())
+        val book = res.books.firstOrNull { it.name.contains("近战狂兵") }
+        assertNotNull("17K 搜索结果里应有《近战狂兵》：${res.books.map { it.name }}", book)
+        val tocRes = BookRepo.getToc(src, book!!)
+        val toc = tocRes.getOrNull()
+        assertNotNull("17K 目录（/list/{id}.html）应能抓到：${tocRes.exceptionOrNull()?.message}", toc)
+        assertTrue("目录章数 ${toc!!.chapters.size}", toc.chapters.size > 100)
+        val content = BookRepo.getChapter(src, toc.chapters.first())
+        assertTrue(
+            "17K 正文应能取到：${content.exceptionOrNull()?.message}",
+            content.isSuccess && content.getOrNull()!!.text.length > 300,
+        )
     }
 }

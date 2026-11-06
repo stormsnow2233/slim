@@ -370,18 +370,23 @@ class Store(context: Context) {
     fun clearHistory() = sp.edit().remove("history").apply()
 
     // ── 书源开关 ──
+    // key 升级到 v4：书源表动过（起点下线换成 17K、速读谷修好、SF 修好），
+    // 老用户存的开关里可能还带着已经删掉的 id，换 key 让「推荐默认」重新生效一次，
+    // 顺便把不存在的源过滤掉，免得列表里出现空白卡片。
     fun enabledSources(): Set<String> {
-        val s = sp.getString("enabled_sources_v3", null) ?: return Sources.defaultEnabled
+        val s = sp.getString("enabled_sources_v4", null) ?: return Sources.defaultEnabled
         return runCatching {
             val a = JSONArray(s)
-            (0 until a.length()).map { a.getString(it) }.toSet()
+            (0 until a.length()).map { a.getString(it) }
+                .filter { id -> Sources.ALL.any { it.id == id } }
+                .toSet()
         }.getOrDefault(Sources.defaultEnabled)
     }
 
     fun setSourceEnabled(id: String, on: Boolean): Set<String> {
         val cur = enabledSources().toMutableSet()
         if (on) cur.add(id) else cur.remove(id)
-        sp.edit().putString("enabled_sources_v3", JSONArray(cur.toList()).toString()).apply()
+        sp.edit().putString("enabled_sources_v4", JSONArray(cur.toList()).toString()).apply()
         return cur
     }
 

@@ -69,7 +69,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
             val targets = listOf(
                 "笔趣书阁" to "https://www.biqugese.com/",
                 "无限轻小说" to "https://www.8novel.com/",
-                "起点中文网" to "https://www.qidian.com/",
+                "17K小说网" to "https://www.17k.com/",
                 "SF轻小说" to "https://m.sfacg.com/",
             )
             val acc = ArrayList<Triple<String, Boolean, String>>()
