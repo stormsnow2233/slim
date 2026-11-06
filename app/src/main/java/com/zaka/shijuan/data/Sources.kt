@@ -34,8 +34,10 @@ data class TocRule(
     val list: String = "",
     val name: String = "@text",
     val url: String = "@href",
-    // 目录页地址模板：{id} = 书号，{book} = 原书页。留空表示目录就在书页里
+    // 目录页地址模板：{id} = 书号，{idk} = 书号/1000，{book} = 原书页。留空表示目录就在书页里
     val page: String = "",
+    // 从书籍详情页提取目录页链接的选择器（如 "a:contains(小说目录)@href"），留空表示不单独提取
+    val link: String = "",
     // 章节名正则：命中的章节直接不进目录。用于站点把插图页/人设页当成章节列出来的情况
     // （这些章节正文只有图片，阅读器只显示文字，点进去必然空白）
     val skip: String = "",
@@ -315,19 +317,21 @@ object Sources {
 
         Source(
             id = "wenku8", name = "轻小说文库", group = "轻小说",
-            base = "https://www.wenku8.net",
-            mirrors = listOf("http://www.wenku8.cc", "https://www.wenku8.cc"),
+            base = "https://www.wenku8.cc",
+            mirrors = listOf("http://www.wenku8.cc", "https://www.wenku8.net"),
             charset = "gbk", status = "verified",
             note = "双载点直连 + 官方整本打包，收录日本轻小说与插图",
             search = SearchRule(
                 url = "/modules/article/search.php?searchtype=articlename&searchkey={key}",
                 keyCharset = "gbk",
-                list = "table.css tr:has(td.ccss), table.grid tr, .grid tr",
+                list = "#content table td > div, table td > div[style*='width'], table.grid tr, .grid tr",
                 fields = mapOf(
-                    "name" to "td:nth-child(1) a@text || td:nth-child(2) a@text",
-                    "bookUrl" to "td:nth-child(1) a@href || td:nth-child(2) a@href",
-                    "author" to "td:nth-child(3)@text",
-                    "latest" to "td:nth-child(2) a@text || td:nth-child(4) a@text",
+                    "name" to "div:nth-of-type(2) b a@title || div:nth-of-type(2) a@title || div:nth-of-type(2) b a@text || div:nth-of-type(2) a@text || td:nth-child(1) a@text || td:nth-child(2) a@text",
+                    "bookUrl" to "div:nth-of-type(2) b a@href || div:nth-of-type(2) a@href || div:nth-of-type(1) a@href || td:nth-child(1) a@href || td:nth-child(2) a@href",
+                    "author" to "div:nth-of-type(2) p:contains(作)@text || div:nth-of-type(2) p:contains(文)@text || div:nth-of-type(2) p:nth-of-type(1)@text || td:nth-child(3)@text",
+                    "cover" to "div:nth-of-type(1) img@src || img@src",
+                    "latest" to "div:nth-of-type(2) p:contains(日)@text || td:nth-child(2) a@text || td:nth-child(4) a@text",
+                    "intro" to "div:nth-of-type(2) p:contains(介)@text || div:nth-of-type(2) p:nth-of-type(4)@text",
                 ),
                 auto = true,
             ),
@@ -338,6 +342,8 @@ object Sources {
                 intro = "#intro@text || .intro@text || td:contains(内容简介)@text"
             ),
             toc = TocRule(
+                page = "/novel/{idk}/{id}/index.htm",
+                link = "a:contains(小说目录)@href",
                 list = "table.css td.ccss a, table.css td a, td.ccss a, .chapter_list a",
                 name = "@text",
                 url = "@href",

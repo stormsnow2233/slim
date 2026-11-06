@@ -235,7 +235,7 @@ object Rules {
         val d = Jsoup.parse("<div id=\"__wrap\">$html</div>")
         val wrap = d.getElementById("__wrap") ?: return html
         for (el in wrap.select("p, div, span")) {
-            if (el.selectFirst("p, div") == null) {
+            if (el.children().select("p, div").isEmpty()) {
                 val t = el.text().trim()
                 if (t.isNotEmpty() && t.length < 70 && AD.containsMatchIn(t)) el.remove()
             }

@@ -54,6 +54,8 @@ fun SearchScreen(
     var history by remember { mutableStateOf(store.history()) }
     var showStates by remember { mutableStateOf(false) }
     var filterSource by remember { mutableStateOf<String?>(null) }
+    var searchSeq by remember { mutableStateOf(0) }
+    var searchJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     val focus = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
@@ -63,7 +65,7 @@ fun SearchScreen(
 
     fun doSearch(k: String) {
         val key = k.trim()
-        if (key.isEmpty() || running) return
+        if (key.isEmpty()) return
         focus.clearFocus()
         keyword = key
         searched = key
@@ -72,29 +74,38 @@ fun SearchScreen(
         results = emptyMap()
         filterSource = null
         running = true
-        scope.launch {
+        searchJob?.cancel()
+        val currentSeq = ++searchSeq
+        searchJob = scope.launch {
             val acc = HashMap<String, SourceResult>()
             withContext(Dispatchers.IO) {
                 BookRepo.searchAll(activeSources, key) { r ->
-                    synchronized(acc) { acc[r.sourceId] = r }
-                    results = acc.toMap()
+                    if (searchSeq == currentSeq) {
+                        synchronized(acc) { acc[r.sourceId] = r }
+                        results = acc.toMap()
+                    }
                 }
             }
-            running = false
+            if (searchSeq == currentSeq) {
+                running = false
+            }
         }
     }
 
     /** 单个源单独重搜：哪个不通点哪个，不用整轮重来 */
     fun retrySource(src: Source) {
-        if (running || searched.isBlank()) return
+        if (searched.isBlank()) return
         running = true
+        val currentSeq = searchSeq
         scope.launch {
             val r = withContext(Dispatchers.IO) {
                 runCatching { BookRepo.searchSource(src, searched) }
                     .getOrElse { SourceResult(src.id, src.name, false, error = Net.friendlyError(it)) }
             }
-            results = results + (src.id to r)
-            running = false
+            if (searchSeq == currentSeq) {
+                results = results + (src.id to r)
+                running = false
+            }
         }
     }
 

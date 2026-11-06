@@ -20,10 +20,18 @@ android {
 
     signingConfigs {
         create("release") {
-            storeFile = file("../keystore/shijuan.jks")
-            storePassword = "shijuan"
-            keyAlias = "shijuan"
-            keyPassword = "shijuan"
+            val keyPath = System.getenv("KEYSTORE_PATH") ?: project.findProperty("KEYSTORE_PATH")?.toString() ?: "../keystore/shijuan.jks"
+            val storePass = System.getenv("KEYSTORE_PASSWORD") ?: project.findProperty("KEYSTORE_PASSWORD")?.toString() ?: "shijuan"
+            val keyAliasName = System.getenv("KEY_ALIAS") ?: project.findProperty("KEY_ALIAS")?.toString() ?: "shijuan"
+            val keyPass = System.getenv("KEY_PASSWORD") ?: project.findProperty("KEY_PASSWORD")?.toString() ?: "shijuan"
+
+            val kFile = file(keyPath)
+            if (kFile.exists()) {
+                storeFile = kFile
+                storePassword = storePass
+                keyAlias = keyAliasName
+                keyPassword = keyPass
+            }
         }
     }
 
@@ -31,11 +39,14 @@ android {
         release {
             isMinifyEnabled = false
             isShrinkResources = false
-            signingConfig = signingConfigs.getByName("release")
+            val relSigning = signingConfigs.getByName("release")
+            if (relSigning.storeFile != null && relSigning.storeFile!!.exists()) {
+                signingConfig = relSigning
+            }
             proguardFiles(getDefaultProguardFile("proguard-android-optimize.txt"), "proguard-rules.pro")
         }
         debug {
-            signingConfig = signingConfigs.getByName("release")
+            // 使用标准 Android Debug 签名，避免 Debug 与 Release 密钥混用
         }
     }
 

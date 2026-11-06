@@ -49,6 +49,27 @@ object Net {
         val usable: Boolean get() = enabled && host.isNotBlank() && port in 1..65535
     }
 
+    private val cookieStore = ConcurrentHashMap<String, MutableList<okhttp3.Cookie>>()
+
+    /** 全局 CookieJar：支持需会话验证与动态 Cookie 保持的书源站点 */
+    val cookieJar = object : okhttp3.CookieJar {
+        override fun saveFromResponse(url: okhttp3.HttpUrl, cookies: List<okhttp3.Cookie>) {
+            if (cookies.isEmpty()) return
+            val list = cookieStore.getOrPut(url.host) { java.util.concurrent.CopyOnWriteArrayList() }
+            for (cookie in cookies) {
+                list.removeAll { it.name == cookie.name }
+                list.add(cookie)
+            }
+        }
+
+        override fun loadForRequest(url: okhttp3.HttpUrl): List<okhttp3.Cookie> {
+            val list = cookieStore[url.host] ?: return emptyList()
+            val now = System.currentTimeMillis()
+            list.removeAll { it.expiresAt < now }
+            return list
+        }
+    }
+
     @Volatile private var proxyCfg = ProxyCfg()
 
     @Volatile private var client: OkHttpClient = buildClient(ProxyCfg())
@@ -72,6 +93,7 @@ object Net {
     private fun buildClient(cfg: ProxyCfg): OkHttpClient {
         val b = OkHttpClient.Builder()
             .dispatcher(dispatcher)
+            .cookieJar(cookieJar)
             .connectionPool(ConnectionPool(28, 6, TimeUnit.MINUTES))
             .connectTimeout(5, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
@@ -89,6 +111,7 @@ object Net {
     private fun buildFastClient(cfg: ProxyCfg): OkHttpClient {
         val b = OkHttpClient.Builder()
             .dispatcher(dispatcher)
+            .cookieJar(cookieJar)
             .connectionPool(ConnectionPool(16, 3, TimeUnit.MINUTES))
             .connectTimeout(8, TimeUnit.SECONDS)
             .readTimeout(10, TimeUnit.SECONDS)
@@ -106,6 +129,7 @@ object Net {
     private fun buildSlowClient(cfg: ProxyCfg): OkHttpClient {
         val b = OkHttpClient.Builder()
             .dispatcher(slowDispatcher)
+            .cookieJar(cookieJar)
             .connectionPool(ConnectionPool(8, 5, TimeUnit.MINUTES))
             .connectTimeout(12, TimeUnit.SECONDS)
             .readTimeout(35, TimeUnit.SECONDS)

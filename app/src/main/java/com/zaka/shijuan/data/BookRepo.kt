@@ -29,9 +29,20 @@ object BookRepo {
     private fun fill(tpl: String, key: String, charset: String = "utf-8"): String =
         tpl.replace("{key}", enc(key, if (charset.contains("gb")) "GBK" else "UTF-8"))
 
+    private val sourceSearchLast = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
     /** 搜索单个书源 —— 依次尝试镜像与备用路径 */
     fun searchSource(src: Source, key: String): SourceResult {
         val t0 = System.currentTimeMillis()
+        if (src.id == "wenku8") {
+            val now = System.currentTimeMillis()
+            val last = sourceSearchLast[src.id] ?: 0L
+            val elapsed = now - last
+            if (elapsed in 0..5999) {
+                runCatching { Thread.sleep(6000L - elapsed) }
+            }
+            sourceSearchLast[src.id] = System.currentTimeMillis()
+        }
         if (src.apiKind == "zlib") {
             val r = Zlib.search(key)
             return SourceResult(
@@ -52,6 +63,15 @@ object BookRepo {
         val ordered = if (known != null && src.bases.contains(known))
             listOf(known) + src.bases.filter { it != known } else src.bases
         for (base in ordered) {
+            if (base != ordered.first() && src.id == "wenku8") {
+                val now = System.currentTimeMillis()
+                val last = sourceSearchLast[src.id] ?: 0L
+                val elapsed = now - last
+                if (elapsed in 0..5999) {
+                    runCatching { Thread.sleep(6000L - elapsed) }
+                }
+                sourceSearchLast[src.id] = System.currentTimeMillis()
+            }
             val urls = buildList {
                 add(fill(rule.url, key, keyCharset))
                 rule.extraUrls.forEach { add(fill(it, key, keyCharset)) }
@@ -150,11 +170,12 @@ object BookRepo {
         else -> "https://rs.sfacg.com/web/novel/images/NovelCover/Big/" + path
     }
 
-    /** 把目录页模板里的 {id}/{book} 换成真值 */
+    /** 把目录页模板里的 {id}/{idk}/{book} 换成真值 */
     private fun fillTocPage(tpl: String, bookUrl: String): String {
         val id = Regex("/(?:b|Novel|book|info)/(\\d+)").find(bookUrl)?.groupValues?.get(1)
             ?: Regex("(\\d{3,})").find(bookUrl)?.groupValues?.get(1).orEmpty()
-        return tpl.replace("{book}", bookUrl).replace("{id}", id)
+        val idk = (id.toLongOrNull()?.let { it / 1000 } ?: 0).toString()
+        return tpl.replace("{book}", bookUrl).replace("{id}", id).replace("{idk}", idk)
     }
 
     /** 页面里明确写了「没有结果」这类话，就说明是站点上没这本书，不是我们解析坏了 */
@@ -432,6 +453,28 @@ object BookRepo {
         var pageUrl = resp.via.ifBlank { tocUrl }
         var list = parseTocList(doc, pageUrl, t)
 
+        // 若当前页尚未解析出目录（如搜索结果直接落到详情页），尝试按 link 规则或「小说目录」链接跳转真实章节页
+        if (list.size < 2) {
+            val linkSel = t?.link?.ifBlank { "a:contains(小说目录), a:contains(完整目录), a:contains(章节目录)" }
+                ?: "a:contains(小说目录), a:contains(完整目录), a:contains(章节目录)"
+            val linkTarget = if (linkSel.contains("@")) Rules.extract(doc, linkSel, pageUrl).ifBlank { null }
+            else doc.selectFirst(linkSel)?.let { it.attr("href").ifBlank { it.attr("data-href") } }
+            if (!linkTarget.isNullOrBlank()) {
+                val absLink = Rules.absUrl(pageUrl, linkTarget)
+                if (absLink != pageUrl) {
+                    val rLink = Net.get(absLink, src.charset, base + "/", useCache = true)
+                    if (rLink.ok) {
+                        val dLink = Rules.parse(rLink.body)
+                        val pLink = rLink.via.ifBlank { absLink }
+                        val lLink = parseTocList(dLink, pLink, t)
+                        if (lLink.size >= 2) {
+                            doc = dLink; pageUrl = pLink; list = lLink
+                        }
+                    }
+                }
+            }
+        }
+
         // 目录页认不出来（页面换版 / 认成推荐书单），换书页再认一遍
         if ((list.size < 2 || !tocLooksReal(book.url, list)) && pageUrl != book.url) {
             val r2 = Net.get(book.url, src.charset, base + "/", useCache = true)
@@ -445,6 +488,8 @@ object BookRepo {
             }
         }
         if (list.isEmpty()) {
+            if (isTakenDownPage(doc, ""))
+                return Result.failure(Exception("该书已下架（源站因版权或作者要求已停止提供在线阅读）"))
             // 正文区几乎没字、脚本却一大把：这站的目录是前端渲染出来的，静态抓永远拿不到
             val textLen = runCatching {
                 doc.body()?.text()?.replace(Regex("\\s"), "")?.length ?: 0
@@ -617,6 +662,8 @@ object BookRepo {
         val len = text.replace(Regex("\\s"), "").length
         // 一百字以下且没有插图的通常不是正文：要么被拦，要么抓到的是书页/推荐列表那几行字
         if (len < 120 && !hasImages) {
+            if (isTakenDownPage(doc, text))
+                return Result.failure(Exception("该书已下架（源站因版权或作者要求已停止提供在线阅读）"))
             if (isErrorPage(doc))
                 return Result.failure(Exception("源站返回「暂时无法访问」（该老书在手机站未开放或已下线），建议换个源搜同名书"))
             if (len == 0)
@@ -631,6 +678,12 @@ object BookRepo {
     // ─────────── 目录 / 正文的兜底识别 ───────────
     // 站点改版后规则选择器往往整套失效，这里用「候选清单 + 打分」硬认出目录和正文，
     // 只要页面结构别太离谱，就不用等发新版才能看。
+
+    /** 是否是源站版权下架提示页 */
+    fun isTakenDownPage(doc: org.jsoup.nodes.Document, text: String = ""): Boolean {
+        val full = (doc.title() + " " + (doc.body()?.text().orEmpty()) + " " + text).lowercase()
+        return listOf("已下架", "下架处理", "停止提供", "版权原因", "因版权", "暂时下架", "内容已被删除", "作品已被下架", "停止在线阅读").any { full.contains(it) }
+    }
 
     /** 源站自己吐的出错页（不是我们解析失败），提示要说准，别让人以为软件坏了 */
     private fun isErrorPage(doc: org.jsoup.nodes.Document): Boolean {
@@ -724,7 +777,7 @@ object BookRepo {
     fun health(src: Source): SourceResult {
         val key = when {
             src.apiKind == "sfacg" -> "魔王"
-            src.group.contains("轻小说") -> "邻家天使"
+            src.group.contains("轻小说") -> "魔王"
             else -> "凡人修仙传"
         }
         return searchSource(src, key)
