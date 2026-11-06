@@ -239,6 +239,7 @@ private fun SourceCard(
                     overflow = TextOverflow.Ellipsis,
                     lineHeight = 16.sp,
                 )
+                val metrics = com.zaka.shijuan.data.BookRepo.sourceMetrics[src.id]
                 if (check != null) {
                     Spacer(Modifier.height(5.dp))
                     val bg = when (check.status) {
@@ -263,11 +264,32 @@ private fun SourceCard(
                             .background(bg)
                             .padding(horizontal = 7.dp, vertical = 3.dp)
                     ) {
+                        val rateStr = if (metrics != null && metrics.totalRequests > 0) " · 成功率 ${(metrics.overallSuccessRate * 100).toInt()}%" else ""
                         Text(
-                            if (check.ok) "可用 · ${check.error.ifBlank { "${check.books.size} 本 · ${check.ms}ms" }}"
-                            else "${check.status.label} · ${check.error}",
+                            (if (check.ok) "可用 · ${check.error.ifBlank { "${check.books.size} 本 · ${check.ms}ms" }}"
+                            else "${check.status.label} · ${check.error}") + rateStr,
                             fontSize = 10.sp,
                             color = fg,
+                        )
+                    }
+                } else if (metrics != null && metrics.totalRequests > 0) {
+                    Spacer(Modifier.height(5.dp))
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
+                            .padding(horizontal = 7.dp, vertical = 3.dp)
+                    ) {
+                        val searchRate = if (metrics.searchTotal > 0) "搜 ${(metrics.searchSuccessRate * 100).toInt()}% " else ""
+                        val tocRate = if (metrics.tocTotal > 0) "目 ${(metrics.tocSuccessRate * 100).toInt()}% " else ""
+                        val contentRate = if (metrics.contentTotal > 0) "文 ${(metrics.contentSuccessRate * 100).toInt()}%" else ""
+                        val subRates = "$searchRate$tocRate$contentRate".trim()
+                        val extra = if (subRates.isNotBlank()) " ($subRates)" else ""
+                        val failWarn = if (metrics.consecutiveFailures > 0) " · 连败 ${metrics.consecutiveFailures}" else ""
+                        Text(
+                            "请求 ${metrics.totalRequests} 次 · 成功率 ${(metrics.overallSuccessRate * 100).toInt()}%$extra$failWarn",
+                            fontSize = 10.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
                 }

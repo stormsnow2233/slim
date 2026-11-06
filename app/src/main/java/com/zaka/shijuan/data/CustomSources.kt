@@ -83,9 +83,21 @@ object CustomSources {
         put("id", s.id)
         put("name", s.name)
         put("base", s.base)
+        if (s.mirrors.isNotEmpty()) {
+            put("mirrors", JSONArray(s.mirrors))
+        }
         put("charset", s.charset)
         put("group", s.group)
+        put("status", s.status)
         put("note", s.note)
+        if (s.apiKind.isNotBlank()) put("apiKind", s.apiKind)
+        if (s.enabledByDefault) put("enabledByDefault", s.enabledByDefault)
+        if (s.probeKeyword.isNotBlank()) put("probeKeyword", s.probeKeyword)
+        if (s.probeUrl.isNotBlank()) put("probeUrl", s.probeUrl)
+        if (s.probeMode.isNotBlank() && s.probeMode != "SEARCH") put("probeMode", s.probeMode)
+        if (s.userAgent.isNotBlank()) put("userAgent", s.userAgent)
+        if (s.renderMode != "HTTP") put("renderMode", s.renderMode)
+
         s.search?.let { r ->
             put("search", JSONObject().apply {
                 put("url", r.url)
@@ -94,6 +106,7 @@ object CustomSources {
                 put("list", r.list)
                 put("auto", r.auto)
                 put("keyCharset", r.keyCharset)
+                if (r.extraUrls.isNotEmpty()) put("extraUrls", JSONArray(r.extraUrls))
                 put("fields", JSONObject().apply { r.fields.forEach { (k, v) -> put(k, v) } })
             })
         }
@@ -107,6 +120,12 @@ object CustomSources {
             put("toc", JSONObject().apply {
                 put("list", t.list); put("name", t.name)
                 put("url", t.url); put("page", t.page)
+                if (t.link.isNotBlank()) put("link", t.link)
+                if (t.skip.isNotBlank()) put("skip", t.skip)
+                if (t.volume.isNotBlank()) put("volume", t.volume)
+                if (t.skipVolume.isNotBlank()) put("skipVolume", t.skipVolume)
+                if (t.nextPage.isNotBlank()) put("nextPage", t.nextPage)
+                if (t.maxPages != 50) put("maxPages", t.maxPages)
             })
         }
         s.content?.let { c ->
@@ -135,6 +154,16 @@ object CustomSources {
             o.optString("bookSourceName").ifBlank { runCatching { java.net.URI(base).host }.getOrDefault("自定义源") }
         }.trim()
 
+        val mirrors = buildList {
+            val arr = o.optJSONArray("mirrors")
+            if (arr != null) {
+                for (i in 0 until arr.length()) {
+                    val m = arr.optString(i).trim()
+                    if (m.isNotBlank()) add(m)
+                }
+            }
+        }
+
         val searchO = o.optJSONObject("search")
         val ruleSearch = o.optJSONObject("ruleSearch")
         val search = when {
@@ -145,6 +174,15 @@ object CustomSources {
                 list = searchO.optString("list"),
                 fields = fieldsOf(searchO.optJSONObject("fields")),
                 auto = searchO.optBoolean("auto", searchO.optString("list").isBlank()),
+                extraUrls = buildList {
+                    val arr = searchO.optJSONArray("extraUrls")
+                    if (arr != null) {
+                        for (i in 0 until arr.length()) {
+                            val u = arr.optString(i).trim()
+                            if (u.isNotBlank()) add(u)
+                        }
+                    }
+                },
                 keyCharset = searchO.optString("keyCharset", "utf-8"),
             )
             ruleSearch != null -> SearchRule(
@@ -185,12 +223,22 @@ object CustomSources {
         val ruleToc = o.optJSONObject("ruleToc")
         val toc = when {
             tocO != null -> TocRule(
-                tocO.optString("list"), tocO.optString("name", "@text"),
-                tocO.optString("url", "@href"), tocO.optString("page"),
+                list = tocO.optString("list"),
+                name = tocO.optString("name", "@text"),
+                url = tocO.optString("url", "@href"),
+                page = tocO.optString("page"),
+                link = tocO.optString("link"),
+                skip = tocO.optString("skip"),
+                volume = tocO.optString("volume"),
+                skipVolume = tocO.optString("skipVolume"),
+                nextPage = tocO.optString("nextPage"),
+                maxPages = tocO.optInt("maxPages", 50).coerceIn(1, 100),
             )
             ruleToc != null -> TocRule(
                 list = readCss(ruleToc.optString("chapterList")),
-                name = "@text", url = "@href",
+                name = readCss(ruleToc.optString("chapterName")).ifBlank { "@text" },
+                url = readCss(ruleToc.optString("chapterUrl")).ifBlank { "@href" },
+                nextPage = readCss(ruleToc.optString("nextTocUrl")),
             )
             else -> null
         }
@@ -213,14 +261,80 @@ object CustomSources {
             name = name,
             group = o.optString("group").ifBlank { "我的书源" },
             base = base,
+            mirrors = mirrors,
             charset = charset,
-            status = "custom",
+            status = o.optString("status").ifBlank { "custom" },
             note = o.optString("note").ifBlank { "自己添加的源 · 点进详情可编辑规则" },
             search = search,
             detail = detail,
             toc = toc,
             content = content,
+            apiKind = o.optString("apiKind"),
+            enabledByDefault = o.optBoolean("enabledByDefault", false),
+            probeKeyword = o.optString("probeKeyword"),
+            probeUrl = o.optString("probeUrl"),
+            probeMode = o.optString("probeMode", "SEARCH"),
+            userAgent = o.optString("userAgent"),
+            renderMode = o.optString("renderMode", "HTTP"),
         )
+    }
+
+    /** 订阅更新结果 */
+    data class SubscriptionResult(
+        val success: Boolean,
+        val message: String,
+        val importedCount: Int = 0,
+        val sources: List<Source> = emptyList(),
+    )
+
+    /**
+     * 在线书源订阅拉取与导入：
+     *  - 从订阅 URL 拉取 JSON 书源列表
+     *  - 校验格式结构与字段合法性（严禁非法脚本与恶意 payload）
+     *  - 更新失败回滚机制：若网络失败或格式解析错误，回滚原配置并返回错误原因
+     */
+    fun importSubscription(url: String): SubscriptionResult {
+        val trimmed = url.trim()
+        if (trimmed.isBlank() || (!trimmed.startsWith("http://", true) && !trimmed.startsWith("https://", true))) {
+            return SubscriptionResult(false, "无效的订阅地址：必须以 http:// 或 https:// 开头")
+        }
+
+        val backup = all()
+        return try {
+            val resp = Net.get(trimmed, charset = "utf-8", fast = true)
+            if (!resp.ok) {
+                return SubscriptionResult(false, "拉取订阅失败：${resp.error}")
+            }
+            val body = resp.body.trim()
+            if (body.isBlank() || (!body.startsWith("[") && !body.startsWith("{"))) {
+                return SubscriptionResult(false, "订阅内容格式错误：非标准 JSON")
+            }
+
+            // 规则与格式校验
+            val parsed = parseAll(body)
+            if (parsed.isEmpty()) {
+                return SubscriptionResult(false, "订阅解析失败：未发现有效书源定义")
+            }
+
+            // 规则合规校验：必须有合法 base URL 与名称，不能含有 javascript: 伪协议
+            for (s in parsed) {
+                if (s.base.contains("javascript:", true) || s.name.contains("<script", true)) {
+                    return SubscriptionResult(false, "书源规则安全校验未通过：检测到潜在脚本注入风险")
+                }
+            }
+
+            // 合并与保存
+            val currentMap = backup.associateBy { it.id }.toMutableMap()
+            for (newSource in parsed) {
+                currentMap[newSource.id] = newSource
+                storeRef?.setSourceEnabled(newSource.id, true)
+            }
+            save(currentMap.values.toList())
+            SubscriptionResult(true, "成功导入 ${parsed.size} 个书源", parsed.size, parsed)
+        } catch (e: Exception) {
+            save(backup)
+            SubscriptionResult(false, "订阅更新失败，已回滚：${e.message}")
+        }
     }
 
     private fun fieldsOf(o: JSONObject?): Map<String, String> {

@@ -2,7 +2,7 @@ package com.zaka.shijuan.data
 
 import org.json.JSONObject
 import java.net.URLEncoder
-import java.util.concurrent.Executors
+import java.util.concurrent.*
 
 /** 书源运行状态分类 */
 enum class SourceStatus(val label: String) {
@@ -30,14 +30,28 @@ data class SourceResult(
 
 data class SourceHealthMetrics(
     val sourceId: String,
+    val totalRequests: Int = 0,
+    val successCount: Int = 0,
+    val failureCount: Int = 0,
+    val consecutiveFailures: Int = 0,
     val lastSuccessMs: Long = 0L,
     val lastFailMs: Long = 0L,
     val lastFailStatus: SourceStatus = SourceStatus.UNVERIFIED,
     val lastFailHttpCode: Int = 0,
     val lastFailMsg: String = "",
-    val consecutiveFailures: Int = 0,
+    val searchTotal: Int = 0,
+    val searchSuccess: Int = 0,
+    val tocTotal: Int = 0,
+    val tocSuccess: Int = 0,
+    val contentTotal: Int = 0,
+    val contentSuccess: Int = 0,
     val lastResult: SourceResult? = null,
-)
+) {
+    val overallSuccessRate: Float get() = if (totalRequests > 0) successCount.toFloat() / totalRequests else 0f
+    val searchSuccessRate: Float get() = if (searchTotal > 0) searchSuccess.toFloat() / searchTotal else 0f
+    val tocSuccessRate: Float get() = if (tocTotal > 0) tocSuccess.toFloat() / tocTotal else 0f
+    val contentSuccessRate: Float get() = if (contentTotal > 0) contentSuccess.toFloat() / contentTotal else 0f
+}
 
 data class DeepHealthResult(
     val ok: Boolean,
@@ -48,10 +62,50 @@ data class DeepHealthResult(
 
 object BookRepo {
 
-    private val pool = Executors.newFixedThreadPool(20)
+    private fun threadFactory(name: String): ThreadFactory {
+        val count = java.util.concurrent.atomic.AtomicInteger(1)
+        return ThreadFactory { r ->
+            Thread(r, "$name-${count.getAndIncrement()}").apply { isDaemon = true }
+        }
+    }
 
-    /** 正文预取：提前把下一章拉回来，翻页时几乎不用等 */
-    private val prefetchPool = Executors.newFixedThreadPool(3)
+    // 搜索有界独立线程池：8~16 线程，有界队列 128
+    val searchPool = ThreadPoolExecutor(
+        8, 16, 60L, TimeUnit.SECONDS,
+        LinkedBlockingQueue(128),
+        threadFactory("novel-search"),
+        ThreadPoolExecutor.CallerRunsPolicy()
+    )
+    val pool: ThreadPoolExecutor get() = searchPool
+
+    // 正文独立线程池：4~8 线程，有界队列 64
+    val contentPool = ThreadPoolExecutor(
+        4, 8, 60L, TimeUnit.SECONDS,
+        LinkedBlockingQueue(64),
+        threadFactory("novel-content"),
+        ThreadPoolExecutor.CallerRunsPolicy()
+    )
+
+    // 预取独立线程池：2~3 线程，有界队列 32，超载自动丢弃最旧任务
+    private val prefetchPool = ThreadPoolExecutor(
+        2, 3, 30L, TimeUnit.SECONDS,
+        ArrayBlockingQueue(32),
+        threadFactory("novel-prefetch"),
+        ThreadPoolExecutor.DiscardOldestPolicy()
+    )
+
+    private var storeRef: Store? = null
+
+    /** 初始化：关联 Store 并恢复 ActiveBases 与历史健康指标 */
+    fun init(store: Store) {
+        storeRef = store
+        val bases = store.loadActiveBases()
+        bases.forEach { (sid, p) ->
+            ActiveBases[sid] = p.first
+            activeBaseTimes[sid] = p.second
+        }
+        loadPersistedMetrics(store)
+    }
 
     private fun enc(s: String, charset: String = "UTF-8"): String =
         runCatching { URLEncoder.encode(s, charset) }.getOrDefault(URLEncoder.encode(s, "UTF-8"))
@@ -60,6 +114,63 @@ object BookRepo {
         tpl.replace("{key}", enc(key, if (charset.contains("gb")) "GBK" else "UTF-8"))
 
     val sourceMetrics = java.util.concurrent.ConcurrentHashMap<String, SourceHealthMetrics>()
+
+    private fun persistMetrics() {
+        val store = storeRef ?: return
+        runCatching {
+            val json = JSONObject()
+            sourceMetrics.forEach { (id, m) ->
+                json.put(id, JSONObject().apply {
+                    put("sourceId", m.sourceId)
+                    put("totalRequests", m.totalRequests)
+                    put("successCount", m.successCount)
+                    put("failureCount", m.failureCount)
+                    put("consecutiveFailures", m.consecutiveFailures)
+                    put("lastSuccessMs", m.lastSuccessMs)
+                    put("lastFailMs", m.lastFailMs)
+                    put("lastFailStatus", m.lastFailStatus.name)
+                    put("lastFailHttpCode", m.lastFailHttpCode)
+                    put("lastFailMsg", m.lastFailMsg)
+                    put("searchTotal", m.searchTotal)
+                    put("searchSuccess", m.searchSuccess)
+                    put("tocTotal", m.tocTotal)
+                    put("tocSuccess", m.tocSuccess)
+                    put("contentTotal", m.contentTotal)
+                    put("contentSuccess", m.contentSuccess)
+                })
+            }
+            store.saveSourceMetrics(json.toString())
+        }
+    }
+
+    private fun loadPersistedMetrics(store: Store) {
+        val raw = store.loadSourceMetrics() ?: return
+        runCatching {
+            val json = JSONObject(raw)
+            json.keys().forEach { id ->
+                val o = json.optJSONObject(id) ?: return@forEach
+                val m = SourceHealthMetrics(
+                    sourceId = id,
+                    totalRequests = o.optInt("totalRequests", 0),
+                    successCount = o.optInt("successCount", 0),
+                    failureCount = o.optInt("failureCount", 0),
+                    consecutiveFailures = o.optInt("consecutiveFailures", 0),
+                    lastSuccessMs = o.optLong("lastSuccessMs", 0L),
+                    lastFailMs = o.optLong("lastFailMs", 0L),
+                    lastFailStatus = runCatching { SourceStatus.valueOf(o.optString("lastFailStatus")) }.getOrDefault(SourceStatus.UNVERIFIED),
+                    lastFailHttpCode = o.optInt("lastFailHttpCode", 0),
+                    lastFailMsg = o.optString("lastFailMsg", ""),
+                    searchTotal = o.optInt("searchTotal", 0),
+                    searchSuccess = o.optInt("searchSuccess", 0),
+                    tocTotal = o.optInt("tocTotal", 0),
+                    tocSuccess = o.optInt("tocSuccess", 0),
+                    contentTotal = o.optInt("contentTotal", 0),
+                    contentSuccess = o.optInt("contentSuccess", 0),
+                )
+                sourceMetrics[id] = m
+            }
+        }
+    }
 
     fun classifyStatus(ok: Boolean, httpCode: Int, error: String, booksCount: Int): SourceStatus {
         if (ok && booksCount > 0) return SourceStatus.NORMAL
@@ -84,46 +195,177 @@ object BookRepo {
         return SourceStatus.UNVERIFIED
     }
 
+    /** 指数退避阶梯：1m -> 5m -> 30m -> 2h -> 24h 封顶 */
+    fun calculateBackoffMs(consecutiveFailures: Int): Long = when (consecutiveFailures) {
+        0 -> 0L
+        1 -> 60_000L               // 1 分钟
+        2 -> 300_000L              // 5 分钟
+        3 -> 1_800_000L            // 30 分钟
+        4 -> 7_200_000L            // 2 小时
+        else -> 86_400_000L        // 24 小时封顶
+    }
+
     fun recordSuccess(sourceId: String, res: SourceResult) {
         sourceMetrics.compute(sourceId) { _, old ->
-            (old ?: SourceHealthMetrics(sourceId)).copy(
+            val prev = old ?: SourceHealthMetrics(sourceId)
+            prev.copy(
+                totalRequests = prev.totalRequests + 1,
+                successCount = prev.successCount + 1,
+                searchTotal = prev.searchTotal + 1,
+                searchSuccess = prev.searchSuccess + 1,
                 lastSuccessMs = System.currentTimeMillis(),
                 consecutiveFailures = 0,
                 lastResult = res,
             )
         }
+        failedUntil.remove(sourceId)
+        persistMetrics()
     }
 
     fun recordFailure(sourceId: String, status: SourceStatus, httpCode: Int, msg: String) {
         val m = sourceMetrics.compute(sourceId) { _, old ->
             val prev = old ?: SourceHealthMetrics(sourceId)
+            val newFailures = prev.consecutiveFailures + 1
             prev.copy(
+                totalRequests = prev.totalRequests + 1,
+                failureCount = prev.failureCount + 1,
+                searchTotal = prev.searchTotal + 1,
                 lastFailMs = System.currentTimeMillis(),
                 lastFailStatus = status,
                 lastFailHttpCode = httpCode,
                 lastFailMsg = msg,
-                consecutiveFailures = prev.consecutiveFailures + 1,
+                consecutiveFailures = newFailures,
             )
         }
-        if (m != null && m.consecutiveFailures >= 3 && (httpCode in 502..504 || msg.contains("拒绝"))) {
-            markFailed(sourceId, 60_000L)
+        // 统一熔断与指数退避：502、504、拒绝连接或连续报错触发退避降权
+        if (m != null && (httpCode in 500..599 || httpCode == 404 || msg.contains("502") || msg.contains("504") || msg.contains("拒绝") || m.consecutiveFailures >= 2)) {
+            val backoff = calculateBackoffMs(m.consecutiveFailures)
+            markFailed(sourceId, backoff)
         }
+        persistMetrics()
     }
 
-    private val sourceSearchLast = java.util.concurrent.ConcurrentHashMap<String, Long>()
-
-    /** 搜索单个书源 —— 依次尝试镜像与备用路径 */
-    fun searchSource(src: Source, key: String): SourceResult {
-        val t0 = System.currentTimeMillis()
-        if (src.id == "wenku8") {
-            val now = System.currentTimeMillis()
-            val last = sourceSearchLast[src.id] ?: 0L
-            val elapsed = now - last
-            if (elapsed in 0..5999) {
-                runCatching { Thread.sleep(6000L - elapsed) }
+    fun recordTocResult(sourceId: String, ok: Boolean, httpCode: Int = 200, error: String = "") {
+        sourceMetrics.compute(sourceId) { _, old ->
+            val prev = old ?: SourceHealthMetrics(sourceId)
+            if (ok) {
+                prev.copy(
+                    totalRequests = prev.totalRequests + 1,
+                    successCount = prev.successCount + 1,
+                    tocTotal = prev.tocTotal + 1,
+                    tocSuccess = prev.tocSuccess + 1,
+                    lastSuccessMs = System.currentTimeMillis(),
+                    consecutiveFailures = 0,
+                )
+            } else {
+                val newFailures = prev.consecutiveFailures + 1
+                prev.copy(
+                    totalRequests = prev.totalRequests + 1,
+                    failureCount = prev.failureCount + 1,
+                    tocTotal = prev.tocTotal + 1,
+                    lastFailMs = System.currentTimeMillis(),
+                    lastFailStatus = classifyStatus(false, httpCode, error, 0),
+                    lastFailHttpCode = httpCode,
+                    lastFailMsg = error,
+                    consecutiveFailures = newFailures,
+                )
             }
-            sourceSearchLast[src.id] = System.currentTimeMillis()
         }
+        persistMetrics()
+    }
+
+    fun recordContentResult(sourceId: String, ok: Boolean, httpCode: Int = 200, error: String = "") {
+        sourceMetrics.compute(sourceId) { _, old ->
+            val prev = old ?: SourceHealthMetrics(sourceId)
+            if (ok) {
+                prev.copy(
+                    totalRequests = prev.totalRequests + 1,
+                    successCount = prev.successCount + 1,
+                    contentTotal = prev.contentTotal + 1,
+                    contentSuccess = prev.contentSuccess + 1,
+                    lastSuccessMs = System.currentTimeMillis(),
+                    consecutiveFailures = 0,
+                )
+            } else {
+                val newFailures = prev.consecutiveFailures + 1
+                prev.copy(
+                    totalRequests = prev.totalRequests + 1,
+                    failureCount = prev.failureCount + 1,
+                    contentTotal = prev.contentTotal + 1,
+                    lastFailMs = System.currentTimeMillis(),
+                    lastFailStatus = classifyStatus(false, httpCode, error, 0),
+                    lastFailHttpCode = httpCode,
+                    lastFailMsg = error,
+                    consecutiveFailures = newFailures,
+                )
+            }
+        }
+        persistMetrics()
+    }
+
+    // ── ActiveBases 镜像持久化与 24h TTL ──
+    val ActiveBases = java.util.concurrent.ConcurrentHashMap<String, String>()
+    private val activeBaseTimes = java.util.concurrent.ConcurrentHashMap<String, Long>()
+
+    fun recordActiveBase(sourceId: String, base: String) {
+        val now = System.currentTimeMillis()
+        ActiveBases[sourceId] = base
+        activeBaseTimes[sourceId] = now
+        storeRef?.saveActiveBase(sourceId, base, now)
+    }
+
+    fun getActiveBase(src: Source): String? {
+        val base = ActiveBases[src.id] ?: return null
+        val time = activeBaseTimes[src.id] ?: 0L
+        if (System.currentTimeMillis() - time > 24L * 3600 * 1000L) {
+            ActiveBases.remove(src.id)
+            activeBaseTimes.remove(src.id)
+            return null
+        }
+        return if (src.bases.contains(base)) base else null
+    }
+
+    // ── 任务取消管理 ──
+    private val activeSearchFutures = ConcurrentHashMap<Any, MutableList<java.util.concurrent.Future<*>>>()
+
+    fun cancelSearch(tag: Any) {
+        val futures = activeSearchFutures.remove(tag)
+        futures?.forEach { runCatching { it.cancel(true) } }
+        Net.cancelCalls(tag)
+    }
+
+    private val failedUntil = ConcurrentHashMap<String, Long>()
+
+    fun isBlacklisted(sourceId: String): Boolean {
+        val until = failedUntil[sourceId] ?: return false
+        if (System.currentTimeMillis() > until) {
+            failedUntil.remove(sourceId)
+            return false
+        }
+        return true
+    }
+
+    fun markFailed(sourceId: String, durationMs: Long) {
+        val until = System.currentTimeMillis() + durationMs
+        failedUntil[sourceId] = until
+    }
+
+    /** 搜索单个书源 —— 依次尝试镜像与备用路径，共享单源 Deadline 预算 */
+    fun searchSource(
+        src: Source,
+        key: String,
+        deadlineMs: Long = 0L,
+        tag: Any? = null,
+    ): SourceResult {
+        val t0 = System.currentTimeMillis()
+        val cached = SearchCache.get(src.id, key)
+        if (cached != null) {
+            return cached
+        }
+
+        val budgetMs = if (src.apiKind == "sfacg" || src.id == "sfacg") 20_000L else 12_000L
+        val effectiveDeadline = if (deadlineMs > 0L) deadlineMs else (t0 + budgetMs)
+
         if (src.apiKind == "zlib") {
             val r = Zlib.search(key)
             val ok = r.first.isNotEmpty()
@@ -134,27 +376,44 @@ object BookRepo {
                 st, if (ok) 200 else 0,
             )
             if (ok) recordSuccess(src.id, res) else recordFailure(src.id, st, 0, r.second)
+            SearchCache.put(src.id, key, res)
             return res
         }
-        if (src.apiKind == "sfacg") return searchSfacg(src, key)
+        if (src.apiKind == "sfacg") {
+            val res = searchSfacg(src, key, effectiveDeadline, tag)
+            SearchCache.put(src.id, key, res)
+            return res
+        }
         val rule = src.search ?: return SourceResult(src.id, src.name, false, error = "该源未配置搜索规则", status = SourceStatus.RULE_INVALID)
 
-        // GBK 站点（笔趣阁系、飘天、顶点等）的搜索参数必须用 GBK 编码，否则中文搜不到
         val keyCharset = if (rule.keyCharset.equals("utf-8", true) && src.charset.contains("gb")) "gbk"
         else rule.keyCharset
 
         var lastErr = "连接不上"
         var lastHttpCode = 0
-        // 已知能通的域名排最前，省掉镜像探测那几秒
-        val known = ActiveBases[src.id]
+        val known = getActiveBase(src)
         val ordered = if (known != null && src.bases.contains(known))
             listOf(known) + src.bases.filter { it != known } else src.bases
+
         for (base in ordered) {
+            val now = System.currentTimeMillis()
+            if (now >= effectiveDeadline - 800L) {
+                lastErr = "搜索超时（已达到单源时间预算）"
+                break
+            }
+            val remainingBudget = effectiveDeadline - now
+
             val urls = buildList {
                 add(fill(rule.url, key, keyCharset))
                 rule.extraUrls.forEach { add(fill(it, key, keyCharset)) }
             }
             for (path in urls) {
+                val loopNow = System.currentTimeMillis()
+                if (loopNow >= effectiveDeadline - 500L) {
+                    lastErr = "搜索超时（已达到单源时间预算）"
+                    break
+                }
+                val iterBudget = effectiveDeadline - loopNow
                 val full = if (path.startsWith("http")) path else base + path
                 val resp = if (rule.method.equals("POST", true)) {
                     val body = HashMap<String, String>()
@@ -163,15 +422,14 @@ object BookRepo {
                         if (kv.size == 2) body[kv[0]] = kv[1]
                     }
                     if (body.isEmpty()) body["searchkey"] = enc(key, keyCharset)
-                    Net.post(full, body, src.charset, base + "/", encoded = true, fast = true)
+                    Net.post(full, body, src.charset, base + "/", encoded = true, fast = true, tag = tag, timeoutMs = iterBudget, profile = src.requestProfile)
                 } else {
-                    Net.get(full, src.charset, base + "/", fast = true)
+                    Net.get(full, src.charset, base + "/", fast = true, tag = tag, timeoutMs = iterBudget, profile = src.requestProfile)
                 }
 
                 if (!resp.ok) {
                     lastErr = resp.error
                     lastHttpCode = resp.code
-                    // 遇到 403 明确标识访问受限，快速失败不重试，方便用户触发安全验证
                     if (resp.code == 403 || resp.error.contains("Cloudflare") || resp.error.contains("安全质询")) {
                         val st = SourceStatus.ACCESS_RESTRICTED
                         val res = SourceResult(src.id, src.name, false, emptyList(), resp.error, System.currentTimeMillis() - t0, st, resp.code)
@@ -190,23 +448,23 @@ object BookRepo {
                     return res
                 }
 
-                // 搜一次就被 302 到书页的站点（速读谷），书页本身就是唯一结果。
                 if (resp.via.isNotBlank() && resp.via != full) {
                     singleBookFromPage(src, resp, full, key)?.let { one ->
-                        ActiveBases[src.id] = base
+                        recordActiveBase(src.id, base)
                         val res = SourceResult(src.id, src.name, true, listOf(one), "", System.currentTimeMillis() - t0, SourceStatus.NORMAL, 200)
                         recordSuccess(src.id, res)
+                        SearchCache.put(src.id, key, res)
                         return res
                     }
                 }
                 val books = parseSearchPage(src, resp.body, resp.via.ifBlank { full }, rule, key)
                 if (books.isNotEmpty()) {
-                    ActiveBases[src.id] = base
+                    recordActiveBase(src.id, base)
                     val res = SourceResult(src.id, src.name, true, books, "", System.currentTimeMillis() - t0, SourceStatus.NORMAL, 200)
                     recordSuccess(src.id, res)
+                    SearchCache.put(src.id, key, res)
                     return res
                 }
-                // 失败要分清楚：站点上真没这本书 ≠ 站点改版解析不出来。
                 val rows = Rules.countList(Rules.parse(resp.body).body(), rule.list)
                 val noEcho = key.isNotBlank() && !resp.body.contains(key, ignoreCase = true)
                 lastErr = when {
@@ -227,16 +485,29 @@ object BookRepo {
      * SF 轻小说的搜索是前端 ajax 发出去的，HTML 里根本没有结果；
      * 直接打它的搜索接口拿 JSON。书页统一用手机站 /b/{id}/，目录和正文也都走手机站。
      */
-    private fun searchSfacg(src: Source, key: String): SourceResult {
+    private fun searchSfacg(
+        src: Source,
+        key: String,
+        deadlineMs: Long = 0L,
+        tag: Any? = null,
+    ): SourceResult {
         val t0 = System.currentTimeMillis()
+        val budgetMs = 20_000L
+        val effectiveDeadline = if (deadlineMs > 0L) deadlineMs else (t0 + budgetMs)
         var lastErr = "连接不上"
         var lastCode = 0
-        val known = ActiveBases[src.id]
+        val known = getActiveBase(src)
         val ordered = if (known != null && src.bases.contains(known))
             listOf(known) + src.bases.filter { it != known } else src.bases
         for (base in ordered) {
+            val now = System.currentTimeMillis()
+            if (now >= effectiveDeadline - 800L) {
+                lastErr = "搜索超时（已达到单源时间预算）"
+                break
+            }
+            val iterBudget = effectiveDeadline - now
             val url = base + "/API/HTML5.ashx?op=search&keyword=" + enc(key)
-            val resp = Net.get(url, "utf-8", base + "/search.html", fast = true)
+            val resp = Net.get(url, "utf-8", base + "/search.html", fast = true, tag = tag, timeoutMs = iterBudget, profile = src.requestProfile)
             if (!resp.ok) {
                 lastErr = resp.error
                 lastCode = resp.code
@@ -269,7 +540,7 @@ object BookRepo {
                 }
             }.getOrDefault(emptyList())
             if (books.isNotEmpty()) {
-                ActiveBases[src.id] = base
+                recordActiveBase(src.id, base)
                 val res = SourceResult(src.id, src.name, true, books, "", System.currentTimeMillis() - t0, SourceStatus.NORMAL, 200)
                 recordSuccess(src.id, res)
                 return res
@@ -289,12 +560,17 @@ object BookRepo {
         else -> "https://rs.sfacg.com/web/novel/images/NovelCover/Big/" + path
     }
 
-    /** 把目录页模板里的 {id}/{idk}/{book} 换成真值 */
-    private fun fillTocPage(tpl: String, bookUrl: String): String {
+    /** 把目录页模板里的 {id}/{idk}/{book}/{page} 换成真值 */
+    private fun fillTocPage(tpl: String, bookUrl: String): String = fillTocPage(tpl, bookUrl, 1)
+
+    private fun fillTocPage(tpl: String, bookUrl: String, page: Int): String {
         val id = Regex("/(?:b|Novel|book|info)/(\\d+)").find(bookUrl)?.groupValues?.get(1)
             ?: Regex("(\\d{3,})").find(bookUrl)?.groupValues?.get(1).orEmpty()
         val idk = (id.toLongOrNull()?.let { it / 1000 } ?: 0).toString()
-        return tpl.replace("{book}", bookUrl).replace("{id}", id).replace("{idk}", idk)
+        return tpl.replace("{book}", bookUrl)
+            .replace("{id}", id)
+            .replace("{idk}", idk)
+            .replace("{page}", page.toString())
     }
 
     /** 页面里明确写了「没有结果」这类话，就说明是站点上没这本书，不是我们解析坏了 */
@@ -444,11 +720,10 @@ object BookRepo {
 
     /** 后台预取指定章节正文（翻页时直接命中缓存） */
     fun prefetchChapter(src: Source, chapter: Chapter, store: Store) {
-        if (store.loadContent(chapter.url) != null) return
+        if (NovelContentCache.get(src.id, chapter.url) != null || store.loadContent(chapter.url, src.id) != null) return
         runCatching {
             prefetchPool.execute {
-                runCatching { getChapter(src, chapter) }.getOrNull()
-                    ?.onSuccess { store.saveContent(chapter.url, it.text) }
+                runCatching { getChapter(src, chapter) }
             }
         }
     }
@@ -538,14 +813,14 @@ object BookRepo {
         }
     }
 
-    /** 目录 */
+    /** 目录（支持单页抓取与基于 nextPage / page 模板的真实多页分页拉取） */
     fun getToc(src: Source, book: Book): Result<Toc> {
-        val base = ActiveBases[src.id] ?: src.base
+        val base = getActiveBase(src) ?: src.base
         val t = src.toc
         // 有的站书页和目录页是分开的两页（SF 手机站就是），规则里可以单独给目录页模板
         val tocTpl = t?.page.orEmpty()
         val tocUrl = if (tocTpl.isBlank()) book.url
-        else Rules.absUrl(base + "/", fillTocPage(tocTpl, book.url))
+        else Rules.absUrl(base + "/", fillTocPage(tocTpl, book.url, page = 1))
         var resp = Net.get(tocUrl, src.charset, base + "/", useCache = true)
         // 目录页偶发挂了（限流/换版），回书页再试一次，别直接判死
         if (!resp.ok && tocUrl != book.url) {
@@ -561,13 +836,16 @@ object BookRepo {
                     val r2 = Net.get(altUrl, src.charset, "$mirror/", useCache = true)
                     if (r2.ok) {
                         resp = r2
-                        ActiveBases[src.id] = mirror
+                        recordActiveBase(src.id, mirror)
                         break
                     }
                 }
             }
         }
-        if (!resp.ok) return Result.failure(Exception(resp.error))
+        if (!resp.ok) {
+            recordTocResult(src.id, ok = false, error = resp.error)
+            return Result.failure(Exception(resp.error))
+        }
         var doc = Rules.parse(resp.body)
         var pageUrl = resp.via.ifBlank { tocUrl }
         var list = parseTocList(doc, pageUrl, t)
@@ -607,26 +885,92 @@ object BookRepo {
             }
         }
         if (list.isEmpty()) {
-            if (isTakenDownPage(doc, ""))
+            if (isTakenDownPage(doc, "")) {
+                recordTocResult(src.id, ok = false, error = "书籍已下架")
                 return Result.failure(Exception("该书已下架（源站因版权或作者要求已停止提供在线阅读）"))
-            // 正文区几乎没字、脚本却一大把：这站的目录是前端渲染出来的，静态抓永远拿不到
+            }
             val textLen = runCatching {
                 doc.body()?.text()?.replace(Regex("\\s"), "")?.length ?: 0
             }.getOrDefault(0)
             val scripts = runCatching { doc.select("script").size }.getOrDefault(0)
-            if (textLen < 400 && scripts >= 3)
+            if (textLen < 400 && scripts >= 3) {
+                recordTocResult(src.id, ok = false, error = "目录靠 JS 渲染")
                 return Result.failure(Exception("这站的目录靠 JS 渲染，App 抓静态页面拿不到（起点这类站点都这样），换别的源搜同名书吧"))
+            }
+            recordTocResult(src.id, ok = false, error = "没认出章节目录")
             return Result.failure(Exception("没认出章节目录，可能这站改版了"))
         }
-        // 认出来的东西跟书籍页同形（/b/123/ 对 /b/456/）说明抓的是书页上的推荐书单，不是章节
-        if (!tocLooksReal(book.url, list))
+
+        if (!tocLooksReal(book.url, list)) {
+            recordTocResult(src.id, ok = false, error = "抓到的是书籍列表而非目录")
             return Result.failure(Exception("这页上认不出章节目录（抓到的是书籍列表），可能这站改版了"))
+        }
+
+        // ── 多页目录分页自动提取（支持 nextPage 选择器与 {page} 模板，最多抓取 maxPages 页，保留原始顺序并防环去重） ──
+        if (t != null && (t.nextPage.isNotBlank() || (t.page.contains("{page}") && t.maxPages > 1))) {
+            val allChapters = ArrayList<Chapter>()
+            val seenChapterUrls = HashSet<String>()
+            val seenPageUrls = HashSet<String>()
+            seenPageUrls.add(pageUrl)
+
+            fun appendNewChapters(chs: List<Chapter>): Int {
+                var count = 0
+                for (ch in chs) {
+                    if (ch.url.isNotBlank() && seenChapterUrls.add(ch.url)) {
+                        allChapters.add(ch)
+                        count++
+                    }
+                }
+                return count
+            }
+
+            appendNewChapters(list)
+
+            var curDoc = doc
+            var curPageUrl = pageUrl
+            var pageCount = 1
+            val maxPages = t.maxPages.coerceIn(1, 100)
+
+            while (pageCount < maxPages) {
+                val nextPageSelector = t.nextPage.trim()
+                val nextPageTarget = if (nextPageSelector.isNotBlank()) {
+                    if (nextPageSelector.contains("@")) Rules.extract(curDoc, nextPageSelector, curPageUrl).ifBlank { null }
+                    else curDoc.selectFirst(nextPageSelector)?.let { it.attr("href").ifBlank { it.attr("data-href") } }
+                } else if (t.page.contains("{page}")) {
+                    Rules.absUrl(base + "/", fillTocPage(t.page, book.url, page = pageCount + 1))
+                } else null
+
+                if (nextPageTarget.isNullOrBlank()) break
+
+                val absNextUrl = Rules.absUrl(curPageUrl, nextPageTarget)
+                if (absNextUrl.isBlank() || !seenPageUrls.add(absNextUrl)) {
+                    // 已访问过或无效目标，立即停止，防止死循环
+                    break
+                }
+
+                val nextResp = Net.get(absNextUrl, src.charset, base + "/", useCache = true)
+                if (!nextResp.ok) break
+
+                curDoc = Rules.parse(nextResp.body)
+                curPageUrl = nextResp.via.ifBlank { absNextUrl }
+                val nextList = parseTocList(curDoc, curPageUrl, t)
+                val added = appendNewChapters(nextList)
+                if (added == 0) {
+                    // 连续没有新增章节时提前停止
+                    break
+                }
+                pageCount++
+            }
+            if (allChapters.size >= list.size) {
+                list = allChapters.mapIndexed { idx, ch -> ch.copy(index = idx) }
+            }
+        }
+
         val tocUrlReal = pageUrl
 
         var cover = book.cover
         var intro = book.intro
         var author = book.author
-        // 目录页和书页分成两页的站点，详情要回书页再拿一次（有页面缓存，一般不额外耗时）
         val detailDoc = if (tocUrlReal == book.url) doc else {
             val r = Net.get(book.url, src.charset, base + "/", useCache = true)
             if (r.ok) Rules.parse(r.body) else doc
@@ -642,6 +986,7 @@ object BookRepo {
             if (d.author.isNotBlank() && author.isBlank())
                 Rules.extract(detailDoc.body(), d.author, book.url).ifBlank { null }?.let { author = it }
         }
+        recordTocResult(src.id, ok = true)
         return Result.success(Toc(list, cover, intro, author))
     }
 
@@ -672,13 +1017,26 @@ object BookRepo {
 
     /** 正文 */
     fun getChapter(src: Source, chapter: Chapter): Result<Content> {
-        val base = ActiveBases[src.id] ?: src.base
+        // 1. 优先命中正文两级缓存（L1 内存 / L2 磁盘）
+        val cached = NovelContentCache.get(src.id, chapter.url)
+        if (cached != null) {
+            return Result.success(Content(chapter.name, cached, cached))
+        }
+
+        // 2. 模式检查：若配置为 WEBVIEW 渲染模式，提示在阅读器中触发网页渲染
+        if (src.renderMode.equals("WEBVIEW", ignoreCase = true)) {
+            val msg = "当前书源已配置为 WebView 渲染模式，请在阅读器中触发网页渲染"
+            recordContentResult(src.id, ok = false, error = msg)
+            return Result.failure(Exception(msg))
+        }
+
+        val base = getActiveBase(src) ?: src.base
         val isSlow = src.id == "sfacg" || chapter.url.contains("sfacg.com")
-        var resp = Net.get(chapter.url, src.charset, base + "/", slow = isSlow)
+        var resp = Net.get(chapter.url, src.charset, base + "/", slow = isSlow, profile = src.requestProfile)
         if (!resp.ok || isSoftError(resp.body)) {
             // 正文拿失败、或拿到软错误页 → 隔 450ms 重试一次（SF 等源站偶发错误页/排队抖动，重试大多能成功）
             runCatching { Thread.sleep(450) }
-            val retry = Net.get(chapter.url, src.charset, base + "/", slow = isSlow)
+            val retry = Net.get(chapter.url, src.charset, base + "/", slow = isSlow, profile = src.requestProfile)
             if (retry.ok && !isSoftError(retry.body)) {
                 resp = retry
             }
@@ -689,10 +1047,10 @@ object BookRepo {
                 for (mirror in src.mirrors) {
                     val mirrorUri = runCatching { java.net.URI(mirror) }.getOrNull() ?: continue
                     val altUrl = java.net.URI(mirrorUri.scheme, mirrorUri.authority, curUri.path, curUri.query, curUri.fragment).toString()
-                    val r2 = Net.get(altUrl, src.charset, "$mirror/", slow = isSlow)
+                    val r2 = Net.get(altUrl, src.charset, "$mirror/", slow = isSlow, profile = src.requestProfile)
                     if (r2.ok && !isSoftError(r2.body)) {
                         resp = r2
-                        ActiveBases[src.id] = mirror
+                        recordActiveBase(src.id, mirror)
                         break
                     }
                 }
@@ -706,6 +1064,7 @@ object BookRepo {
                 err.isNotBlank() -> "网络请求失败：$err"
                 else -> "正文请求失败"
             }
+            recordContentResult(src.id, ok = false, httpCode = resp.code, error = msg)
             return Result.failure(Exception(msg))
         }
 
@@ -721,6 +1080,7 @@ object BookRepo {
                 src.id == "sfacg" -> "该章节在SF手机站暂未开放或已下线（如外链/公告），建议换下一章或选择目录"
                 else -> "源站返回「页面暂时无法访问」（该老书在手机站未开放或章节已下线），换个源搜同名书试试"
             }
+            recordContentResult(src.id, ok = false, httpCode = resp.code, error = msg)
             return Result.failure(Exception(msg))
         }
 
@@ -769,15 +1129,22 @@ object BookRepo {
             val page = doc.text()
             val vipMark = listOf("VIP章节", "vip章节", "购买本章", "订阅本章", "本章需购买", "余额不足", "充值后阅读", "登录后阅读")
                 .firstOrNull { page.contains(it) }
-            if (vipMark != null)
+            if (vipMark != null) {
+                recordContentResult(src.id, ok = false, error = "VIP 章节")
                 return Result.failure(Exception("这章是源站的付费/VIP 章节，得先在源站登录购买才能看，建议换个源搜同名书"))
-            if (isErrorPage(doc))
+            }
+            if (isErrorPage(doc)) {
+                recordContentResult(src.id, ok = false, error = "源站错误页")
                 return Result.failure(Exception("源站返回「暂时无法访问」（该老书在手机站未开放或已下线），建议换个源搜同名书"))
+            }
             // 如果正文区里有图片（插图画/彩页/人设），保留交给阅读器以插图卡片形式呈现
         }
         if (html.isBlank()) {
-            if (isErrorPage(doc))
+            if (isErrorPage(doc)) {
+                recordContentResult(src.id, ok = false, error = "源站错误页")
                 return Result.failure(Exception("源站返回「暂时无法访问」（该老书在手机站未开放或已下线），建议换个源搜同名书"))
+            }
+            recordContentResult(src.id, ok = false, error = "正文未解析出内容")
             return Result.failure(Exception("正文未解析出内容（可能章节需要登录或该页结构改版）"))
         }
 
@@ -792,7 +1159,7 @@ object BookRepo {
                 if (href.isBlank()) break
                 val nextUrl = Rules.absUrl(curUrl, href)
                 if (!Regex("[_\\-/]\\d+(_\\d+)?\\.html?$").containsMatchIn(nextUrl)) break
-                val r2 = Net.get(nextUrl, src.charset, base + "/", slow = isSlow)
+                val r2 = Net.get(nextUrl, src.charset, base + "/", slow = isSlow, profile = src.requestProfile)
                 if (!r2.ok) break
                 val d2 = Rules.parse(r2.body)
                 val more = Rules.autoContent(d2)
@@ -805,6 +1172,7 @@ object BookRepo {
         val cleaned = Rules.stripAds(html)
         val text = Rules.htmlToParagraphs(cleaned, chapter.url)
         if (isTranscodeOrPiracyError(text)) {
+            recordContentResult(src.id, ok = false, error = "源站转码失败或盗版占位")
             return Result.failure(Exception("源站转码失败或该章节未收录（返回转码失败/推荐占位），建议换源阅读"))
         }
         val title = doc.selectFirst("h1")?.text()?.trim().orEmpty().ifBlank { chapter.name }
@@ -812,16 +1180,29 @@ object BookRepo {
         val len = text.replace(Regex("\\s"), "").length
         // 一百字以下且没有插图的通常不是正文：要么被拦，要么抓到的是书页/推荐列表那几行字
         if (len < 120 && !hasImages) {
-            if (isTakenDownPage(doc, text))
+            if (isTakenDownPage(doc, text)) {
+                recordContentResult(src.id, ok = false, error = "书籍已下架")
                 return Result.failure(Exception("该书已下架（源站因版权或作者要求已停止提供在线阅读）"))
-            if (isErrorPage(doc))
+            }
+            if (isErrorPage(doc)) {
+                recordContentResult(src.id, ok = false, error = "源站错误页")
                 return Result.failure(Exception("源站返回「暂时无法访问」（该老书在手机站未开放或已下线），建议换个源搜同名书"))
-            if (len == 0)
+            }
+            if (len == 0) {
+                recordContentResult(src.id, ok = false, error = "章节内容为空")
                 return Result.failure(Exception("源站这一章是空的（有的站把同一章挂了两条，其中一条只有标题），翻到下一章吧"))
-            if (doc.select("a[href]").size >= 12)
+            }
+            if (doc.select("a[href]").size >= 12) {
+                recordContentResult(src.id, ok = false, error = "抓到书籍页而非正文")
                 return Result.failure(Exception("抓到的这页是书籍页/目录页，不是正文，可能这站改版了"))
-            return Result.failure(Exception("正文内容过短（仅 ${len} 字），可能触发源站拦截或防盗提示"))
+            }
+            val err = "正文内容过短（仅 ${len} 字），可能触发源站拦截或防盗提示"
+            recordContentResult(src.id, ok = false, error = err)
+            return Result.failure(Exception(err))
         }
+
+        NovelContentCache.put(src.id, chapter.url, text)
+        recordContentResult(src.id, ok = true)
         return Result.success(Content(title, text, cleaned))
     }
 
@@ -923,9 +1304,28 @@ object BookRepo {
         return Rules.autoContent(doc)
     }
 
-    /** 书源体检 */
+    /** 书源体检：支持 probeKeyword、probeUrl 与 probeMode */
     fun health(src: Source): SourceResult {
-        val key = when {
+        if (src.probeMode.equals("URL", ignoreCase = true) && src.probeUrl.isNotBlank()) {
+            val t0 = System.currentTimeMillis()
+            val base = getActiveBase(src) ?: src.base
+            val targetUrl = if (src.probeUrl.startsWith("http")) src.probeUrl else base + src.probeUrl
+            val resp = Net.get(targetUrl, src.charset, base + "/", profile = src.requestProfile)
+            val ms = System.currentTimeMillis() - t0
+            val ok = resp.ok
+            val st = classifyStatus(ok, resp.code, resp.error, if (ok) 1 else 0)
+            return SourceResult(
+                sourceId = src.id,
+                sourceName = src.name,
+                ok = ok,
+                books = emptyList(),
+                error = if (ok) "" else resp.error.ifBlank { "HTTP ${resp.code}" },
+                ms = ms,
+                status = st,
+                httpCode = resp.code,
+            )
+        }
+        val key = if (src.probeKeyword.isNotBlank()) src.probeKeyword else when {
             src.apiKind == "sfacg" -> "魔王"
             src.group.contains("轻小说") -> "魔王"
             else -> "凡人修仙传"
@@ -935,12 +1335,19 @@ object BookRepo {
 
     /**
      * 分段体检：搜索 → 目录 → 正文，哪一步断了直接说哪一步断的。
-     * 以前只有「搜索通/不通」，看不出后面两步，排查全靠猜。
+     * 支持探针配置，不因未搜到固定书名而误杀源站。
      */
     fun healthDeep(src: Source): DeepHealthResult {
         val s = health(src)
-        if (!s.ok || s.books.isEmpty()) {
-            return DeepHealthResult(false, "搜索：${s.error.ifBlank { "没结果" }}", s.status, s.httpCode)
+        if (!s.ok) {
+            return DeepHealthResult(false, "搜索/连接：${s.error.ifBlank { "异常" }}", s.status, s.httpCode)
+        }
+        if (s.books.isEmpty()) {
+            if (src.probeMode.equals("URL", ignoreCase = true)) {
+                return DeepHealthResult(true, "探针 URL 正常连通 · HTTP ${s.httpCode}", SourceStatus.NORMAL, s.httpCode)
+            }
+            val key = if (src.probeKeyword.isNotBlank()) src.probeKeyword else if (src.apiKind == "sfacg" || src.group.contains("轻小说")) "魔王" else "凡人修仙传"
+            return DeepHealthResult(false, "搜索无匹配结果（HTTP ${if (s.httpCode > 0) s.httpCode else 200}，但未搜到「$key」，可能源站未收录该词）", SourceStatus.RULE_INVALID, s.httpCode)
         }
         val book = s.books.first()
         val tocRes = runCatching { getToc(src, book) }
@@ -958,9 +1365,7 @@ object BookRepo {
         if (list.chapters.size < 2) {
             return DeepHealthResult(false, "目录：只认出 ${list.chapters.size} 章", SourceStatus.RULE_INVALID)
         }
-        // 目录开头常有插图页/人设页/公告，本来就没有正文可抓。只测第一章会把好源误判成
-        // 「正文内容过短」（SF 之前就是这么被冤枉的）。第一章不行就补测中间、四分之一处：
-        // 中间的章节几乎不可能是插图页，能真实反映这个源到底给不给正文。
+        // 抽查正文：第1章、中间章节、1/4章节
         val probes = listOfNotNull(
             list.chapters.firstOrNull(),
             list.chapters.getOrNull(list.chapters.size / 2),
@@ -988,52 +1393,52 @@ object BookRepo {
         return DeepHealthResult(false, "目录 ${list.chapters.size} 章 · 正文：${lastErr.ifBlank { "抽了 $tried 章都取不到正文" }}", finalStatus)
     }
 
-    private val failedUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
-
-    fun markFailed(sourceId: String, durationMs: Long = 60 * 1000L) {
-        failedUntil[sourceId] = System.currentTimeMillis() + durationMs
-    }
-
-    fun isBlacklisted(sourceId: String): Boolean {
-        val until = failedUntil[sourceId] ?: return false
-        if (System.currentTimeMillis() > until) {
-            failedUntil.remove(sourceId)
-            return false
-        }
-        return true
-    }
-
-    /** 并发多源搜索，边出结果边回调 */
+    /** 并发多源搜索，边出结果边回调，支持底层任务取消与统一 Deadline */
     fun searchAll(
         sources: List<Source>,
         key: String,
+        tag: Any? = null,
         onUpdate: (SourceResult) -> Unit,
     ) {
-        val active = sources.filterNot { isBlacklisted(it.id) }.ifEmpty { sources }
+        val active = sources.filterNot { isBlacklisted(it.id) }
         if (active.isEmpty()) return
         val latch = java.util.concurrent.CountDownLatch(active.size)
+        val deadlineMs = System.currentTimeMillis() + 14_000L
+        val searchTag = tag ?: "searchAll_${System.currentTimeMillis()}"
+        val futures = java.util.Collections.synchronizedList(ArrayList<java.util.concurrent.Future<*>>())
+        activeSearchFutures[searchTag] = futures
+
         for (src in active) {
-            pool.execute {
+            val future = searchPool.submit {
                 val t0 = System.currentTimeMillis()
                 val r = runCatching {
-                    searchSource(src, key)
+                    searchSource(src, key, deadlineMs = deadlineMs, tag = searchTag)
                 }.getOrElse {
                     val err = Net.friendlyError(it)
                     val st = classifyStatus(false, 0, err, 0)
                     SourceResult(src.id, src.name, false, error = err, ms = System.currentTimeMillis() - t0, status = st)
                 }
-                // 仅对严重网关故障（502、504、连接拒绝）做 1 分钟轻度临时熔断，常规超时或搜无结果绝不拉黑
                 if (!r.ok && (r.error.contains("502") || r.error.contains("504") || r.error.contains("拒绝连接"))) {
                     markFailed(src.id, 60_000L)
                 }
                 try { onUpdate(r) } finally { latch.countDown() }
             }
+            futures.add(future)
         }
-        runCatching { latch.await(14, java.util.concurrent.TimeUnit.SECONDS) }
+        try {
+            latch.await(14, TimeUnit.SECONDS)
+        } catch (_: InterruptedException) {
+            // interrupted
+        } finally {
+            // 超时后尚未完成的任务调用 cancel，并真正取消未完成的网络请求
+            for (f in futures) {
+                if (!f.isDone) {
+                    runCatching { f.cancel(true) }
+                }
+            }
+            activeSearchFutures.remove(searchTag)
+        }
     }
-
-    /** 当前每个源实际连通的域名 */
-    val ActiveBases = java.util.concurrent.ConcurrentHashMap<String, String>()
 }
 
 /** Z-Library 官方 App 接口 */

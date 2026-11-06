@@ -14,6 +14,10 @@ class Store(context: Context) {
     private val sp: SharedPreferences =
         context.getSharedPreferences("shijuan", Context.MODE_PRIVATE)
 
+    init {
+        NovelContentCache.init(context)
+    }
+
     // ── 书架 ──
     fun shelf(): List<ShelfItem> = ShelfItem.listFrom(sp.getString("shelf", null))
 
@@ -271,7 +275,7 @@ class Store(context: Context) {
         var cached = 0
         var bytes = 0L
         chs.forEachIndexed { i, ch ->
-            val text = loadContent(ch.url)
+            val text = loadContent(ch.url, book.sourceId)
             when {
                 text == null -> missing += i
                 text.trim().length < 120 -> broken += i
@@ -296,7 +300,10 @@ class Store(context: Context) {
                 (0 until arr.length()).forEach { urls += arr.getString(it) }
             }
         }
-        urls.filter { it.isNotBlank() }.forEach { e.remove("c_${it.hashCode()}") }
+        urls.filter { it.isNotBlank() }.forEach { u ->
+            NovelContentCache.remove(book.sourceId, u)
+            e.remove("c_${u.hashCode()}")
+        }
         e.remove(tocKey(book.url))
         e.remove("toc_${book.url.hashCode()}")
         e.remove("tocu_${book.url.hashCode()}")
@@ -306,6 +313,7 @@ class Store(context: Context) {
 
     /** 清空所有小说正文缓存（连目录和元数据一起） */
     fun clearNovelCaches() {
+        NovelContentCache.clearAll()
         val e = sp.edit()
         sp.all.keys.filter {
             it.startsWith("c_") || it.startsWith("bm_") || it.startsWith("toc_") ||
@@ -355,13 +363,23 @@ class Store(context: Context) {
         java.net.URI(url).path.orEmpty().replace(Regex("\\d+"), "N").lowercase()
     }.getOrDefault("")
 
-    // ── 正文缓存（离线看过的章节） ──
-    fun saveContent(url: String, text: String) {
+    // ── 正文两级缓存（L1 内存 LRU 50章 + L2 磁盘 TTL 24h + 容量上限） ──
+    fun saveContent(url: String, text: String, sourceId: String = "") {
         if (text.isBlank() || BookRepo.isTranscodeOrPiracyError(text)) return
-        sp.edit().putString("c_${url.hashCode()}", text).apply()
+        NovelContentCache.put(sourceId, url, text)
+        sp.edit().remove("c_${url.hashCode()}").apply()
     }
 
-    fun loadContent(url: String): String? = sp.getString("c_${url.hashCode()}", null)
+    fun loadContent(url: String, sourceId: String = ""): String? {
+        val cached = NovelContentCache.get(sourceId, url)
+        if (cached != null) return cached
+        val legacy = sp.getString("c_${url.hashCode()}", null)
+        if (!legacy.isNullOrBlank()) {
+            NovelContentCache.put(sourceId, url, legacy)
+            return legacy
+        }
+        return null
+    }
 
     /**
      * 这本书本地存了多少章正文（离线能直接读的章数）。
@@ -370,7 +388,7 @@ class Store(context: Context) {
     fun cachedChaptersOf(book: Book): Int {
         val chs = loadToc(book.url)
         if (chs.isEmpty()) return 0
-        return chs.count { sp.contains("c_${it.url.hashCode()}") }
+        return chs.count { loadContent(it.url, book.sourceId) != null }
     }
 
     // ── 搜索历史 ──
@@ -468,26 +486,68 @@ class Store(context: Context) {
             .apply()
     }
 
-    // ── 站点 Cookie 凭据持久化（支持 Cloudflare 质询与登录凭据同步） ──
+    // ── 站点 Cookie 凭据持久化（Keystore 加密，支持 Cloudflare 质询与登录凭据同步） ──
     fun saveHostCookies(host: String, cookieHeader: String) {
         val clean = host.removePrefix("http://").removePrefix("https://").substringBefore('/')
-        sp.edit().putString("cookie_$clean", cookieHeader).apply()
+        val encrypted = SecureStore.encrypt(cookieHeader)
+        sp.edit().putString("cookie_$clean", encrypted).apply()
     }
 
     fun loadHostCookies(host: String): String? {
         val clean = host.removePrefix("http://").removePrefix("https://").substringBefore('/')
-        return sp.getString("cookie_$clean", null)
+        val raw = sp.getString("cookie_$clean", null) ?: return null
+        val decrypted = SecureStore.decrypt(raw)
+        if (!raw.startsWith("enc_v1:") && decrypted.isNotBlank()) {
+            sp.edit().putString("cookie_$clean", SecureStore.encrypt(decrypted)).apply()
+        }
+        return decrypted.ifBlank { null }
     }
 
     fun allSavedCookies(): Map<String, String> {
         val out = mutableMapOf<String, String>()
         for ((k, v) in sp.all) {
             if (k.startsWith("cookie_") && v is String) {
-                out[k.removePrefix("cookie_")] = v
+                val host = k.removePrefix("cookie_")
+                val decrypted = SecureStore.decrypt(v)
+                if (decrypted.isNotBlank()) {
+                    out[host] = decrypted
+                }
             }
         }
         return out
     }
+
+    // ── ActiveBases 镜像持久化（24h TTL） ──
+    fun saveActiveBase(sourceId: String, base: String, timestamp: Long = System.currentTimeMillis()) {
+        sp.edit().putString("active_base_$sourceId", "$base|$timestamp").apply()
+    }
+
+    fun loadActiveBases(): Map<String, Pair<String, Long>> {
+        val out = HashMap<String, Pair<String, Long>>()
+        val now = System.currentTimeMillis()
+        val ttl = 24L * 3600 * 1000L
+        for ((k, v) in sp.all) {
+            if (k.startsWith("active_base_") && v is String) {
+                val sid = k.removePrefix("active_base_")
+                val parts = v.split("|")
+                if (parts.size == 2) {
+                    val base = parts[0]
+                    val ts = parts[1].toLongOrNull() ?: 0L
+                    if (now - ts <= ttl) {
+                        out[sid] = base to ts
+                    }
+                }
+            }
+        }
+        return out
+    }
+
+    // ── 书源健康指标持久化 ──
+    fun saveSourceMetrics(json: String) {
+        sp.edit().putString("source_health_metrics_v2", json).apply()
+    }
+
+    fun loadSourceMetrics(): String? = sp.getString("source_health_metrics_v2", null)
 
     fun clearAll() {
         sp.edit().clear().apply()

@@ -71,31 +71,32 @@ object Net {
         }
     }
 
-    // ── 域名限频与防刷保护 ──
-    private val hostLastRequestMs = ConcurrentHashMap<String, Long>()
-    private val hostMinIntervalMs = ConcurrentHashMap<String, Long>().apply {
-        put("www.wenku8.cc", 5000L)
-        put("www.wenku8.net", 5000L)
-        put("wenku8.cc", 5000L)
-        put("wenku8.net", 5000L)
-        put("m.sfacg.com", 800L)
-        put("sfacg.com", 800L)
-    }
+    // ── 统一令牌桶域名限频与防刷保护 ──
+    val rateLimiter = DomainRateLimiter()
 
     /** 域名级请求限频：在 OkHttp 实际发包前强制等待保护间隔，防止并发/快速重试触发源站 Cloudflare 拦截 */
-    fun enforceHostInterval(host: String) {
-        val min = hostMinIntervalMs[host] ?: 150L
-        if (min <= 0L) return
-        val lock = host.intern()
-        synchronized(lock) {
-            val now = System.currentTimeMillis()
-            val last = hostLastRequestMs[host] ?: 0L
-            val elapsed = now - last
-            if (elapsed in 0 until min) {
-                val waitMs = min - elapsed
-                runCatching { Thread.sleep(waitMs) }
-            }
-            hostLastRequestMs[host] = System.currentTimeMillis()
+    fun enforceHostInterval(host: String, maxWaitMs: Long = 10_000L): Boolean {
+        return rateLimiter.acquire(host, maxWaitMs)
+    }
+
+    // ── 请求 Call 级取消能力（支持按 Tag/SearchSeq 瞬时终止底层网络发包） ──
+    private val activeCalls = ConcurrentHashMap<Any, MutableSet<okhttp3.Call>>()
+
+    fun registerCall(tag: Any, call: okhttp3.Call) {
+        activeCalls.getOrPut(tag) { java.util.Collections.newSetFromMap(ConcurrentHashMap()) }.add(call)
+    }
+
+    fun unregisterCall(tag: Any, call: okhttp3.Call) {
+        val set = activeCalls[tag] ?: return
+        set.remove(call)
+        if (set.isEmpty()) activeCalls.remove(tag)
+    }
+
+    /** 强制取消并中断绑在该 tag 下的所有活跃 OkHttp 任务 */
+    fun cancelCalls(tag: Any) {
+        val set = activeCalls.remove(tag) ?: return
+        for (call in set) {
+            runCatching { call.cancel() }
         }
     }
 
@@ -304,19 +305,20 @@ object Net {
 
     private val Charset_gb18030 = charset("GB18030")
 
-    // 默认内置的常用书源凭证（如文库8会员Cookie，免除关站拦截与会员章节访问限制）
-    const val WENKU8_DEFAULT_COOKIE = "jieqiUserInfo=jieqiUserId%3D1947674%2CjieqiUserName%3Dwanmiaohai%2CjieqiUserGroup%3D3%2CjieqiUserVip%3D0%2CjieqiUserPassword%3D9472cb36a664a6eb22d122aad30e3ca6%2CjieqiUserName_un%3Dwanmiaohai%2CjieqiUserHonor_un%3D%26%23x65B0%3B%26%23x624B%3B%26%23x4E0A%3B%26%23x8DEF%3B%2CjieqiUserGroupName_un%3D%26%23x666E%3B%26%23x901A%3B%26%23x4F1A%3B%26%23x5458%3B%2CjieqiUserLogin%3D1793930437; jieqiVisitInfo=jieqiUserLogin%3D1793930437%2CjieqiUserId%3D1947674"
-
     @Volatile private var isLoggingInWenku8 = false
 
-    /** 自动为轻小说文库刷新或建立登录凭证（解决关站拦截、新用户注册提示与会员访问限制） */
-    fun ensureWenku8Login(): Boolean {
+    /**
+     * 为轻小说文库建立登录凭证（仅在用户显式提供个人账号时调用；严禁内置共享凭证）。
+     * 若未提供账号密码，则返回 false，交由 UI 引导用户通过 WebView 登录。
+     */
+    fun ensureWenku8Login(username: String = "", password: String = ""): Boolean {
+        if (username.isBlank() || password.isBlank()) return false
         if (isLoggingInWenku8) return false
         isLoggingInWenku8 = true
         return try {
             val fb = FormBody.Builder()
-                .add("username", "wanmiaohai")
-                .add("password", "Yuankuaile123")
+                .add("username", username.trim())
+                .add("password", password.trim())
                 .add("usecookie", "315360000")
                 .add("action", "login")
                 .build()
@@ -352,37 +354,40 @@ object Net {
         useCache: Boolean = false,
         fast: Boolean = false,
         slow: Boolean = false,
+        tag: Any? = null,
+        timeoutMs: Long = 0L,
+        profile: SourceRequestProfile? = null,
     ): Resp {
         val isSlow = slow || url.contains("sfacg.com")
         val key = "G|$url|$charset"
         if (useCache) synchronized(pageCache) { pageCache[key] }?.let { return it }
         val builder = Request.Builder().url(safeUrl(url))
         baseHeaders.forEach { (k, v) -> builder.header(k, v) }
-        val reqUa = headers["User-Agent"] ?: UA
-        val isMobile = reqUa.contains("Mobile") || reqUa.contains("Android")
+
+        val reqUa = profile?.userAgent?.ifBlank { headers["User-Agent"] } ?: headers["User-Agent"] ?: UA
+        val isMobile = when (profile?.deviceType?.uppercase()) {
+            "MOBILE" -> true
+            "DESKTOP" -> false
+            else -> reqUa.contains("Mobile") || reqUa.contains("Android")
+        }
+        builder.header("User-Agent", reqUa)
         builder.header("sec-ch-ua-mobile", if (isMobile) "?1" else "?0")
         builder.header("sec-ch-ua-platform", if (isMobile) "\"Android\"" else "\"Windows\"")
         builder.header("Connection", "keep-alive")
-        // 这几个头是 Cloudflare 判「真人浏览器」的重要依据，缺了容易被 403
         builder.header("Sec-Fetch-Dest", "document")
         builder.header("Sec-Fetch-Mode", "navigate")
         builder.header("Sec-Fetch-Site", if (referer.isBlank()) "none" else "same-origin")
         builder.header("Sec-Fetch-User", "?1")
-        if (referer.isNotBlank()) builder.header("Referer", referer)
-        if (url.contains("wenku8") && !headers.containsKey("Cookie")) {
-            val u = runCatching { safeUrl(url).toHttpUrlOrNull() }.getOrNull()
-            val hasCustom = if (u != null) cookieJar.loadForRequest(u).isNotEmpty() else false
-            if (!hasCustom) {
-                builder.header("Cookie", WENKU8_DEFAULT_COOKIE)
-            }
+        if (profile != null && profile.accept.isNotBlank()) builder.header("Accept", profile.accept)
+        val finalReferer = profile?.referer?.ifBlank { referer } ?: referer
+        if (finalReferer.isNotBlank()) builder.header("Referer", finalReferer)
+        if (profile != null && profile.cookie.isNotBlank() && !headers.containsKey("Cookie")) {
+            builder.header("Cookie", profile.cookie)
         }
+        profile?.extraHeaders?.forEach { (k, v) -> builder.header(k, v) }
         headers.forEach { (k, v) -> builder.header(k, v) }
-        var resp = exec(builder.build(), charset, fast = fast, slow = isSlow)
-        if (url.contains("wenku8") && (resp.body.contains("本站正式关闭") || resp.body.contains("用户登录") || resp.code == 403)) {
-            if (ensureWenku8Login()) {
-                resp = exec(builder.build(), charset, fast = fast, slow = isSlow)
-            }
-        }
+
+        val resp = exec(builder.build(), charset, fast = fast, slow = isSlow, tag = tag, timeoutMs = timeoutMs)
         if (useCache && resp.ok) synchronized(pageCache) { pageCache[key] = resp }
         return resp
     }
@@ -396,6 +401,9 @@ object Net {
         encoded: Boolean = false,
         fast: Boolean = false,
         slow: Boolean = false,
+        tag: Any? = null,
+        timeoutMs: Long = 0L,
+        profile: SourceRequestProfile? = null,
     ): Resp {
         val isSlow = slow || url.contains("sfacg.com")
         val fb = FormBody.Builder()
@@ -406,32 +414,32 @@ object Net {
         }
         val builder = Request.Builder().url(safeUrl(url))
         baseHeaders.forEach { (k, v) -> builder.header(k, v) }
-        val reqUa = headers["User-Agent"] ?: UA
-        val isMobile = reqUa.contains("Mobile") || reqUa.contains("Android")
+
+        val reqUa = profile?.userAgent?.ifBlank { headers["User-Agent"] } ?: headers["User-Agent"] ?: UA
+        val isMobile = when (profile?.deviceType?.uppercase()) {
+            "MOBILE" -> true
+            "DESKTOP" -> false
+            else -> reqUa.contains("Mobile") || reqUa.contains("Android")
+        }
+        builder.header("User-Agent", reqUa)
         builder.header("sec-ch-ua-mobile", if (isMobile) "?1" else "?0")
         builder.header("sec-ch-ua-platform", if (isMobile) "\"Android\"" else "\"Windows\"")
         builder.header("Content-Type", "application/x-www-form-urlencoded")
         builder.header("Sec-Fetch-Dest", "document")
         builder.header("Sec-Fetch-Mode", "navigate")
         builder.header("Sec-Fetch-Site", if (referer.isBlank()) "none" else "same-origin")
-        builder.header("Origin", referer.trimEnd('/'))
+        val finalReferer = profile?.referer?.ifBlank { referer } ?: referer
+        builder.header("Origin", finalReferer.trimEnd('/'))
         builder.post(fb.build())
-        if (referer.isNotBlank()) builder.header("Referer", referer)
-        if (url.contains("wenku8") && !headers.containsKey("Cookie")) {
-            val u = runCatching { safeUrl(url).toHttpUrlOrNull() }.getOrNull()
-            val hasCustom = if (u != null) cookieJar.loadForRequest(u).isNotEmpty() else false
-            if (!hasCustom) {
-                builder.header("Cookie", WENKU8_DEFAULT_COOKIE)
-            }
+        if (finalReferer.isNotBlank()) builder.header("Referer", finalReferer)
+        if (profile != null && profile.accept.isNotBlank()) builder.header("Accept", profile.accept)
+        if (profile != null && profile.cookie.isNotBlank() && !headers.containsKey("Cookie")) {
+            builder.header("Cookie", profile.cookie)
         }
+        profile?.extraHeaders?.forEach { (k, v) -> builder.header(k, v) }
         headers.forEach { (k, v) -> builder.header(k, v) }
-        var resp = exec(builder.build(), charset, fast = fast, slow = isSlow)
-        if (url.contains("wenku8") && (resp.body.contains("本站正式关闭") || resp.body.contains("用户登录") || resp.code == 403)) {
-            if (ensureWenku8Login()) {
-                resp = exec(builder.build(), charset, fast = fast, slow = isSlow)
-            }
-        }
-        return resp
+
+        return exec(builder.build(), charset, fast = fast, slow = isSlow, tag = tag, timeoutMs = timeoutMs)
     }
 
     fun getBytes(url: String, referer: String = ""): ByteArray? = runCatching {
@@ -439,8 +447,10 @@ object Net {
         if (referer.isNotBlank()) b.header("Referer", referer)
         if (url.contains("wenku8")) {
             val host = runCatching { safeUrl(url).toHttpUrlOrNull()?.host }.getOrNull() ?: "wenku8.cc"
-            val ck = getCookiesHeader(host).ifBlank { WENKU8_DEFAULT_COOKIE }
-            b.header("Cookie", ck)
+            val ck = getCookiesHeader(host)
+            if (ck.isNotBlank()) {
+                b.header("Cookie", ck)
+            }
         }
         client.newCall(b.build()).execute().use { r ->
             if (!r.isSuccessful) null else r.body?.bytes()
@@ -514,51 +524,88 @@ object Net {
     }
 
     /**
-     * 请求外壳：https 被 403 时尝试降级 http。
-     * 移除对网络故障/超时的隐式休眠重试，使多域名轮询与镜像降级能够尽快切换。
+     * 请求外壳：支持超时预算限制与底层 OkHttp Call.cancel 级取消。
      */
-    private fun exec(request: Request, charset: String, depth: Int = 0, fast: Boolean = false, slow: Boolean = false): Resp {
-        return once(request, charset, depth, fast = fast, slow = slow)
+    private fun exec(
+        request: Request,
+        charset: String,
+        depth: Int = 0,
+        fast: Boolean = false,
+        slow: Boolean = false,
+        tag: Any? = null,
+        timeoutMs: Long = 0L,
+    ): Resp {
+        return once(request, charset, depth, fast = fast, slow = slow, tag = tag, timeoutMs = timeoutMs)
     }
 
-    private fun once(request: Request, charset: String, depth: Int = 0, fast: Boolean = false, slow: Boolean = false): Resp = try {
-        enforceHostInterval(request.url.host)
-        val targetClient = when {
+    private fun once(
+        request: Request,
+        charset: String,
+        depth: Int = 0,
+        fast: Boolean = false,
+        slow: Boolean = false,
+        tag: Any? = null,
+        timeoutMs: Long = 0L,
+    ): Resp {
+        val baseClient = when {
             slow -> slowClient
             fast -> fastClient
             else -> client
         }
-        targetClient.newCall(request).execute().use { r ->
-            val bytes = r.body?.bytes() ?: ByteArray(0)
-            val text = decode(bytes, charset, r.header("Content-Type"))
-            val finalUrl = r.request.url.toString()
-            if (!r.isSuccessful) {
-                val isCf = isCloudflareChallenge(r.code, text)
-                val err = if (isCf) "访问受限（触发 Cloudflare 浏览器安全质询，需网页验证）" else friendlyCode(r.code)
-                return Resp(false, r.code, text, err, finalUrl)
+        val targetClient = if (timeoutMs > 0L) {
+            val timeoutSec = maxOf(1L, timeoutMs / 1000L)
+            baseClient.newBuilder()
+                .connectTimeout(minOf(5L, timeoutSec), TimeUnit.SECONDS)
+                .readTimeout(timeoutSec, TimeUnit.SECONDS)
+                .callTimeout(timeoutSec + 2, TimeUnit.SECONDS)
+                .build()
+        } else baseClient
+
+        val call = targetClient.newCall(request)
+        if (tag != null) registerCall(tag, call)
+
+        return try {
+            val maxWait = if (timeoutMs > 0L) timeoutMs else 10_000L
+            val acquired = enforceHostInterval(request.url.host, maxWaitMs = maxWait)
+            if (!acquired && timeoutMs > 0L) {
+                return Resp(false, 0, "", "域名限频等待超时", request.url.toString())
             }
 
-            // 有些站用 meta / JS 做跳转，普通 HTTP 客户端不会跟，这里手动跟一层。
-            // 只对「几乎没内容的空壳页」生效：正常章节页里常有一段
-            // `location.href = "下载APP"` 之类的脚本，跟着它跳就再也抓不到正文了。
-            if (depth < 2 && text.length < 1200) {
-                val jump = findMetaRedirect(text)
-                if (jump != null && jump != finalUrl) {
-                    val abs = Rules.absUrl(finalUrl, jump)
-                    if (abs.startsWith("http")) {
-                        val again = Request.Builder().url(abs)
-                            .header("User-Agent", UA)
-                            .header("Referer", finalUrl)
-                            .header("Accept-Language", "zh-CN,zh;q=0.9")
-                            .build()
-                        return exec(again, charset, depth + 1, fast = fast, slow = slow)
+            call.execute().use { r ->
+                val bytes = r.body?.bytes() ?: ByteArray(0)
+                val text = decode(bytes, charset, r.header("Content-Type"))
+                val finalUrl = r.request.url.toString()
+                if (!r.isSuccessful) {
+                    val isCf = isCloudflareChallenge(r.code, text)
+                    val err = if (isCf) "访问受限（触发 Cloudflare 浏览器安全质询，需网页验证）" else friendlyCode(r.code)
+                    return Resp(false, r.code, text, err, finalUrl)
+                }
+
+                // 识别短脚本/meta 自动跳转
+                if (depth < 2 && text.length < 1200) {
+                    val jump = findMetaRedirect(text)
+                    if (jump != null && jump != finalUrl) {
+                        val abs = Rules.absUrl(finalUrl, jump)
+                        if (abs.startsWith("http")) {
+                            val again = Request.Builder().url(abs)
+                                .header("User-Agent", request.header("User-Agent") ?: UA)
+                                .header("Referer", finalUrl)
+                                .header("Accept-Language", "zh-CN,zh;q=0.9")
+                                .build()
+                            return exec(again, charset, depth + 1, fast = fast, slow = slow, tag = tag, timeoutMs = timeoutMs)
+                        }
                     }
                 }
+                Resp(true, r.code, text, via = finalUrl)
             }
-            Resp(true, r.code, text, via = finalUrl)
+        } catch (e: Exception) {
+            if (call.isCanceled() || (e is java.io.InterruptedIOException && e.message?.contains("cancel", true) == true)) {
+                return Resp(false, -1, "", "已取消", request.url.toString())
+            }
+            Resp(false, 0, "", friendlyError(e), request.url.toString())
+        } finally {
+            if (tag != null) unregisterCall(tag, call)
         }
-    } catch (e: Exception) {
-        Resp(false, 0, "", friendlyError(e))
     }
 
     /**
@@ -595,6 +642,7 @@ object Net {
     fun friendlyError(e: Throwable): String {
         val msg = (e.message ?: "").lowercase()
         val name = e.javaClass.simpleName
+        if (msg.contains("cancel") || name.contains("CanceledException")) return "已取消"
         return when {
             msg.contains("timeout") || msg.contains("timed out") || name.contains("Timeout") -> "连接超时"
             msg.contains("unable to resolve") || msg.contains("nodename") ||

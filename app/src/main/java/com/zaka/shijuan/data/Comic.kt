@@ -1039,10 +1039,13 @@ object ComicRepo {
 
     /**
      * 多源搜索：每个源并发跑，返回每个源各自的结果和状态。
-     * 单个源超时/失败不影响其它源，单源最多等 8 秒。
+     * 单个源超时/失败不影响其它源，所有源共享 8 秒总预算。
      */
     fun searchAll(keyword: String, ids: List<String>): List<ComicHit> {
-        val picked = sources.filter { it.id in ids && !isBlacklisted(it.id) }.ifEmpty { sources }
+        val targetIds = ids.ifEmpty { sources.map { it.id } }
+        val picked = sources.filter { it.id in targetIds && !isBlacklisted(it.id) }
+        if (picked.isEmpty()) return emptyList()
+        val deadline = System.currentTimeMillis() + 8000L
         val jobs = picked.map { src ->
             val t0 = System.currentTimeMillis()
             pool.submit(Callable {
@@ -1063,22 +1066,34 @@ object ComicRepo {
                     )
             })
         }
-        return jobs.map { f ->
-            runCatching { f.get(8, TimeUnit.SECONDS) }.getOrElse {
-                val i = jobs.indexOf(f)
-                ComicHit(picked[i].id, picked[i].name, emptyList(), false, 8000, "超时 (8s)")
+        val results = ArrayList<ComicHit>()
+        for (i in jobs.indices) {
+            val f = jobs[i]
+            val src = picked[i]
+            val remainingMs = (deadline - System.currentTimeMillis()).coerceAtLeast(1L)
+            val hit = runCatching {
+                f.get(remainingMs, TimeUnit.MILLISECONDS)
+            }.getOrElse {
+                f.cancel(true)
+                ComicHit(src.id, src.name, emptyList(), false, 8000, "超时 (8s)")
             }
-        }.sortedByDescending { it.list.size }
+            results.add(hit)
+        }
+        jobs.forEach { if (!it.isDone) runCatching { it.cancel(true) } }
+        return results.sortedByDescending { it.list.size }
     }
 
-    /** 把多个源的结果合并去重（同名取先到的，标注来源） */
+    /** 把多个源的结果合并去重（综合书名、作者与路径） */
     fun merge(hits: List<ComicHit>): List<Comic> {
         val out = ArrayList<Comic>()
         val seen = HashSet<String>()
         for (h in hits) {
             for (c in h.list) {
-                val key = c.name.replace(Regex("[\\s·:：\\-—_()（）\\[\\]]"), "").lowercase()
-                if (key.isBlank() || !seen.add(key)) continue
+                val normName = c.name.replace(Regex("[\\s·:：\\-—_()（）\\[\\]]"), "").lowercase()
+                val normAuthor = c.author.replace(Regex("[\\s·:：\\-—_()（）\\[\\]]"), "").lowercase()
+                val normPath = runCatching { java.net.URI(c.url).path }.getOrDefault(c.url).lowercase()
+                val key = if (normAuthor.isNotBlank()) "$normName|$normAuthor" else "$normName|$normPath"
+                if (normName.isBlank() || !seen.add(key)) continue
                 out.add(c)
             }
         }

@@ -121,7 +121,7 @@ fun ReaderScreen(
         if (savedScroll <= 0) scrollState.scrollTo(0)
         withContext(Dispatchers.IO) {
             val src = Sources.byId(book.sourceId)
-            val cached = store.loadContent(ch.url)
+            val cached = store.loadContent(ch.url, book.sourceId)
             if (cached != null && !BookRepo.isTranscodeOrPiracyError(cached) && !BookRepo.isSoftError(cached)) {
                 content = Content(ch.name, cached)
                 loading = false
@@ -131,7 +131,7 @@ fun ReaderScreen(
                 BookRepo.getChapter(src, ch)
                     .onSuccess {
                         content = it
-                        store.saveContent(ch.url, it.text)
+                        store.saveContent(ch.url, it.text, book.sourceId)
                     }
                     .onFailure {
                         error = if (!Offline.isOnline(ctx)) "离线模式：这一章没缓存过，联网后再看"
@@ -267,7 +267,7 @@ fun ReaderScreen(
                                 val src = Sources.byId(book.sourceId)
                                 if (src != null) {
                                     BookRepo.getChapter(src, ch).onSuccess {
-                                        content = it; error = ""; store.saveContent(ch.url, it.text)
+                                        content = it; error = ""; store.saveContent(ch.url, it.text, book.sourceId)
                                     }.onFailure { error = it.message ?: "加载失败" }
                                 }
                                 loading = false

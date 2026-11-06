@@ -64,6 +64,12 @@ fun SearchScreen(
     val focusRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
 
+    DisposableEffect(Unit) {
+        onDispose {
+            BookRepo.cancelSearch("search_$searchSeq")
+        }
+    }
+
     val activeSources = remember(enabled, Sources.customVersion) { Sources.all.filter { it.id in enabled } }
 
     fun doSearch(k: String) {
@@ -77,20 +83,32 @@ fun SearchScreen(
         results = emptyMap()
         filterSource = null
         running = true
+        val prevSeq = searchSeq
+        BookRepo.cancelSearch("search_$prevSeq")
         searchJob?.cancel()
         val currentSeq = ++searchSeq
+        val searchTag = "search_$currentSeq"
         searchJob = scope.launch {
             val acc = HashMap<String, SourceResult>()
             withContext(Dispatchers.IO) {
-                BookRepo.searchAll(activeSources, key) { r ->
+                BookRepo.searchAll(activeSources, key, tag = searchTag) { r ->
                     if (searchSeq == currentSeq) {
-                        synchronized(acc) { acc[r.sourceId] = r }
-                        results = acc.toMap()
+                        val snapshot = synchronized(acc) {
+                            acc[r.sourceId] = r
+                            acc.toMap()
+                        }
+                        scope.launch(Dispatchers.Main) {
+                            if (searchSeq == currentSeq) {
+                                results = snapshot
+                            }
+                        }
                     }
                 }
             }
-            if (searchSeq == currentSeq) {
-                running = false
+            withContext(Dispatchers.Main) {
+                if (searchSeq == currentSeq) {
+                    running = false
+                }
             }
         }
     }

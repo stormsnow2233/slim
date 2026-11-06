@@ -23,6 +23,15 @@ data class SearchRule(
     val keyCharset: String = "utf-8",      // 关键词编码：GBK 老站必须用 gbk，否则搜不到
 )
 
+data class SourceRequestProfile(
+    val userAgent: String = "",
+    val accept: String = "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+    val referer: String = "",
+    val cookie: String = "",
+    val deviceType: String = "AUTO", // AUTO / DESKTOP / MOBILE
+    val extraHeaders: Map<String, String> = emptyMap(),
+)
+
 data class DetailRule(
     val name: String = "",
     val author: String = "",
@@ -45,6 +54,10 @@ data class TocRule(
     val volume: String = "",
     // 卷名正则：命中整卷跳过。SF 的「人设」「书友画廊」整卷都是图片，收进来只会让人点开一片空白
     val skipVolume: String = "",
+    // 目录下一页选择器（如 "a:contains(下一页)@href" 或 "a.next@href"）
+    val nextPage: String = "",
+    // 目录最多抓取页数（防环保护，默认 50 页）
+    val maxPages: Int = 50,
 )
 
 data class ContentRule(
@@ -67,6 +80,12 @@ data class Source(
     val content: ContentRule? = null,
     val apiKind: String = "",       // "zlib"
     val enabledByDefault: Boolean = false,
+    val probeKeyword: String = "",  // 专属探针关键词（留空时按分类默认：轻小说为"魔王"，其他为"凡人修仙传"）
+    val probeUrl: String = "",      // 专属探针 URL
+    val probeMode: String = "SEARCH", // "SEARCH" / "DIRECT_URL" / "HOMEPAGE"
+    val userAgent: String = "",     // 源级独立 UA
+    val renderMode: String = "HTTP", // "HTTP" / "WEBVIEW" / "AUTO"
+    val requestProfile: SourceRequestProfile? = null,
 ) {
     val bases: List<String> get() = (listOf(base) + mirrors).filter { it.isNotBlank() }.distinct()
 }

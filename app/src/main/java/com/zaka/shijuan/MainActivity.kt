@@ -82,6 +82,7 @@ fun ShijuanApp() {
     remember { Offline.init(ctx.applicationContext) }
     // 自定义书源：启动时从本地读出来注册，跟内置源一起参与搜索
     remember { CustomSources.init(ctx.applicationContext, store); 0 }
+    remember { BookRepo.init(store); 0 }
     // 恢复已持久化的各站点凭证（包含 Cloudflare 质询通过后的凭据）
     remember {
         val saved = store.allSavedCookies()
@@ -124,19 +125,12 @@ fun ShijuanApp() {
     var activeUpdateInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
     val openDrawer = { uiScope.launch { drawerState.open() }; Unit }
 
-    // 启动时还原持久化的各站 Cookie（如文库会员 Cookie、Cloudflare 通过凭证）
+    // 启动时还原持久化的各站 Cookie（如文库通过凭证、Cloudflare 验证通过凭据）
     LaunchedEffect(Unit) {
         withContext(Dispatchers.IO) {
             val saved = store.allSavedCookies()
             saved.forEach { (host, cookies) ->
                 Net.syncCookies(host, cookies)
-            }
-            // 若文库尚未配置，注入默认有效会话并双向同步
-            listOf("wenku8.cc", "www.wenku8.cc", "wenku8.net", "www.wenku8.net").forEach { h ->
-                val current = Net.getCookiesHeader(h)
-                if (current.isBlank()) {
-                    Net.syncCookies(h, Net.WENKU8_DEFAULT_COOKIE)
-                }
             }
         }
     }
