@@ -448,6 +448,27 @@ class Store(context: Context) {
             .apply()
     }
 
+    // ── 站点 Cookie 凭据持久化（支持 Cloudflare 质询与登录凭据同步） ──
+    fun saveHostCookies(host: String, cookieHeader: String) {
+        val clean = host.removePrefix("http://").removePrefix("https://").substringBefore('/')
+        sp.edit().putString("cookie_$clean", cookieHeader).apply()
+    }
+
+    fun loadHostCookies(host: String): String? {
+        val clean = host.removePrefix("http://").removePrefix("https://").substringBefore('/')
+        return sp.getString("cookie_$clean", null)
+    }
+
+    fun allSavedCookies(): Map<String, String> {
+        val out = mutableMapOf<String, String>()
+        for ((k, v) in sp.all) {
+            if (k.startsWith("cookie_") && v is String) {
+                out[k.removePrefix("cookie_")] = v
+            }
+        }
+        return out
+    }
+
     fun clearAll() {
         sp.edit().clear().apply()
     }

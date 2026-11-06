@@ -4,6 +4,16 @@ import org.json.JSONObject
 import java.net.URLEncoder
 import java.util.concurrent.Executors
 
+/** 书源运行状态分类 */
+enum class SourceStatus(val label: String) {
+    NORMAL("正常"),
+    ACCESS_RESTRICTED("访问受限"),    // 403, Cloudflare 质询, WAF
+    NEEDS_LOGIN("需要登录"),          // VIP, 401, 会话失效
+    SITE_ERROR("站点异常"),           // 404, 500, 502, 504, SSL 证书失效
+    RULE_INVALID("规则失效"),         // 页面拉取成功但规则提取 0 本
+    UNVERIFIED("未验证"),
+}
+
 /** 单次搜索某书源的结果 */
 data class SourceResult(
     val sourceId: String,
@@ -12,9 +22,29 @@ data class SourceResult(
     val books: List<Book> = emptyList(),
     val error: String = "",
     val ms: Long = 0,
+    val status: SourceStatus = if (ok) SourceStatus.NORMAL else SourceStatus.UNVERIFIED,
+    val httpCode: Int = 0,
 ) {
     val count: Int get() = books.size
 }
+
+data class SourceHealthMetrics(
+    val sourceId: String,
+    val lastSuccessMs: Long = 0L,
+    val lastFailMs: Long = 0L,
+    val lastFailStatus: SourceStatus = SourceStatus.UNVERIFIED,
+    val lastFailHttpCode: Int = 0,
+    val lastFailMsg: String = "",
+    val consecutiveFailures: Int = 0,
+    val lastResult: SourceResult? = null,
+)
+
+data class DeepHealthResult(
+    val ok: Boolean,
+    val detail: String,
+    val status: SourceStatus = if (ok) SourceStatus.NORMAL else SourceStatus.UNVERIFIED,
+    val httpCode: Int = 0,
+)
 
 object BookRepo {
 
@@ -28,6 +58,57 @@ object BookRepo {
 
     private fun fill(tpl: String, key: String, charset: String = "utf-8"): String =
         tpl.replace("{key}", enc(key, if (charset.contains("gb")) "GBK" else "UTF-8"))
+
+    val sourceMetrics = java.util.concurrent.ConcurrentHashMap<String, SourceHealthMetrics>()
+
+    fun classifyStatus(ok: Boolean, httpCode: Int, error: String, booksCount: Int): SourceStatus {
+        if (ok && booksCount > 0) return SourceStatus.NORMAL
+        if (httpCode == 403 || error.contains("Cloudflare") || error.contains("403") || error.contains("安全质询") || error.contains("拦截")) {
+            return SourceStatus.ACCESS_RESTRICTED
+        }
+        if (httpCode == 401 || error.contains("登录") || error.contains("VIP") || error.contains("购买")) {
+            return SourceStatus.NEEDS_LOGIN
+        }
+        if (httpCode in 500..599 || httpCode == 404 || error.contains("502") || error.contains("504") ||
+            error.contains("连接被拒绝") || error.contains("证书") || error.contains("TLS") ||
+            error.contains("DNS") || error.contains("域名解析") || error.contains("无法访问")
+        ) {
+            return SourceStatus.SITE_ERROR
+        }
+        if (error.contains("改版") || error.contains("规则") || error.contains("列表") ||
+            error.contains("取不到") || error.contains("未解析") || error.contains("没有搜索结果")
+        ) {
+            return SourceStatus.RULE_INVALID
+        }
+        if (ok) return SourceStatus.NORMAL
+        return SourceStatus.UNVERIFIED
+    }
+
+    fun recordSuccess(sourceId: String, res: SourceResult) {
+        sourceMetrics.compute(sourceId) { _, old ->
+            (old ?: SourceHealthMetrics(sourceId)).copy(
+                lastSuccessMs = System.currentTimeMillis(),
+                consecutiveFailures = 0,
+                lastResult = res,
+            )
+        }
+    }
+
+    fun recordFailure(sourceId: String, status: SourceStatus, httpCode: Int, msg: String) {
+        val m = sourceMetrics.compute(sourceId) { _, old ->
+            val prev = old ?: SourceHealthMetrics(sourceId)
+            prev.copy(
+                lastFailMs = System.currentTimeMillis(),
+                lastFailStatus = status,
+                lastFailHttpCode = httpCode,
+                lastFailMsg = msg,
+                consecutiveFailures = prev.consecutiveFailures + 1,
+            )
+        }
+        if (m != null && m.consecutiveFailures >= 3 && (httpCode in 502..504 || msg.contains("拒绝"))) {
+            markFailed(sourceId, 60_000L)
+        }
+    }
 
     private val sourceSearchLast = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
@@ -45,33 +126,30 @@ object BookRepo {
         }
         if (src.apiKind == "zlib") {
             val r = Zlib.search(key)
-            return SourceResult(
-                src.id, src.name, r.first.isNotEmpty(),
+            val ok = r.first.isNotEmpty()
+            val st = if (ok) SourceStatus.NORMAL else classifyStatus(false, 0, r.second, 0)
+            val res = SourceResult(
+                src.id, src.name, ok,
                 r.first, r.second, System.currentTimeMillis() - t0,
+                st, if (ok) 200 else 0,
             )
+            if (ok) recordSuccess(src.id, res) else recordFailure(src.id, st, 0, r.second)
+            return res
         }
         if (src.apiKind == "sfacg") return searchSfacg(src, key)
-        val rule = src.search ?: return SourceResult(src.id, src.name, false, error = "该源未配置搜索规则")
+        val rule = src.search ?: return SourceResult(src.id, src.name, false, error = "该源未配置搜索规则", status = SourceStatus.RULE_INVALID)
 
         // GBK 站点（笔趣阁系、飘天、顶点等）的搜索参数必须用 GBK 编码，否则中文搜不到
         val keyCharset = if (rule.keyCharset.equals("utf-8", true) && src.charset.contains("gb")) "gbk"
         else rule.keyCharset
 
         var lastErr = "连接不上"
+        var lastHttpCode = 0
         // 已知能通的域名排最前，省掉镜像探测那几秒
         val known = ActiveBases[src.id]
         val ordered = if (known != null && src.bases.contains(known))
             listOf(known) + src.bases.filter { it != known } else src.bases
         for (base in ordered) {
-            if (base != ordered.first() && src.id == "wenku8") {
-                val now = System.currentTimeMillis()
-                val last = sourceSearchLast[src.id] ?: 0L
-                val elapsed = now - last
-                if (elapsed in 0..5999) {
-                    runCatching { Thread.sleep(6000L - elapsed) }
-                }
-                sourceSearchLast[src.id] = System.currentTimeMillis()
-            }
             val urls = buildList {
                 add(fill(rule.url, key, keyCharset))
                 rule.extraUrls.forEach { add(fill(it, key, keyCharset)) }
@@ -90,27 +168,39 @@ object BookRepo {
                     Net.get(full, src.charset, base + "/", fast = true)
                 }
 
-                if (!resp.ok) { lastErr = resp.error; continue }
+                if (!resp.ok) {
+                    lastErr = resp.error
+                    lastHttpCode = resp.code
+                    // 遇到 403 明确标识访问受限，快速失败不重试，方便用户触发安全验证
+                    if (resp.code == 403 || resp.error.contains("Cloudflare") || resp.error.contains("安全质询")) {
+                        val st = SourceStatus.ACCESS_RESTRICTED
+                        val res = SourceResult(src.id, src.name, false, emptyList(), resp.error, System.currentTimeMillis() - t0, st, resp.code)
+                        recordFailure(src.id, st, resp.code, resp.error)
+                        return res
+                    }
+                    continue
+                }
 
                 // 搜一次就被 302 到书页的站点（速读谷），书页本身就是唯一结果。
-                // 必须先判这个：那种页面上有一堆章节链接，auto 兜底会把章节目录当成「搜索列表」。
                 if (resp.via.isNotBlank() && resp.via != full) {
                     singleBookFromPage(src, resp, full, key)?.let { one ->
                         ActiveBases[src.id] = base
-                        return SourceResult(src.id, src.name, true, listOf(one), "", System.currentTimeMillis() - t0)
+                        val res = SourceResult(src.id, src.name, true, listOf(one), "", System.currentTimeMillis() - t0, SourceStatus.NORMAL, 200)
+                        recordSuccess(src.id, res)
+                        return res
                     }
                 }
                 val books = parseSearchPage(src, resp.body, resp.via.ifBlank { full }, rule, key)
                 if (books.isNotEmpty()) {
                     ActiveBases[src.id] = base
-                    return SourceResult(src.id, src.name, true, books, "", System.currentTimeMillis() - t0)
+                    val res = SourceResult(src.id, src.name, true, books, "", System.currentTimeMillis() - t0, SourceStatus.NORMAL, 200)
+                    recordSuccess(src.id, res)
+                    return res
                 }
                 // 失败要分清楚：站点上真没这本书 ≠ 站点改版解析不出来。
-                // 以前两种情况都甩一句「没认出书籍列表」，看着就像源死了。
                 val rows = Rules.countList(Rules.parse(resp.body).body(), rule.list)
                 val noEcho = key.isNotBlank() && !resp.body.contains(key, ignoreCase = true)
                 lastErr = when {
-                    // 结果页上连搜索词都没有，说明站点把请求甩回了首页/导航页，根本没有搜索结果
                     noEcho -> "站点搜索不可用（返回的是导航/首页，不是结果页）"
                     rows > 0 -> "站点改版，列表 ${rows} 项但取不到书名"
                     looksLikeNoResult(resp.body) -> "这个站没有这本书"
@@ -118,7 +208,10 @@ object BookRepo {
                 }
             }
         }
-        return SourceResult(src.id, src.name, false, emptyList(), lastErr, System.currentTimeMillis() - t0)
+        val st = classifyStatus(false, lastHttpCode, lastErr, 0)
+        val res = SourceResult(src.id, src.name, false, emptyList(), lastErr, System.currentTimeMillis() - t0, st, lastHttpCode)
+        recordFailure(src.id, st, lastHttpCode, lastErr)
+        return res
     }
 
     /**
@@ -128,13 +221,24 @@ object BookRepo {
     private fun searchSfacg(src: Source, key: String): SourceResult {
         val t0 = System.currentTimeMillis()
         var lastErr = "连接不上"
+        var lastCode = 0
         val known = ActiveBases[src.id]
         val ordered = if (known != null && src.bases.contains(known))
             listOf(known) + src.bases.filter { it != known } else src.bases
         for (base in ordered) {
             val url = base + "/API/HTML5.ashx?op=search&keyword=" + enc(key)
             val resp = Net.get(url, "utf-8", base + "/search.html", fast = true)
-            if (!resp.ok) { lastErr = resp.error; continue }
+            if (!resp.ok) {
+                lastErr = resp.error
+                lastCode = resp.code
+                if (resp.code == 403 || resp.error.contains("Cloudflare") || resp.error.contains("安全质询")) {
+                    val st = SourceStatus.ACCESS_RESTRICTED
+                    val res = SourceResult(src.id, src.name, false, emptyList(), resp.error, System.currentTimeMillis() - t0, st, resp.code)
+                    recordFailure(src.id, st, resp.code, resp.error)
+                    return res
+                }
+                continue
+            }
             val books = runCatching {
                 val json = JSONObject(resp.body.trimStart('\uFEFF'))
                 val arr = json.optJSONArray("Novels") ?: return@runCatching emptyList<Book>()
@@ -150,17 +254,23 @@ object BookRepo {
                         url = base + "/b/" + id + "/",
                         sourceId = src.id,
                         sourceName = src.name,
-                        kind = o.optString("TypeName").trim(),
+                        latest = o.optString("LastUpdateTime").trim(),
+                        intro = o.optString("Expand").trim(),
                     )
                 }
-            }.getOrElse { emptyList() }
+            }.getOrDefault(emptyList())
             if (books.isNotEmpty()) {
                 ActiveBases[src.id] = base
-                return SourceResult(src.id, src.name, true, books, "", System.currentTimeMillis() - t0)
+                val res = SourceResult(src.id, src.name, true, books, "", System.currentTimeMillis() - t0, SourceStatus.NORMAL, 200)
+                recordSuccess(src.id, res)
+                return res
             }
-            lastErr = "接口没返回书目"
+            lastErr = "没搜到这本书"
         }
-        return SourceResult(src.id, src.name, false, emptyList(), lastErr, System.currentTimeMillis() - t0)
+        val st = classifyStatus(false, lastCode, lastErr, 0)
+        val res = SourceResult(src.id, src.name, false, emptyList(), lastErr, System.currentTimeMillis() - t0, st, lastCode)
+        recordFailure(src.id, st, lastCode, lastErr)
+        return res
     }
 
     private fun sfCover(path: String): String = when {
@@ -787,14 +897,27 @@ object BookRepo {
      * 分段体检：搜索 → 目录 → 正文，哪一步断了直接说哪一步断的。
      * 以前只有「搜索通/不通」，看不出后面两步，排查全靠猜。
      */
-    fun healthDeep(src: Source): Triple<Boolean, String, String> {
+    fun healthDeep(src: Source): DeepHealthResult {
         val s = health(src)
-        if (!s.ok || s.books.isEmpty()) return Triple(false, "搜索：${s.error.ifBlank { "没结果" }}", "")
+        if (!s.ok || s.books.isEmpty()) {
+            return DeepHealthResult(false, "搜索：${s.error.ifBlank { "没结果" }}", s.status, s.httpCode)
+        }
         val book = s.books.first()
-        val toc = runCatching { getToc(src, book) }
-            .getOrElse { return Triple(true, "目录：${it.message}", "") }
-        val list = toc.getOrElse { return Triple(true, "目录：${it.message}", "") }
-        if (list.chapters.size < 2) return Triple(true, "目录：只认出 ${list.chapters.size} 章", "")
+        val tocRes = runCatching { getToc(src, book) }
+        val toc = tocRes.getOrNull()
+        if (toc == null) {
+            val err = tocRes.exceptionOrNull()?.message ?: "目录获取失败"
+            val st = classifyStatus(false, 0, err, 0)
+            return DeepHealthResult(false, "目录：$err", st)
+        }
+        val list = toc.getOrElse {
+            val err = it.message ?: "目录解析失败"
+            val st = classifyStatus(false, 0, err, 0)
+            return DeepHealthResult(false, "目录：$err", st)
+        }
+        if (list.chapters.size < 2) {
+            return DeepHealthResult(false, "目录：只认出 ${list.chapters.size} 章", SourceStatus.RULE_INVALID)
+        }
         // 目录开头常有插图页/人设页/公告，本来就没有正文可抓。只测第一章会把好源误判成
         // 「正文内容过短」（SF 之前就是这么被冤枉的）。第一章不行就补测中间、四分之一处：
         // 中间的章节几乎不可能是插图页，能真实反映这个源到底给不给正文。
@@ -817,11 +940,12 @@ object BookRepo {
             val n = out.text.count { !it.isWhitespace() }
             if (n >= 120) {
                 val where = if (tried == 1) "" else "（换到第 ${ch.index + 1} 章试的）"
-                return Triple(true, "目录 ${list.chapters.size} 章 · 正文 $n 字$where", "")
+                return DeepHealthResult(true, "目录 ${list.chapters.size} 章 · 正文 $n 字$where", SourceStatus.NORMAL, 200)
             }
             lastErr = "正文内容过短（仅 $n 字）"
         }
-        return Triple(true, "目录 ${list.chapters.size} 章 · 正文：${lastErr.ifBlank { "抽了 $tried 章都取不到正文" }}", "")
+        val finalStatus = classifyStatus(false, 0, lastErr, 0)
+        return DeepHealthResult(false, "目录 ${list.chapters.size} 章 · 正文：${lastErr.ifBlank { "抽了 $tried 章都取不到正文" }}", finalStatus)
     }
 
     private val failedUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
@@ -854,7 +978,9 @@ object BookRepo {
                 val r = runCatching {
                     searchSource(src, key)
                 }.getOrElse {
-                    SourceResult(src.id, src.name, false, error = Net.friendlyError(it), ms = System.currentTimeMillis() - t0)
+                    val err = Net.friendlyError(it)
+                    val st = classifyStatus(false, 0, err, 0)
+                    SourceResult(src.id, src.name, false, error = err, ms = System.currentTimeMillis() - t0, status = st)
                 }
                 // 仅对严重网关故障（502、504、连接拒绝）做 1 分钟轻度临时熔断，常规超时或搜无结果绝不拉黑
                 if (!r.ok && (r.error.contains("502") || r.error.contains("504") || r.error.contains("拒绝连接"))) {

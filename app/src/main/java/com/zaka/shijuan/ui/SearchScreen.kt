@@ -56,6 +56,7 @@ fun SearchScreen(
     var filterSource by remember { mutableStateOf<String?>(null) }
     var searchSeq by remember { mutableStateOf(0) }
     var searchJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
+    var verifyTarget by remember { mutableStateOf<Source?>(null) }
 
     val focus = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
@@ -131,6 +132,20 @@ fun SearchScreen(
     val noHitCount = results.values.count { !it.ok && isNoHit(it.error) }
     val errCount = failCount - noHitCount
     val totalBooks = results.values.filter { it.ok }.sumOf { it.books.size }
+
+    if (verifyTarget != null) {
+        CloudflareVerifyDialog(
+            url = verifyTarget!!.base,
+            sourceName = verifyTarget!!.name,
+            store = store,
+            onDismiss = { verifyTarget = null },
+            onVerified = {
+                val s = verifyTarget ?: return@CloudflareVerifyDialog
+                verifyTarget = null
+                retrySource(s)
+            }
+        )
+    }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
 
@@ -278,6 +293,23 @@ fun SearchScreen(
                                 modifier = Modifier.weight(1f),
                             )
                             if (failed) {
+                                val isRestricted = st.status == SourceStatus.ACCESS_RESTRICTED ||
+                                    st.error.contains("Cloudflare") ||
+                                    st.error.contains("安全质询") ||
+                                    (src.id == "wenku8" && st.error.contains("403"))
+                                if (isRestricted) {
+                                    Text(
+                                        "去验证",
+                                        style = MaterialTheme.typography.labelMedium,
+                                        color = MaterialTheme.colorScheme.primary,
+                                        fontWeight = FontWeight.Bold,
+                                        modifier = Modifier
+                                            .clip(RoundedCornerShape(8.dp))
+                                            .clickable { verifyTarget = src }
+                                            .padding(horizontal = 8.dp, vertical = 2.dp),
+                                    )
+                                    Spacer(Modifier.width(4.dp))
+                                }
                                 Text(
                                     "重试",
                                     style = MaterialTheme.typography.labelMedium,

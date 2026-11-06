@@ -13,3 +13,9 @@ captures/
 *.apk.idsig
 *.aab
 output/
+
+# 签名文件与私有密钥
+*.jks
+*.keystore
+keystore/
+

@@ -34,6 +34,7 @@ import kotlinx.coroutines.withContext
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SourcesScreen(
+    store: com.zaka.shijuan.data.Store = com.zaka.shijuan.data.Store(androidx.compose.ui.platform.LocalContext.current),
     enabled: Set<String>,
     onToggle: (String, Boolean) -> Unit,
     onOpenDrawer: () -> Unit = {},
@@ -43,6 +44,7 @@ fun SourcesScreen(
     val scope = rememberCoroutineScope()
     var checks by remember { mutableStateOf<Map<String, SourceResult>>(emptyMap()) }
     var checking by remember { mutableStateOf(false) }
+    var verifyTarget by remember { mutableStateOf<Source?>(null) }
 
     // 自定义源增删改后要跟着刷新
     val customVersion = Sources.customVersion
@@ -53,6 +55,26 @@ fun SourcesScreen(
         val builtin = Sources.ALL.groupBy { it.group }
         if (Sources.custom.isEmpty()) builtin
         else linkedMapOf("我的书源" to Sources.custom) + builtin
+    }
+
+    if (verifyTarget != null) {
+        CloudflareVerifyDialog(
+            url = verifyTarget!!.base,
+            sourceName = verifyTarget!!.name,
+            store = store,
+            onDismiss = { verifyTarget = null },
+            onVerified = {
+                val s = verifyTarget ?: return@CloudflareVerifyDialog
+                verifyTarget = null
+                scope.launch {
+                    val rep = withContext(Dispatchers.IO) {
+                        runCatching { BookRepo.healthDeep(s) }
+                            .getOrElse { com.zaka.shijuan.data.DeepHealthResult(false, "检测异常：${it.message}", com.zaka.shijuan.data.SourceStatus.SITE_ERROR) }
+                    }
+                    checks = checks + (s.id to SourceResult(s.id, s.name, rep.ok, emptyList(), rep.detail, status = rep.status, httpCode = rep.httpCode))
+                }
+            }
+        )
     }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
@@ -89,9 +111,9 @@ fun SourcesScreen(
                             coroutineScope {
                                 targets.map { s ->
                                     async {
-                                        val (ok, detail, _) = runCatching { BookRepo.healthDeep(s) }
-                                            .getOrElse { Triple(false, "检测异常：${it.message}", "") }
-                                        s.id to SourceResult(s.id, s.name, ok, emptyList(), detail)
+                                        val rep = runCatching { BookRepo.healthDeep(s) }
+                                            .getOrElse { com.zaka.shijuan.data.DeepHealthResult(false, "检测异常：${it.message}", com.zaka.shijuan.data.SourceStatus.SITE_ERROR) }
+                                        s.id to SourceResult(s.id, s.name, rep.ok, emptyList(), rep.detail, status = rep.status, httpCode = rep.httpCode)
                                     }
                                 }.awaitAll()
                             }
@@ -132,6 +154,7 @@ fun SourcesScreen(
                         check = checks[src.id],
                         onToggle = { onToggle(src.id, it) },
                         onEdit = if (src.status == "custom") ({ onEditSource(src) }) else null,
+                        onVerify = { verifyTarget = src },
                     )
                 }
             }
@@ -158,7 +181,13 @@ private fun SourceCard(
     check: SourceResult?,
     onToggle: (Boolean) -> Unit,
     onEdit: (() -> Unit)? = null,
+    onVerify: (() -> Unit)? = null,
 ) {
+    val needsVerify = src.id == "wenku8" ||
+        check?.status == com.zaka.shijuan.data.SourceStatus.ACCESS_RESTRICTED ||
+        check?.error?.contains("Cloudflare") == true ||
+        check?.error?.contains("安全质询") == true
+
     Surface(
         shape = RoundedCornerShape(14.dp),
         color = MaterialTheme.colorScheme.surface,
@@ -179,6 +208,16 @@ private fun SourceCard(
                         "custom" -> TinyTag("自定义", androidx.compose.ui.graphics.Color(0xFF8A5A2B))
                         else -> {}
                     }
+                    if (check != null && !check.ok) {
+                        Spacer(Modifier.width(6.dp))
+                        when (check.status) {
+                            com.zaka.shijuan.data.SourceStatus.ACCESS_RESTRICTED -> TinyTag("访问受限", androidx.compose.ui.graphics.Color(0xFFE65100))
+                            com.zaka.shijuan.data.SourceStatus.NEEDS_LOGIN -> TinyTag("需登录", androidx.compose.ui.graphics.Color(0xFF1565C0))
+                            com.zaka.shijuan.data.SourceStatus.SITE_ERROR -> TinyTag("站点异常", MaterialTheme.colorScheme.error)
+                            com.zaka.shijuan.data.SourceStatus.RULE_INVALID -> TinyTag("规则失效", androidx.compose.ui.graphics.Color(0xFF6A1B9A))
+                            else -> {}
+                        }
+                    }
                 }
                 Spacer(Modifier.height(3.dp))
                 Text(
@@ -191,23 +230,47 @@ private fun SourceCard(
                 )
                 if (check != null) {
                     Spacer(Modifier.height(5.dp))
+                    val bg = when (check.status) {
+                        com.zaka.shijuan.data.SourceStatus.NORMAL -> androidx.compose.ui.graphics.Color(0xFF4C7A54).copy(alpha = 0.1f)
+                        com.zaka.shijuan.data.SourceStatus.ACCESS_RESTRICTED -> androidx.compose.ui.graphics.Color(0xFFE65100).copy(alpha = 0.12f)
+                        com.zaka.shijuan.data.SourceStatus.NEEDS_LOGIN -> androidx.compose.ui.graphics.Color(0xFF1565C0).copy(alpha = 0.12f)
+                        com.zaka.shijuan.data.SourceStatus.SITE_ERROR -> MaterialTheme.colorScheme.error.copy(alpha = 0.09f)
+                        com.zaka.shijuan.data.SourceStatus.RULE_INVALID -> androidx.compose.ui.graphics.Color(0xFF6A1B9A).copy(alpha = 0.12f)
+                        else -> if (check.ok) androidx.compose.ui.graphics.Color(0xFF4C7A54).copy(alpha = 0.1f) else MaterialTheme.colorScheme.error.copy(alpha = 0.09f)
+                    }
+                    val fg = when (check.status) {
+                        com.zaka.shijuan.data.SourceStatus.NORMAL -> androidx.compose.ui.graphics.Color(0xFF4C7A54)
+                        com.zaka.shijuan.data.SourceStatus.ACCESS_RESTRICTED -> androidx.compose.ui.graphics.Color(0xFFE65100)
+                        com.zaka.shijuan.data.SourceStatus.NEEDS_LOGIN -> androidx.compose.ui.graphics.Color(0xFF1565C0)
+                        com.zaka.shijuan.data.SourceStatus.SITE_ERROR -> MaterialTheme.colorScheme.error
+                        com.zaka.shijuan.data.SourceStatus.RULE_INVALID -> androidx.compose.ui.graphics.Color(0xFF6A1B9A)
+                        else -> if (check.ok) androidx.compose.ui.graphics.Color(0xFF4C7A54) else MaterialTheme.colorScheme.error
+                    }
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(6.dp))
-                            .background(
-                                if (check.ok) androidx.compose.ui.graphics.Color(0xFF4C7A54).copy(alpha = 0.1f)
-                                else MaterialTheme.colorScheme.error.copy(alpha = 0.09f)
-                            )
+                            .background(bg)
                             .padding(horizontal = 7.dp, vertical = 3.dp)
                     ) {
                         Text(
-                            if (check.ok) "可用 · ${check.books.size} 本 · ${check.ms}ms" else "不可用 · ${check.error}",
+                            if (check.ok) "可用 · ${check.error.ifBlank { "${check.books.size} 本 · ${check.ms}ms" }}"
+                            else "${check.status.label} · ${check.error}",
                             fontSize = 10.sp,
-                            color = if (check.ok) androidx.compose.ui.graphics.Color(0xFF4C7A54)
-                            else MaterialTheme.colorScheme.error,
+                            color = fg,
                         )
                     }
                 }
+            }
+            if (needsVerify && onVerify != null) {
+                OutlinedButton(
+                    onClick = onVerify,
+                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    modifier = Modifier.height(32.dp),
+                    shape = RoundedCornerShape(8.dp),
+                ) {
+                    Text("网页验证", fontSize = 11.sp)
+                }
+                Spacer(Modifier.width(6.dp))
             }
             if (onEdit != null) {
                 TextButton(

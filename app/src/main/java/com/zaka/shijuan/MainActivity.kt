@@ -91,6 +91,14 @@ fun ShijuanApp() {
     remember { Offline.init(ctx.applicationContext) }
     // 自定义书源：启动时从本地读出来注册，跟内置源一起参与搜索
     remember { CustomSources.init(ctx.applicationContext, store); 0 }
+    // 恢复已持久化的各站点凭证（包含 Cloudflare 质询通过后的凭据）
+    remember {
+        val saved = store.allSavedCookies()
+        for ((host, cookies) in saved) {
+            Net.syncCookies(host, cookies)
+        }
+        0
+    }
     val online by Offline.online.collectAsState()
     var route by remember { mutableStateOf<Route>(Route.Tabs) }
     var shelf by remember { mutableStateOf(store.shelf()) }
@@ -579,6 +587,7 @@ private fun TabHost(
                 )
 
                 Tab.Sources -> SourcesScreen(
+                    store = store,
                     enabled = enabled,
                     onToggle = { id, on -> onToggleSource(id, on) },
                     onOpenDrawer = onOpenDrawer,

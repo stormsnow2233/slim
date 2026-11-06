@@ -1,3 +1,6 @@
+import java.util.Properties
+import java.io.FileInputStream
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
@@ -20,13 +23,31 @@ android {
 
     signingConfigs {
         create("release") {
-            val keyPath = System.getenv("KEYSTORE_PATH") ?: project.findProperty("KEYSTORE_PATH")?.toString() ?: "../keystore/shijuan.jks"
-            val storePass = System.getenv("KEYSTORE_PASSWORD") ?: project.findProperty("KEYSTORE_PASSWORD")?.toString() ?: "shijuan"
-            val keyAliasName = System.getenv("KEY_ALIAS") ?: project.findProperty("KEY_ALIAS")?.toString() ?: "shijuan"
-            val keyPass = System.getenv("KEY_PASSWORD") ?: project.findProperty("KEY_PASSWORD")?.toString() ?: "shijuan"
+            val localProps = Properties().apply {
+                val lpFile = rootProject.file("local.properties")
+                if (lpFile.exists()) {
+                    lpFile.inputStream().use { stream -> this.load(stream) }
+                }
+            }
+            val keyPath = System.getenv("KEYSTORE_PATH")
+                ?: project.findProperty("KEYSTORE_PATH")?.toString()
+                ?: localProps.getProperty("KEYSTORE_PATH")
+                ?: "../keystore/shijuan.jks"
+            val storePass = System.getenv("KEYSTORE_PASSWORD")
+                ?: project.findProperty("KEYSTORE_PASSWORD")?.toString()
+                ?: localProps.getProperty("KEYSTORE_PASSWORD")
+                ?: (if (file(keyPath).exists()) "shijuan" else null)
+            val keyAliasName = System.getenv("KEY_ALIAS")
+                ?: project.findProperty("KEY_ALIAS")?.toString()
+                ?: localProps.getProperty("KEY_ALIAS")
+                ?: "shijuan"
+            val keyPass = System.getenv("KEY_PASSWORD")
+                ?: project.findProperty("KEY_PASSWORD")?.toString()
+                ?: localProps.getProperty("KEY_PASSWORD")
+                ?: storePass
 
             val kFile = file(keyPath)
-            if (kFile.exists()) {
+            if (kFile.exists() && !storePass.isNullOrBlank()) {
                 storeFile = kFile
                 storePassword = storePass
                 keyAlias = keyAliasName

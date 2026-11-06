@@ -70,7 +70,7 @@
 
 产物在 `app/build/outputs/apk/release/app-release.apk`。
 
-签名配置在 `app/build.gradle.kts` 的 `signingConfigs` 里，用的是仓库自带的 `keystore/shijuan.jks`（口令 `shijuan`）。发布正式版请换成你自己的 keystore。
+签名配置在 `app/build.gradle.kts` 的 `signingConfigs` 中。正式发布请通过环境变量（`KEYSTORE_PATH`, `KEYSTORE_PASSWORD`, `KEY_ALIAS`, `KEY_PASSWORD`）或在 `local.properties` 中安全配置密钥库，切勿将私有证书与密码提交至公开仓库。
 
 ## 书源
 

@@ -5,6 +5,7 @@ import okhttp3.ConnectionPool
 import okhttp3.Credentials
 import okhttp3.Dispatcher
 import okhttp3.FormBody
+import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
 import okhttp3.OkHttpClient
 import okhttp3.Protocol
 import okhttp3.Request
@@ -68,6 +69,90 @@ object Net {
             list.removeAll { it.expiresAt < now }
             return list
         }
+    }
+
+    // ── 域名限频与防刷保护 ──
+    private val hostLastRequestMs = ConcurrentHashMap<String, Long>()
+    private val hostMinIntervalMs = ConcurrentHashMap<String, Long>().apply {
+        put("www.wenku8.cc", 5000L)
+        put("www.wenku8.net", 5000L)
+        put("wenku8.cc", 5000L)
+        put("wenku8.net", 5000L)
+        put("m.sfacg.com", 800L)
+        put("sfacg.com", 800L)
+    }
+
+    /** 域名级请求限频：在 OkHttp 实际发包前强制等待保护间隔，防止并发/快速重试触发源站 Cloudflare 拦截 */
+    fun enforceHostInterval(host: String) {
+        val min = hostMinIntervalMs[host] ?: 150L
+        if (min <= 0L) return
+        val lock = host.intern()
+        synchronized(lock) {
+            val now = System.currentTimeMillis()
+            val last = hostLastRequestMs[host] ?: 0L
+            val elapsed = now - last
+            if (elapsed in 0 until min) {
+                val waitMs = min - elapsed
+                runCatching { Thread.sleep(waitMs) }
+            }
+            hostLastRequestMs[host] = System.currentTimeMillis()
+        }
+    }
+
+    /** 将外部（如 WebView 拦截或登录）提取的 Cookie 串注入全局 CookieJar 并持久化 */
+    fun syncCookies(host: String, cookieHeader: String) {
+        if (cookieHeader.isBlank()) return
+        val cleanHost = host.removePrefix("http://").removePrefix("https://").substringBefore('/')
+        val targets = if (cleanHost.startsWith("www.")) {
+            listOf(cleanHost, cleanHost.removePrefix("www."))
+        } else {
+            listOf(cleanHost, "www.$cleanHost")
+        }
+        for (targetHost in targets) {
+            val list = cookieStore.getOrPut(targetHost) { java.util.concurrent.CopyOnWriteArrayList() }
+            val now = System.currentTimeMillis()
+            val pairs = cookieHeader.split(";").map { it.trim() }.filter { it.isNotBlank() }
+            for (pair in pairs) {
+                val idx = pair.indexOf('=')
+                if (idx <= 0) continue
+                val name = pair.substring(0, idx).trim()
+                val value = pair.substring(idx + 1).trim()
+                val cookie = runCatching {
+                    okhttp3.Cookie.Builder()
+                        .domain(targetHost)
+                        .name(name)
+                        .value(value)
+                        .path("/")
+                        .expiresAt(now + 30L * 24 * 3600 * 1000L)
+                        .build()
+                }.getOrNull() ?: continue
+                list.removeAll { it.name == name }
+                list.add(cookie)
+            }
+        }
+    }
+
+    fun getCookiesHeader(host: String): String {
+        val cleanHost = host.removePrefix("http://").removePrefix("https://").substringBefore('/')
+        val list = cookieStore[cleanHost] ?: return ""
+        return list.joinToString("; ") { "${it.name}=${it.value}" }
+    }
+
+    /** 判断响应是否触发了 Cloudflare 浏览器人机验证/质询 */
+    fun isCloudflareChallenge(code: Int, body: String): Boolean {
+        if (code == 403 || code == 503) {
+            val lower = body.lowercase()
+            return lower.contains("just a moment") ||
+                lower.contains("cloudflare") ||
+                lower.contains("cf-browser-verification") ||
+                lower.contains("challenge-platform") ||
+                lower.contains("attention required") ||
+                lower.contains("cf-mitigated") ||
+                lower.contains("ray id:") ||
+                lower.contains("error 1020") ||
+                lower.contains("access denied")
+        }
+        return false
     }
 
     @Volatile private var proxyCfg = ProxyCfg()
@@ -248,7 +333,11 @@ object Net {
         builder.header("Sec-Fetch-User", "?1")
         if (referer.isNotBlank()) builder.header("Referer", referer)
         if (url.contains("wenku8") && !headers.containsKey("Cookie")) {
-            builder.header("Cookie", WENKU8_DEFAULT_COOKIE)
+            val u = runCatching { safeUrl(url).toHttpUrlOrNull() }.getOrNull()
+            val hasCustom = if (u != null) cookieJar.loadForRequest(u).isNotEmpty() else false
+            if (!hasCustom) {
+                builder.header("Cookie", WENKU8_DEFAULT_COOKIE)
+            }
         }
         headers.forEach { (k, v) -> builder.header(k, v) }
         val resp = exec(builder.build(), charset, fast = fast, slow = isSlow)
@@ -287,7 +376,11 @@ object Net {
         builder.post(fb.build())
         if (referer.isNotBlank()) builder.header("Referer", referer)
         if (url.contains("wenku8") && !headers.containsKey("Cookie")) {
-            builder.header("Cookie", WENKU8_DEFAULT_COOKIE)
+            val u = runCatching { safeUrl(url).toHttpUrlOrNull() }.getOrNull()
+            val hasCustom = if (u != null) cookieJar.loadForRequest(u).isNotEmpty() else false
+            if (!hasCustom) {
+                builder.header("Cookie", WENKU8_DEFAULT_COOKIE)
+            }
         }
         headers.forEach { (k, v) -> builder.header(k, v) }
         return exec(builder.build(), charset, fast = fast, slow = isSlow)
@@ -379,6 +472,7 @@ object Net {
     }
 
     private fun once(request: Request, charset: String, depth: Int = 0, fast: Boolean = false, slow: Boolean = false): Resp = try {
+        enforceHostInterval(request.url.host)
         val targetClient = when {
             slow -> slowClient
             fast -> fastClient
@@ -388,7 +482,11 @@ object Net {
             val bytes = r.body?.bytes() ?: ByteArray(0)
             val text = decode(bytes, charset, r.header("Content-Type"))
             val finalUrl = r.request.url.toString()
-            if (!r.isSuccessful) return Resp(false, r.code, text, friendlyCode(r.code), finalUrl)
+            if (!r.isSuccessful) {
+                val isCf = isCloudflareChallenge(r.code, text)
+                val err = if (isCf) "访问受限（触发 Cloudflare 浏览器安全质询，需网页验证）" else friendlyCode(r.code)
+                return Resp(false, r.code, text, err, finalUrl)
+            }
 
             // 有些站用 meta / JS 做跳转，普通 HTTP 客户端不会跟，这里手动跟一层。
             // 只对「几乎没内容的空壳页」生效：正常章节页里常有一段

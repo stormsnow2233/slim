@@ -438,13 +438,67 @@ class CopymangaSource : ComicSource {
     override val id = "copymanga"
     override val name = "拷贝漫画"
 
-    private val hosts = listOf(
+    private val defaultHosts = listOf(
         "https://api.mangacopy.com",
-        "https://api.copymanga.site",
         "https://api.copymanga.tv",
+        "https://api.copymanga.site",
+        "https://api.copy-manga.com",
+        "https://api.copymanga.org",
     )
 
+    @Volatile private var dynamicHosts: List<String> = emptyList()
+    @Volatile private var activeHost: String? = null
+    @Volatile private var lastDiscoveryMs: Long = 0L
+
+    private fun candidateHosts(): List<String> {
+        val list = ArrayList<String>()
+        activeHost?.let { list.add(it) }
+        list.addAll(dynamicHosts)
+        list.addAll(defaultHosts)
+        return list.distinct()
+    }
+
+    private fun discoverDynamicRoutes() {
+        val now = System.currentTimeMillis()
+        if (now - lastDiscoveryMs < 10 * 60 * 1000L && dynamicHosts.isNotEmpty()) return
+        lastDiscoveryMs = now
+        val probeList = (listOfNotNull(activeHost) + defaultHosts).distinct()
+        for (h in probeList) {
+            val r = Net.get(
+                "$h/api/v3/system/network2",
+                referer = "$h/",
+                headers = mapOf(
+                    "region" to "1",
+                    "platform" to "3",
+                    "version" to "3.0.0",
+                    "Accept" to "application/json",
+                ),
+                fast = true,
+            )
+            if (r.ok) {
+                val o = runCatching { JSONObject(r.body) }.getOrNull() ?: continue
+                if (o.optInt("code") == 200) {
+                    val res = o.optJSONObject("results") ?: continue
+                    val lines = res.optJSONArray("lines") ?: continue
+                    val found = ArrayList<String>()
+                    for (i in 0 until lines.length()) {
+                        val item = lines.optJSONObject(i) ?: continue
+                        val u = item.optString("url")
+                        if (u.isNotBlank() && u.startsWith("http")) {
+                            found.add(u.trimEnd('/'))
+                        }
+                    }
+                    if (found.isNotEmpty()) {
+                        dynamicHosts = found
+                        break
+                    }
+                }
+            }
+        }
+    }
+
     private fun api(path: String, cache: Boolean = false): JSONObject? {
+        val hosts = candidateHosts()
         for (h in hosts) {
             val r = Net.get(
                 h + path,
@@ -461,7 +515,35 @@ class CopymangaSource : ComicSource {
             )
             if (r.ok) {
                 val o = runCatching { JSONObject(r.body) }.getOrNull() ?: continue
-                if (o.optInt("code") == 200) return o.optJSONObject("results") ?: o
+                if (o.optInt("code") == 200) {
+                    activeHost = h
+                    return o.optJSONObject("results") ?: o
+                }
+            }
+        }
+        // 如果候选线路全灭，尝试拉取动态路由
+        discoverDynamicRoutes()
+        for (h in dynamicHosts) {
+            if (h in hosts) continue
+            val r = Net.get(
+                h + path,
+                referer = "https://www.copymanga.site/",
+                headers = mapOf(
+                    "region" to "1",
+                    "platform" to "3",
+                    "version" to "3.0.0",
+                    "webp" to "1",
+                    "Accept" to "application/json",
+                ),
+                useCache = cache,
+                fast = true,
+            )
+            if (r.ok) {
+                val o = runCatching { JSONObject(r.body) }.getOrNull() ?: continue
+                if (o.optInt("code") == 200) {
+                    activeHost = h
+                    return o.optJSONObject("results") ?: o
+                }
             }
         }
         return null
@@ -572,22 +654,8 @@ class CopymangaSource : ComicSource {
 
 /**
  * 栗子漫画（Flutter 版）。
- *
- * 它的接口主机藏在一份加密配置里（AES-256-ECB，密钥在官方包里），配置会换域名，
- * 旧域名随时可能被下线。这里把已出现过的两台主机轮着探，哪台通就记下来。
- *
- * 接口全部要签名，不带一定 403：
- *   lzsign = md5(signPrefix + path + t)，t 十位秒时间戳，signPrefix 是官方包的协议常量。
- *   /app/api/home/data 和 /app/api/configv2 还要补 packname、appsign256。
- *
- *   /app/api/home/data          首页（多区块）
- *   /app/api/rank/list          榜单
- *   /app/api/search/full?q=     搜索
- *   /app/api/v2/detail/{id}     详情 + 话数（每话带 cover）
- *   /app/api/chapter/v3/{id}    官方图片顺序（要带 chapter_id）
- *
- * 图片：话数里的 cover 形如 https://图床/目录/1.jpg，同一目录下 1..N.jpg 就是这一话的全部页，
- * 所以没有官方 pics 也能靠这个规律把整话拿全。
+ * 【已停用说明】官方旧接口 ai.qsmm.fun 已被服务端软屏蔽，新版改用登录鉴权与加密通信。
+ * 该源暂不默认启用，保留源码供后续适配新版鉴权。
  */
 class LiziSource : ComicSource {
     override val id = "lizi"
@@ -930,7 +998,7 @@ object ComicRepo {
     val pool = Executors.newFixedThreadPool(4)
     private val failedUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
-    fun markFailed(sourceId: String, durationMs: Long = 10 * 60 * 1000L) {
+    fun markFailed(sourceId: String, durationMs: Long = 60 * 1000L) {
         failedUntil[sourceId] = System.currentTimeMillis() + durationMs
     }
 
@@ -948,7 +1016,7 @@ object ComicRepo {
 
     /**
      * 多源搜索：每个源并发跑，返回每个源各自的结果和状态。
-     * 单个源超时/失败不影响其它源，单源最多等 5 秒。
+     * 单个源超时/失败不影响其它源，单源最多等 8 秒。
      */
     fun searchAll(keyword: String, ids: List<String>): List<ComicHit> {
         val picked = sources.filter { it.id in ids && !isBlacklisted(it.id) }.ifEmpty { sources }
@@ -959,21 +1027,23 @@ object ComicRepo {
                     .fold(
                         onSuccess = { ComicHit(src.id, src.name, it, true, System.currentTimeMillis() - t0) },
                         onFailure = {
-                            markFailed(src.id)
+                            val msg = it.message ?: "失败"
+                            if (msg.contains("502") || msg.contains("504") || msg.contains("拒绝")) {
+                                markFailed(src.id, 60_000L)
+                            }
                             ComicHit(
                                 src.id, src.name, emptyList(), false,
                                 System.currentTimeMillis() - t0,
-                                it.message ?: "失败",
+                                msg,
                             )
                         },
                     )
             })
         }
         return jobs.map { f ->
-            runCatching { f.get(5, TimeUnit.SECONDS) }.getOrElse {
+            runCatching { f.get(8, TimeUnit.SECONDS) }.getOrElse {
                 val i = jobs.indexOf(f)
-                markFailed(picked[i].id)
-                ComicHit(picked[i].id, picked[i].name, emptyList(), false, 5000, "超时 (5s)")
+                ComicHit(picked[i].id, picked[i].name, emptyList(), false, 8000, "超时 (8s)")
             }
         }.sortedByDescending { it.list.size }
     }
