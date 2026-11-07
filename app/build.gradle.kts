@@ -8,12 +8,12 @@ plugins {
 }
 
 android {
-    namespace = "com.zaka.shijuan"
+    namespace = "com.storm.shijuan"
     compileSdk = 35
     buildToolsVersion = "35.0.0"
 
     defaultConfig {
-        applicationId = "com.zaka.shijuan"
+        applicationId = "com.storm.shijuan"
         minSdk = 24
         targetSdk = 35
         versionCode = 50
