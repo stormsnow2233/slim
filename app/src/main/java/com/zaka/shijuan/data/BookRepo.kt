@@ -174,7 +174,10 @@ object BookRepo {
 
     fun classifyStatus(ok: Boolean, httpCode: Int, error: String, booksCount: Int): SourceStatus {
         if (ok && booksCount > 0) return SourceStatus.NORMAL
-        if (httpCode == 403 || error.contains("Cloudflare") || error.contains("403") || error.contains("安全质询") || error.contains("拦截")) {
+        if (httpCode == 403 || httpCode == 429 || error.contains("Cloudflare") || error.contains("403") ||
+            error.contains("429") || error.contains("安全质询") || error.contains("拦截") ||
+            error.contains("限频") || error.contains("间隔") || error.contains("限制")
+        ) {
             return SourceStatus.ACCESS_RESTRICTED
         }
         if (httpCode == 401 || error.contains("登录") || error.contains("VIP") || error.contains("购买")) {
@@ -415,9 +418,11 @@ object BookRepo {
                 }
                 val iterBudget = effectiveDeadline - loopNow
                 val full = if (path.startsWith("http")) path else base + path
-                val resp = if (rule.method.equals("POST", true)) {
+                val isPost = if (path.contains("so.php")) true else rule.method.equals("POST", true)
+                val resp = if (isPost) {
                     val body = HashMap<String, String>()
-                    fill(rule.body, key, keyCharset).split("&").forEach {
+                    val rawBody = if (rule.body.isNotBlank()) rule.body else "searchtype=articlename&searchkey={key}&charset=gbk"
+                    fill(rawBody, key, keyCharset).split("&").forEach {
                         val kv = it.split("=", limit = 2)
                         if (kv.size == 2) body[kv[0]] = kv[1]
                     }
@@ -440,11 +445,32 @@ object BookRepo {
                 }
 
                 val lowerBody = resp.body.lowercase()
+                val lowerVia = resp.via.lowercase()
+
                 if (lowerBody.contains("<h1>welcome</h1>") || lowerBody.contains("just a moment") || lowerBody.contains("cf-browser-verification")) {
                     val st = SourceStatus.ACCESS_RESTRICTED
                     val err = "触发源站浏览器安全验证（Cloudflare/WAF），需在书源管理中网页验证"
                     val res = SourceResult(src.id, src.name, false, emptyList(), err, System.currentTimeMillis() - t0, st, 403)
                     recordFailure(src.id, st, 403, err)
+                    return res
+                }
+
+                // 登录跳转或未登录提示拦截（文库 search.php 未登录会 302 到 login.php?jumpurl=...）
+                val isLoginRequired = lowerVia.contains("login.php") || (src.id == "wenku8" && (lowerBody.contains("login.php") || lowerBody.contains("您尚未登录") || lowerBody.contains("请先登录")))
+                if (isLoginRequired) {
+                    val st = SourceStatus.NEEDS_LOGIN
+                    val err = if (src.id == "wenku8") "轻小说文库搜索需在网页中登录后使用" else "${src.name}搜索需在网页中登录后使用"
+                    val res = SourceResult(src.id, src.name, false, emptyList(), err, System.currentTimeMillis() - t0, st, 401)
+                    recordFailure(src.id, st, 401, err)
+                    return res
+                }
+
+                // 文库等源站搜索频率限制拦截（文库硬限制：两次搜索间隔不得少于 5 秒）
+                if (src.id == "wenku8" && (resp.body.contains("两次搜索的间隔时间") || resp.body.contains("搜索间隔时间不得少于") || resp.body.contains("搜索间隔时间"))) {
+                    val st = SourceStatus.ACCESS_RESTRICTED
+                    val err = "源站限制两次搜索间隔不得少于 5 秒，请稍后重试"
+                    val res = SourceResult(src.id, src.name, false, emptyList(), err, System.currentTimeMillis() - t0, st, 429)
+                    recordFailure(src.id, st, 429, err)
                     return res
                 }
 
@@ -591,6 +617,20 @@ object BookRepo {
         return blockedNames.any { name.equals(it, ignoreCase = true) || name.contains(it) }
     }
 
+    internal fun normalizeCover(src: Source, cover: String, bookUrl: String): String {
+        var c = Rules.upgradeWenku8Image(cover.trim())
+        if (src.id == "wenku8" || c.contains("wenku8") || c.contains("777743")) {
+            if (c.isBlank() && bookUrl.isNotBlank()) {
+                val aid = Regex("""/book/(\d+)\.htm""").find(bookUrl)?.groupValues?.get(1)
+                if (aid != null) {
+                    val gid = (aid.toLongOrNull() ?: 0L) / 1000L
+                    c = "https://img.wenku8.com/image/$gid/$aid/${aid}s.jpg"
+                }
+            }
+        }
+        return c
+    }
+
     private fun parseSearchPage(src: Source, html: String, pageUrl: String, rule: SearchRule, key: String = ""): List<Book> {
         val doc = Rules.parse(html)
         var rows: List<Map<String, String>> = emptyList()
@@ -604,7 +644,7 @@ object BookRepo {
             else Book(
                 name = name,
                 author = row["author"].orEmpty().trim(),
-                cover = row["cover"].orEmpty().trim(),
+                cover = normalizeCover(src, row["cover"].orEmpty().trim(), url),
                 intro = row["intro"].orEmpty().trim(),
                 latest = row["latest"].orEmpty().trim(),
                 url = url,
@@ -613,6 +653,39 @@ object BookRepo {
                 kind = row["kind"].orEmpty(),
                 wordCount = row["wordCount"].orEmpty(),
             )
+        }
+        // Wenku8 专用正则兜底（参考 wenku8_client.py）
+        if (books.isEmpty() && src.id == "wenku8") {
+            val base = if (pageUrl.startsWith("http")) pageUrl.substringBefore("/modules").substringBefore("/book") else src.base
+            val pat = Regex("""/book/(\d+)\.htm"[^>]*>([^<]{1,60})</a>""")
+            val hits = pat.findAll(html)
+            val seen = mutableSetOf<String>()
+            val blockedTexts = listOf("我要阅读", "立即阅读", "点击阅读", "加入书架", "放入书架", "推荐", "投推荐票", "小说目录", "最新章节")
+            val fallbackBooks = mutableListOf<Book>()
+            for (m in hits) {
+                val aid = m.groupValues[1]
+                val title = m.groupValues[2].trim()
+                if (aid.isEmpty() || title.isEmpty() || blockedTexts.any { title.contains(it) } || isFakeBook(title, "/book/$aid.htm") || !seen.add(aid)) continue
+                val aidLong = aid.toLongOrNull() ?: 0L
+                val gid = aidLong / 1000L
+                val coverUrl = "https://img.wenku8.com/image/$gid/$aid/${aid}s.jpg"
+                val bookUrl = if (base.isNotBlank()) "${base.trimEnd('/')}/book/$aid.htm" else "https://www.wenku8.cc/book/$aid.htm"
+                fallbackBooks.add(
+                    Book(
+                        name = title,
+                        author = "",
+                        cover = coverUrl,
+                        intro = "",
+                        latest = "",
+                        url = bookUrl,
+                        sourceId = src.id,
+                        sourceName = src.name,
+                    )
+                )
+            }
+            if (fallbackBooks.isNotEmpty()) {
+                books = fallbackBooks
+            }
         }
         // auto 兜底最容易翻车：站点没有搜索结果时，页面上的导航/推荐位也会被当成「书籍列表」，
         // 于是列表里全是书名不对、点进去是伪目录的条目。要求页面里真出现了搜索词才采纳。
@@ -665,7 +738,7 @@ object BookRepo {
         return Book(
             name = name,
             author = metaText(doc, "og:novel:author").ifBlank { metaText(doc, "author") },
-            cover = metaText(doc, "og:image"),
+            cover = normalizeCover(src, metaText(doc, "og:image"), landed),
             intro = metaText(doc, "og:description").ifBlank { metaText(doc, "description") }.take(400),
             url = landed,
             sourceId = src.id,
@@ -682,12 +755,12 @@ object BookRepo {
         val d = src.detail
         var name = book.name
         var author = book.author
-        var cover = book.cover
+        var cover = normalizeCover(src, book.cover, book.url)
         var intro = book.intro
         if (d != null) {
             if (d.name.isNotBlank()) Rules.extract(doc.body(), d.name, book.url).ifBlank { null }?.let { name = it }
             if (d.author.isNotBlank()) Rules.extract(doc.body(), d.author, book.url).ifBlank { null }?.let { author = it }
-            if (d.cover.isNotBlank()) Rules.extract(doc.body(), d.cover, book.url).ifBlank { null }?.let { cover = it }
+            if (d.cover.isNotBlank()) Rules.extract(doc.body(), d.cover, book.url).ifBlank { null }?.let { cover = normalizeCover(src, it, book.url) }
             if (d.intro.isNotBlank()) Rules.extract(doc.body(), d.intro, book.url).ifBlank { null }?.let { intro = it }
         }
         if (intro.isBlank()) {
@@ -1213,7 +1286,7 @@ object BookRepo {
     /** 是否是源站版权下架提示页 */
     fun isTakenDownPage(doc: org.jsoup.nodes.Document, text: String = ""): Boolean {
         val full = (doc.title() + " " + (doc.body()?.text().orEmpty()) + " " + text).lowercase()
-        return listOf("已下架", "下架处理", "停止提供", "版权原因", "因版权", "暂时下架", "内容已被删除", "作品已被下架", "停止在线阅读").any { full.contains(it) }
+        return listOf("已下架", "下架处理", "停止提供", "版权原因", "因版权", "版权问题", "不再提供", "不再提供该小说", "暂时下架", "内容已被删除", "作品已被下架", "停止在线阅读").any { full.contains(it) }
     }
 
     /** 源站自己吐的出错页（不是我们解析失败），提示要说准，别让人以为软件坏了 */

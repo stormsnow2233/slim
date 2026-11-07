@@ -230,10 +230,28 @@ object Rules {
         RegexOption.IGNORE_CASE
     )
 
-    /** 去掉正文里混进来的广告行 */
+    /** 轻小说文库已知支持 HTTPS 访问的图片 CDN 域名 */
+    val WENKU8_IMG_HOSTS = setOf(
+        "img.wenku8.com", "pic.777743.xyz", "image.wenku8.cc",
+        "img.wenku8.cc", "pic.wenku8.com", "pic.wenku8.cn", "dl.wenku8.com"
+    )
+
+    /** 升级 Wenku8 图片明文 http 为 https，规避 Android 明文流量限制与 Mixed Content 拦截 */
+    fun upgradeWenku8Image(url: String): String {
+        val u = url.trim()
+        if (!u.startsWith("http://", ignoreCase = true)) return u
+        val afterScheme = u.substring(7)
+        val host = afterScheme.substringBefore('/').substringBefore(':').lowercase()
+        return if (WENKU8_IMG_HOSTS.contains(host)) "https://$afterScheme" else u
+    }
+
+    /** 去掉正文里混进来的广告行（含文库首尾 ul#contentdp 等） */
     fun stripAds(html: String): String {
         val d = Jsoup.parse("<div id=\"__wrap\">$html</div>")
         val wrap = d.getElementById("__wrap") ?: return html
+        for (el in wrap.select("ul#contentdp, #contentdp, ul.contentdp")) {
+            el.remove()
+        }
         for (el in wrap.select("p, div, span")) {
             if (el.children().select("p, div").isEmpty()) {
                 val t = el.text().trim()
@@ -248,13 +266,14 @@ object Rules {
         // 先把文库等源站原生的 <!--image-->url<!--image--> 规范为统一的 <img> 节点
         val normalized = if (html.contains("<!--image-->")) {
             html.replace(Regex("<!--image-->([\\s\\S]*?)<!--image-->")) {
-                "<img src=\"${it.groupValues[1].trim()}\" />"
+                val imgUrl = upgradeWenku8Image(it.groupValues[1].trim())
+                "<img src=\"$imgUrl\" />"
             }
         } else html
 
         val d = Jsoup.parse("<div id=\"__c\">$normalized</div>")
         val c = d.getElementById("__c") ?: return cleanText(html)
-        c.select("script, style, iframe").remove()
+        c.select("script, style, iframe, ul#contentdp, #contentdp, ul.contentdp").remove()
 
         val sb = StringBuilder()
         val blocks = setOf("p", "div", "br", "h1", "h2", "h3", "li", "tr", "section", "article", "dd")
@@ -270,7 +289,7 @@ object Rules {
                         }.trim()
                         if (src.isNotBlank() && !src.startsWith("data:")) {
                             val fullUrl = if (baseUrl.isNotBlank()) absUrl(baseUrl, src) else src
-                            sb.append("\n<!--image-->").append(fullUrl).append("<!--image-->\n")
+                            sb.append("\n<!--image-->").append(upgradeWenku8Image(fullUrl)).append("<!--image-->\n")
                         }
                     } else {
                         val isBlock = tag in blocks
@@ -285,6 +304,7 @@ object Rules {
 
         return sb.toString()
             .replace('\u00A0', ' ')
+            .replace("&nbsp;", " ")
             .replace(Regex("[ \\t]{2,}"), " ")
             .lines()
             .map { it.trim() }

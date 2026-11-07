@@ -39,8 +39,8 @@ class Wenku8AndReaderTest {
         """.trimIndent()
 
         val text = Rules.htmlToParagraphs(html)
-        assertTrue("正文应提取出第一张插图", text.contains("<!--image-->http://pic.wenku8.cn/pictures/1/1973/69759/84737.jpeg<!--image-->"))
-        assertTrue("正文应保留第二张注释插图", text.contains("<!--image-->http://pic.wenku8.cn/pictures/1/1973/69759/84738.jpeg<!--image-->"))
+        assertTrue("正文应提取出第一张插图且升级为 https", text.contains("<!--image-->https://pic.wenku8.cn/pictures/1/1973/69759/84737.jpeg<!--image-->"))
+        assertTrue("正文应保留第二张注释插图且升级为 https", text.contains("<!--image-->https://pic.wenku8.cn/pictures/1/1973/69759/84738.jpeg<!--image-->"))
         assertTrue("文字段落应保留", text.contains("第一段文本介绍主角。") && text.contains("第三段尾声。"))
     }
 

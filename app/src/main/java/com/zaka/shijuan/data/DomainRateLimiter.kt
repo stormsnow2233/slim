@@ -66,8 +66,11 @@ class DomainRateLimiter {
     private val hostConfigs = ConcurrentHashMap<String, Pair<Double, Double>>().apply {
         put("www.wenku8.cc", 1.0 to 0.2)
         put("www.wenku8.net", 1.0 to 0.2)
+        put("www.wenku8.com", 1.0 to 0.2)
         put("wenku8.cc", 1.0 to 0.2)
         put("wenku8.net", 1.0 to 0.2)
+        put("wenku8.com", 1.0 to 0.2)
+        put("wap.wenku8.cc", 1.0 to 0.2)
         put("m.sfacg.com", 2.0 to 1.25)
         put("sfacg.com", 2.0 to 1.25)
     }

@@ -60,7 +60,7 @@ fun CloudflareVerifyDialog(
             store.saveHostCookies(host, cookies)
             // 如果是 wenku8，顺便双向同步 .cc 和 .net 及其 www 域名
             if (host.contains("wenku8")) {
-                listOf("wenku8.cc", "www.wenku8.cc", "wenku8.net", "www.wenku8.net").forEach { h ->
+                listOf("wenku8.cc", "www.wenku8.cc", "wenku8.net", "www.wenku8.net", "wenku8.com", "www.wenku8.com", "wap.wenku8.cc").forEach { h ->
                     Net.syncCookies(h, cookies)
                     store.saveHostCookies(h, cookies)
                 }
@@ -94,7 +94,7 @@ fun CloudflareVerifyDialog(
                     Spacer(Modifier.width(8.dp))
                     Column(Modifier.weight(1f)) {
                         Text(
-                            "$sourceName 浏览器安全验证",
+                            "$sourceName 登录与安全验证",
                             style = MaterialTheme.typography.titleMedium,
                             fontWeight = FontWeight.Bold,
                         )

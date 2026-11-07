@@ -320,12 +320,15 @@ fun SearchScreen(
                             )
                             if (failed) {
                                 val isRestricted = st.status == SourceStatus.ACCESS_RESTRICTED ||
+                                    st.status == SourceStatus.NEEDS_LOGIN ||
                                     st.error.contains("Cloudflare") ||
                                     st.error.contains("安全质询") ||
+                                    st.error.contains("登录") ||
                                     (src.id == "wenku8" && st.error.contains("403"))
                                 if (isRestricted) {
+                                    val actionText = if (st.status == SourceStatus.NEEDS_LOGIN || st.error.contains("登录")) "去登录" else "去验证"
                                     Text(
-                                        "去验证",
+                                        actionText,
                                         style = MaterialTheme.typography.labelMedium,
                                         color = MaterialTheme.colorScheme.primary,
                                         fontWeight = FontWeight.Bold,

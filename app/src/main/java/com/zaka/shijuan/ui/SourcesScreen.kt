@@ -196,8 +196,10 @@ private fun SourceCard(
 ) {
     val needsVerify = src.id == "wenku8" ||
         check?.status == com.zaka.shijuan.data.SourceStatus.ACCESS_RESTRICTED ||
+        check?.status == com.zaka.shijuan.data.SourceStatus.NEEDS_LOGIN ||
         check?.error?.contains("Cloudflare") == true ||
-        check?.error?.contains("安全质询") == true
+        check?.error?.contains("安全质询") == true ||
+        check?.error?.contains("登录") == true
 
     Surface(
         shape = RoundedCornerShape(14.dp),
@@ -295,13 +297,14 @@ private fun SourceCard(
                 }
             }
             if (needsVerify && onVerify != null) {
+                val isLogin = check?.status == com.zaka.shijuan.data.SourceStatus.NEEDS_LOGIN || check?.error?.contains("登录") == true
                 OutlinedButton(
                     onClick = onVerify,
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                     modifier = Modifier.height(32.dp),
                     shape = RoundedCornerShape(8.dp),
                 ) {
-                    Text("网页验证", fontSize = 11.sp)
+                    Text(if (isLogin) "网页登录" else "网页验证", fontSize = 11.sp)
                 }
                 Spacer(Modifier.width(6.dp))
             }
