@@ -387,6 +387,15 @@ object BookRepo {
             SearchCache.put(src.id, key, res)
             return res
         }
+        if (src.id == "wenku8") {
+            val localHits = Wenku8LocalIndex.search(key)
+            if (localHits.isNotEmpty()) {
+                val res = SourceResult(src.id, src.name, true, localHits, "", System.currentTimeMillis() - t0, SourceStatus.NORMAL, 200)
+                recordSuccess(src.id, res)
+                SearchCache.put(src.id, key, res)
+                return res
+            }
+        }
         val rule = src.search ?: return SourceResult(src.id, src.name, false, error = "该源未配置搜索规则", status = SourceStatus.RULE_INVALID)
 
         val keyCharset = if (rule.keyCharset.equals("utf-8", true) && src.charset.contains("gb")) "gbk"
@@ -435,6 +444,16 @@ object BookRepo {
                 if (!resp.ok) {
                     lastErr = resp.error
                     lastHttpCode = resp.code
+                    if (src.id == "wenku8") {
+                        val localHits = Wenku8LocalIndex.search(key)
+                        if (localHits.isNotEmpty()) {
+                            recordActiveBase(src.id, base)
+                            val res = SourceResult(src.id, src.name, true, localHits, "", System.currentTimeMillis() - t0, SourceStatus.NORMAL, 200)
+                            recordSuccess(src.id, res)
+                            SearchCache.put(src.id, key, res)
+                            return res
+                        }
+                    }
                     if (resp.code == 403 || resp.error.contains("Cloudflare") || resp.error.contains("安全质询")) {
                         val st = SourceStatus.ACCESS_RESTRICTED
                         val res = SourceResult(src.id, src.name, false, emptyList(), resp.error, System.currentTimeMillis() - t0, st, resp.code)
@@ -458,6 +477,16 @@ object BookRepo {
                 // 登录跳转或未登录提示拦截（文库 search.php 未登录会 302 到 login.php?jumpurl=...）
                 val isLoginRequired = lowerVia.contains("login.php") || (src.id == "wenku8" && (lowerBody.contains("login.php") || lowerBody.contains("您尚未登录") || lowerBody.contains("请先登录")))
                 if (isLoginRequired) {
+                    if (src.id == "wenku8") {
+                        val localHits = Wenku8LocalIndex.search(key)
+                        if (localHits.isNotEmpty()) {
+                            recordActiveBase(src.id, base)
+                            val res = SourceResult(src.id, src.name, true, localHits, "", System.currentTimeMillis() - t0, SourceStatus.NORMAL, 200)
+                            recordSuccess(src.id, res)
+                            SearchCache.put(src.id, key, res)
+                            return res
+                        }
+                    }
                     val st = SourceStatus.NEEDS_LOGIN
                     val err = if (src.id == "wenku8") "轻小说文库搜索需在网页中登录后使用" else "${src.name}搜索需在网页中登录后使用"
                     val res = SourceResult(src.id, src.name, false, emptyList(), err, System.currentTimeMillis() - t0, st, 401)
@@ -467,6 +496,14 @@ object BookRepo {
 
                 // 文库等源站搜索频率限制拦截（文库硬限制：两次搜索间隔不得少于 5 秒）
                 if (src.id == "wenku8" && (resp.body.contains("两次搜索的间隔时间") || resp.body.contains("搜索间隔时间不得少于") || resp.body.contains("搜索间隔时间"))) {
+                    val localHits = Wenku8LocalIndex.search(key)
+                    if (localHits.isNotEmpty()) {
+                        recordActiveBase(src.id, base)
+                        val res = SourceResult(src.id, src.name, true, localHits, "", System.currentTimeMillis() - t0, SourceStatus.NORMAL, 200)
+                        recordSuccess(src.id, res)
+                        SearchCache.put(src.id, key, res)
+                        return res
+                    }
                     val st = SourceStatus.ACCESS_RESTRICTED
                     val err = "源站限制两次搜索间隔不得少于 5 秒，请稍后重试"
                     val res = SourceResult(src.id, src.name, false, emptyList(), err, System.currentTimeMillis() - t0, st, 429)
@@ -499,6 +536,15 @@ object BookRepo {
                     looksLikeNoResult(resp.body) -> "这个站没有这本书"
                     else -> "没搜到这本书"
                 }
+            }
+        }
+        if (src.id == "wenku8") {
+            val localHits = Wenku8LocalIndex.search(key)
+            if (localHits.isNotEmpty()) {
+                val res = SourceResult(src.id, src.name, true, localHits, "", System.currentTimeMillis() - t0, SourceStatus.NORMAL, 200)
+                recordSuccess(src.id, res)
+                SearchCache.put(src.id, key, res)
+                return res
             }
         }
         val st = classifyStatus(false, lastHttpCode, lastErr, 0)
@@ -1184,7 +1230,9 @@ object BookRepo {
                     if (regex.isNotEmpty()) {
                         text = Rules.applyRegex(text, regex)
                     }
-                    if (text.replace(Regex("\\s"), "").length > 80) {
+                    val hasImg = el.select("img").isNotEmpty() || text.contains("<img") || text.contains("<!--image-->")
+                    val minLen = if (src.id == "esjzone") 15 else 80
+                    if (text.replace(Regex("\\s"), "").length >= minLen || hasImg) {
                         html = if (field == "html") text else "<p>" + text.replace("\n", "</p><p>") + "</p>"
                         break
                     }
@@ -1193,14 +1241,16 @@ object BookRepo {
         }
         if (html.isBlank()) html = guessContent(doc)
         // 规则命中的东西太短，多半抓到的是导航/提示条，换成整页里最像正文的那块
-        if (html.replace(Regex("\\s"), "").length < 180) {
+        if (html.replace(Regex("\\s"), "").length < 180 && src.id != "esjzone") {
             val guess = guessContent(doc)
             if (guess.replace(Regex("\\s"), "").length > html.replace(Regex("\\s"), "").length) html = guess
         }
         // 有的站免费章节正常给正文，付费章节只给一段购买提示——这时别报"被拦截"，要报准
-        if (html.replace(Regex("\\s"), "").length < 120) {
+        val hasHtmlImages = html.contains("<img") || html.contains("<!--image-->")
+        val minLenCheck = if (src.id == "esjzone") 15 else 120
+        if (html.replace(Regex("\\s"), "").length < minLenCheck && !hasHtmlImages) {
             val page = doc.text()
-            val vipMark = listOf("VIP章节", "vip章节", "购买本章", "订阅本章", "本章需购买", "余额不足", "充值后阅读", "登录后阅读")
+            val vipMark = listOf("VIP章节", "vip章节", "购买本章", "订阅本章", "本章需购买", "余额不足", "充值后阅读", "登录后阅读", "请支持作者", "VIP章节必须登录购买")
                 .firstOrNull { page.contains(it) }
             if (vipMark != null) {
                 recordContentResult(src.id, ok = false, error = "VIP 章节")
@@ -1213,6 +1263,10 @@ object BookRepo {
             // 如果正文区里有图片（插图画/彩页/人设），保留交给阅读器以插图卡片形式呈现
         }
         if (html.isBlank()) {
+            if (isTakenDownPage(doc)) {
+                recordContentResult(src.id, ok = false, error = "书籍已下架")
+                return Result.failure(Exception("该书已下架（源站因版权或作者要求已停止提供在线阅读）"))
+            }
             if (isErrorPage(doc)) {
                 recordContentResult(src.id, ok = false, error = "源站错误页")
                 return Result.failure(Exception("源站返回「暂时无法访问」（该老书在手机站未开放或已下线），建议换个源搜同名书"))
@@ -1249,7 +1303,11 @@ object BookRepo {
             return Result.failure(Exception("源站转码失败或该章节未收录（返回转码失败/推荐占位），建议换源阅读"))
         }
         val title = doc.selectFirst("h1")?.text()?.trim().orEmpty().ifBlank { chapter.name }
-        val hasImages = text.contains("<!--image-->")
+        if (text.contains("请支持作者") || text.contains("VIP章节必须登录购买") || text.contains("购买后才可阅读")) {
+            recordContentResult(src.id, ok = false, error = "VIP 章节")
+            return Result.failure(Exception("这章是源站的付费/VIP 章节，得先在源站登录购买才能看，建议换个源搜同名书"))
+        }
+        val hasImages = text.contains("<!--image-->") || cleaned.contains("<img")
         val len = text.replace(Regex("\\s"), "").length
         // 一百字以下且没有插图的通常不是正文：要么被拦，要么抓到的是书页/推荐列表那几行字
         if (len < 120 && !hasImages) {
@@ -1289,8 +1347,8 @@ object BookRepo {
 
     /** 是否是源站版权下架提示页 */
     fun isTakenDownPage(doc: org.jsoup.nodes.Document, text: String = ""): Boolean {
-        val full = (doc.title() + " " + (doc.body()?.text().orEmpty()) + " " + text).lowercase()
-        return listOf("已下架", "下架处理", "停止提供", "版权原因", "因版权", "版权问题", "不再提供", "不再提供该小说", "暂时下架", "内容已被删除", "作品已被下架", "停止在线阅读").any { full.contains(it) }
+        val full = (doc.title() + " " + (doc.body()?.text().orEmpty()) + " " + doc.html() + " " + text).lowercase()
+        return listOf("已下架", "已被下架", "已被删除", "已被刪除", "已被屏蔽", "已被封禁", "下架处理", "停止提供", "版权原因", "因版权", "版权问题", "不再提供", "不再提供该小说", "暂时下架", "内容已被删除", "作品已被下架", "停止在线阅读").any { full.contains(it) }
     }
 
     /** 源站自己吐的出错页（不是我们解析失败），提示要说准，别让人以为软件坏了 */

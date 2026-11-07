@@ -16,6 +16,7 @@ class Store(context: Context) {
 
     init {
         NovelContentCache.init(context)
+        Wenku8LocalIndex.init(context)
     }
 
     // ── 书架 ──

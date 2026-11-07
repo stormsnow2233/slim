@@ -286,8 +286,8 @@ object Sources {
         Source(
             id = "faloo", name = "飞卢小说", group = "轻小说",
             base = "https://b.faloo.com", charset = "gbk", status = "verified",
-            enabledByDefault = true,
-            note = "【推荐】二次元/同人轻小说与原创小说，检索极快，更新活跃",
+            enabledByDefault = false,
+            note = "【备用】二次元/同人轻小说与原创小说，检索极快，更新活跃",
             search = SearchRule(
                 url = "https://b.faloo.com/l/0/1.html?t=1&k={key}",
                 list = ".TwoBox02",
@@ -315,18 +315,20 @@ object Sources {
         Source(
             id = "esjzone", name = "ESJ Zone", group = "轻小说",
             base = "https://www.esjzone.one",
+            mirrors = listOf("https://www.esjzone.cc"),
             charset = "utf-8", status = "verified",
             enabledByDefault = true,
             note = "【推荐】知名轻小说翻译与原创社区，收录大量日轻Web生肉汉化与首发作品",
             probeKeyword = "魔王",
             search = SearchRule(
-                url = "/tags/{key}/",
+                url = "/list/?k={key}",
+                extraUrls = listOf("/tags/{key}/"),
                 list = ".card-body",
                 fields = mapOf(
-                    "name" to "h5.card-title a@text",
-                    "bookUrl" to "h5.card-title a@href",
-                    "author" to ".card-author a@text",
-                    "latest" to ".card-ep a@text",
+                    "name" to "h5.card-title a@text || h4.card-title a@text || .card-title a@text",
+                    "bookUrl" to "h5.card-title a@href || h4.card-title a@href || .card-title a@href",
+                    "author" to ".card-author a@text || .card-author@text",
+                    "latest" to ".card-ep a@text || .card-ep@text",
                 ),
             ),
             detail = DetailRule(
@@ -336,11 +338,42 @@ object Sources {
                 intro = ".description@text",
             ),
             toc = TocRule(
-                list = ".chapter-list a, .tab-pane a[href*='/forum/']",
+                list = "#chapterList a[href*='/forum/'] || #chapterList a || .chapter-list a",
                 name = "@text",
                 url = "@href",
             ),
             content = ContentRule(body = ".forum-content@html || .reading-content@html"),
+        ),
+
+        Source(
+            id = "lnovel", name = "轻小说百科", group = "轻小说",
+            base = "https://lnovel.org",
+            mirrors = listOf("https://lnovel.tw"),
+            charset = "utf-8", status = "verified",
+            enabledByDefault = true,
+            note = "【推荐】动漫之家轻小说资料库全量收录，日轻文库版与插图免登录直读",
+            probeKeyword = "魔王",
+            search = SearchRule(
+                url = "/books?q%5Bname_cont%5D={key}",
+                list = "a[href*='/books-']",
+                fields = mapOf(
+                    "name" to "@text",
+                    "bookUrl" to "@href",
+                    "cover" to "img@src",
+                ),
+            ),
+            detail = DetailRule(
+                name = "meta[property='og:title']@content || title@text",
+                author = "meta[name='description']@content",
+                cover = "meta[property='og:image']@content || img@src",
+                intro = "meta[name='description']@content",
+            ),
+            toc = TocRule(
+                list = "a[href*='/chapters-']",
+                name = "@text",
+                url = "@href",
+            ),
+            content = ContentRule(body = "article@html || .reading-content@html || #content@html"),
         ),
     )
 

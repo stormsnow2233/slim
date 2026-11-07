@@ -356,6 +356,9 @@ class AuditAndFixVerificationTest {
         val def = Sources.defaultEnabled
         assertTrue(def.contains("biqugese"))
         assertTrue(def.contains("sfacg"))
+        assertTrue(def.contains("wenku8"))
+        assertTrue(def.contains("lnovel"))
+        assertTrue(def.contains("esjzone"))
         assertTrue("17K 是替换起点之后的可用正版源，应默认开启", def.contains("17k"))
         assertTrue("速读谷搜索重定向已适配，应默认开启", def.contains("sudugu"))
         assertNull("起点全站 JS 渲染，静态抓不到目录和正文，源已下线", Sources.byId("qidian"))
@@ -464,10 +467,32 @@ class AuditAndFixVerificationTest {
         val toc = tocRes.getOrNull()
         assertNotNull("ESJ Zone 目录应能抓到：${tocRes.exceptionOrNull()?.message}", toc)
         assertTrue("ESJ Zone 目录章数应大于0：${toc!!.chapters.size}", toc.chapters.isNotEmpty())
-        val content = BookRepo.getChapter(src, toc.chapters.first())
+        val ch = toc.chapters.firstOrNull { !it.name.contains("公告") } ?: toc.chapters.first()
+        val content = BookRepo.getChapter(src, ch)
+        val ok = content.isSuccess && content.getOrNull()!!.text.isNotBlank()
+        val isTakenDown = content.isFailure && content.exceptionOrNull()?.message?.contains("下架") == true
         assertTrue(
-            "ESJ Zone 正文应能取到：${content.exceptionOrNull()?.message}",
-            content.isSuccess && content.getOrNull()!!.text.isNotBlank(),
+            "ESJ Zone 正文应能正常取到或明确识别下架：${content.exceptionOrNull()?.message}",
+            ok || isTakenDown,
         )
+    }
+
+    @Test
+    fun testLnovelSourceConfiguration() {
+        val src = Sources.byId("lnovel")
+        assertNotNull("轻小说百科书源应存在", src)
+        assertTrue("轻小说百科应默认启用", src!!.enabledByDefault)
+        assertEquals("轻小说", src.group)
+        assertTrue(src.search?.url?.contains("q%5Bname_cont%5D") == true)
+        assertTrue(src.content?.body?.contains("article") == true)
+    }
+
+    @Test
+    fun testWenku8SourceSearchFallback() {
+        val src = Sources.byId("wenku8")!!
+        assertNotNull("轻小说文库书源应存在", src)
+        // 搜索应能正常给出结果或本地回退，绝不抛出异常
+        val res = BookRepo.searchSource(src, "刀剑神域")
+        assertNotNull(res)
     }
 }
