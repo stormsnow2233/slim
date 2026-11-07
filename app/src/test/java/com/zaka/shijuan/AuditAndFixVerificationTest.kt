@@ -167,7 +167,8 @@ class AuditAndFixVerificationTest {
     fun testNovelSearchAndDetailAndChapter() {
         for (src in Sources.ALL.filter { it.apiKind.isEmpty() }) {
             println("\n=== Testing source: ${src.id} (${src.name}) ===")
-            val searchRes = BookRepo.searchSource(src, "凡人修仙传")
+            val kw = if (src.probeKeyword.isNotBlank()) src.probeKeyword else if (src.group == "轻小说") "魔王" else "凡人修仙传"
+            val searchRes = BookRepo.searchSource(src, kw)
             println("Search ok=${searchRes.ok}, count=${searchRes.books.size}, error=${searchRes.error}")
             if (searchRes.books.isNotEmpty()) {
                 val book = searchRes.books.first()
@@ -428,6 +429,45 @@ class AuditAndFixVerificationTest {
         assertTrue(
             "17K 正文应能取到：${content.exceptionOrNull()?.message}",
             content.isSuccess && content.getOrNull()!!.text.length > 300,
+        )
+    }
+
+    @Test
+    fun testShuqugeSourceEndToEnd() {
+        val src = Sources.byId("shuquge")!!
+        val res = BookRepo.searchSource(src, "凡人修仙传")
+        assertTrue("书趣阁搜索应该能用：${res.error}", res.ok && res.books.isNotEmpty())
+        val book = res.books.firstOrNull { it.name.contains("凡人") }
+        assertNotNull("书趣阁应能搜到凡人修仙传：${res.books.map { it.name }}", book)
+        val (_, tocRes) = BookRepo.getDetailAndToc(src, book!!)
+        val toc = tocRes.getOrNull()
+        assertNotNull("书趣阁目录应能抓到：${tocRes.exceptionOrNull()?.message}", toc)
+        assertTrue("书趣阁目录章数应大于100：${toc!!.chapters.size}", toc.chapters.size > 100)
+        val content = BookRepo.getChapter(src, toc.chapters.first())
+        assertTrue(
+            "书趣阁正文应能取到：${content.exceptionOrNull()?.message}",
+            content.isSuccess && content.getOrNull()!!.text.length > 300,
+        )
+    }
+
+    @Test
+    fun testEsjzoneSourceEndToEnd() {
+        val src = Sources.byId("esjzone")!!
+        val res = BookRepo.searchSource(src, "魔王")
+        assertTrue("ESJ Zone 搜索应该能用：${res.error}", res.ok && res.books.isNotEmpty())
+        val book = res.books.first()
+        println("ESJ book found: name=${book.name}, url=${book.url}")
+        val (_, tocRes) = BookRepo.getDetailAndToc(src, book)
+        if (tocRes.isFailure) {
+            tocRes.exceptionOrNull()?.printStackTrace()
+        }
+        val toc = tocRes.getOrNull()
+        assertNotNull("ESJ Zone 目录应能抓到：${tocRes.exceptionOrNull()?.message}", toc)
+        assertTrue("ESJ Zone 目录章数应大于0：${toc!!.chapters.size}", toc.chapters.isNotEmpty())
+        val content = BookRepo.getChapter(src, toc.chapters.first())
+        assertTrue(
+            "ESJ Zone 正文应能取到：${content.exceptionOrNull()?.message}",
+            content.isSuccess && content.getOrNull()!!.text.isNotBlank(),
         )
     }
 }

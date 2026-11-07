@@ -98,7 +98,9 @@ object Sources {
         // ─────────── 已实测可用（默认启用） ───────────
         Source(
             id = "biqugese", name = "笔趣书阁", group = "笔趣阁系",
-            base = "https://www.biqugese.com", charset = "utf-8", status = "verified",
+            base = "https://www.biqugese.com",
+            mirrors = listOf("http://www.biquge.site", "http://www.biqun.cc"),
+            charset = "utf-8", status = "verified",
             enabledByDefault = true,
             note = "【推荐】搜索/目录/正文全通（实测），更新快，首选推荐",
             search = SearchRule(
@@ -119,26 +121,6 @@ object Sources {
             ),
             toc = TocRule(list = "ul.dirlist li a", name = "@text", url = "@href"),
             content = ContentRule(body = ".readbox .content@html"),
-        ),
-
-        Source(
-            id = "biquge5200", name = "笔趣阁 5200", group = "笔趣阁系",
-            base = "https://www.bqg9.xyz", mirrors = listOf("https://www.biquge5200.cc"),
-            charset = "gbk", status = "local",
-            note = "【备用】源站网关超时 504",
-            search = SearchRule(
-                url = "/modules/article/search.php?searchkey={key}",
-                list = "table.grid tr",
-                fields = mapOf(
-                    "name" to "td:nth-child(1) a@text",
-                    "bookUrl" to "td:nth-child(1) a@href",
-                    "author" to "td:nth-child(3)@text",
-                    "latest" to "td:nth-child(2) a@text",
-                ),
-            ),
-            detail = DetailRule(name = "h1@text", cover = "#fmimg img@src", intro = "#intro@text"),
-            toc = TocRule(list = "#list dl dd a", name = "@text", url = "@href"),
-            content = ContentRule(body = "#content@html"),
         ),
 
         // ─────────── 国内网络直连（规则来自维护中的书源合集） ───────────
@@ -167,28 +149,37 @@ object Sources {
         ),
 
         Source(
-            id = "qianbi", name = "铅笔小说", group = "综合",
-            base = "https://www.23qb.com", charset = "utf-8", status = "local",
-            note = "【备用】海外/部分地区 403 拦截",
+            id = "shuquge", name = "书趣阁", group = "综合",
+            base = "http://www.xshuquge.net", mirrors = listOf("https://www.shuquge.com"),
+            charset = "utf-8", status = "verified",
+            enabledByDefault = true,
+            note = "【推荐】全网老牌书库，收录极全，正文排版纯净，检索迅速",
             search = SearchRule(
-                url = "/search.html?searchkey={key}",
-                list = ".module-search-item",
+                url = "/search.php", method = "POST",
+                body = "searchkey={key}",
+                list = ".bookbox",
                 fields = mapOf(
-                    "name" to "a@title",
-                    "bookUrl" to "a@href",
-                    "cover" to "img@data-src",
-                    "intro" to ".novel-info-item@text",
+                    "name" to ".bookname a@text",
+                    "bookUrl" to ".bookname a@href",
+                    "cover" to ".cover img@src",
+                    "author" to ".author@text##作者：##",
+                    "intro" to ".intro@text##简介：##",
+                    "latest" to ".update a@text",
                 ),
                 auto = true,
             ),
             detail = DetailRule(
-                name = "h1@text || .book-name@text",
-                author = ".author a@text",
-                cover = ".book-img img@src || .cover img@src",
-                intro = ".book-dec@text || .intro@text",
+                name = ".info h2@text",
+                author = ".small span:contains(作者)@text##作者：## || .small span@text##作者：##",
+                cover = ".cover img@src",
+                intro = ".intro@text##简介：##",
             ),
-            toc = TocRule(list = "#list-chapterAll a, .module-row-text, .module-volume-list a", name = "@text", url = "@href"),
-            content = ContentRule(body = "#mlfy_main_text@html || .article-content@html"),
+            toc = TocRule(
+                list = ".listmain dl dd a",
+                name = "@text",
+                url = "@href",
+            ),
+            content = ContentRule(body = "#content@html"),
         ),
 
         // ─────────── 正版源 ───────────
@@ -218,42 +209,12 @@ object Sources {
             content = ContentRule(body = ".readArea div.p@html || .readArea@html"),
         ),
 
-
-        // ─────────── 轻小说（国内直连） ───────────
-        Source(
-            id = "linovelib", name = "哔哩轻小说", group = "轻小说",
-            base = "https://www.linovelib.com", mirrors = listOf("https://www.bilinovel.com"),
-            charset = "utf-8", status = "local",
-            note = "【备用】源站改版，搜索路径 404",
-            search = SearchRule(
-                url = "/search.php?searchkey={key}",
-                list = ".book-img-text li, .bookbox, .book-item",
-                fields = mapOf(
-                    "name" to "h4 a@text || h3 a@text || a@title",
-                    "bookUrl" to "h4 a@href || h3 a@href || a@href",
-                    "cover" to "img@data-src || img@src",
-                    "author" to ".book-author@text || .author@text",
-                    "intro" to "p.intro@text || .book-intro@text",
-                ),
-                auto = true,
-            ),
-            detail = DetailRule(
-                name = "h1@text",
-                author = ".book-author@text || .author@text",
-                cover = ".book-img img@src || .book-layout img@src",
-                intro = ".book-intro@text || #intro@text || .book-dec@text",
-            ),
-            toc = TocRule(
-                list = "#vol_1 a, ul.catalogul a, .catalog a, .chapter-list a, .catalog ul li a",
-                name = "@text", url = "@href",
-            ),
-            content = ContentRule(body = "#acontent@html || .read-content@html || #content@html"),
-        ),
+        // ─────────── 轻小说 ───────────
 
         Source(
             id = "wenku8", name = "轻小说文库", group = "轻小说",
             base = "https://www.wenku8.cc",
-            mirrors = listOf("https://www.wenku8.net", "https://www.wenku8.com", "https://wap.wenku8.cc"),
+            mirrors = listOf("https://www.wenku8.net"),
             charset = "gbk", status = "verified",
             enabledByDefault = true,
             note = "双载点直连 + 官方整本打包，收录日本轻小说与插图",
@@ -351,31 +312,35 @@ object Sources {
             content = ContentRule(body = "div.noveContent@html || .noveContent@html || #content@html"),
         ),
 
-        // ─────────── 综合补充 ───────────
         Source(
-            id = "ddxs", name = "顶点小说", group = "综合",
-            base = "https://www.ddxs.com", charset = "gbk", status = "local",
-            note = "【备用】海外/部分地区 403 拦截",
+            id = "esjzone", name = "ESJ Zone", group = "轻小说",
+            base = "https://www.esjzone.one",
+            charset = "utf-8", status = "verified",
+            enabledByDefault = true,
+            note = "【推荐】知名轻小说翻译与原创社区，收录大量日轻Web生肉汉化与首发作品",
+            probeKeyword = "魔王",
             search = SearchRule(
-                url = "/modules/article/search.php?searchkey={key}", auto = true,
-                list = ".grid tr, .bookbox, .novel-list li",
+                url = "/tags/{key}/",
+                list = ".card-body",
                 fields = mapOf(
-                    "name" to "td:nth-child(1) a@text || h4 a@text || a@title",
-                    "bookUrl" to "td:nth-child(1) a@href || h4 a@href || a@href",
-                    "author" to "td:nth-child(3)@text || .author@text",
+                    "name" to "h5.card-title a@text",
+                    "bookUrl" to "h5.card-title a@href",
+                    "author" to ".card-author a@text",
+                    "latest" to ".card-ep a@text",
                 ),
             ),
-            detail = DetailRule(name = "h1@text", author = "#info a@text || .author@text", cover = "#fmimg img@src", intro = "#intro@text || .intro@text"),
-            toc = TocRule(list = "#list dl dd a, #content table td a, .chapter-list a", name = "@text", url = "@href"),
-            content = ContentRule(body = "#content@html || #acontent@html"),
-        ),
-
-        // ─────────── 电子书 ───────────
-        Source(
-            id = "zlib", name = "Z-Library", group = "电子书",
-            base = "https://z-lib.gd", mirrors = listOf("https://z-library.sk", "https://1lib.sk"),
-            charset = "utf-8", status = "api", apiKind = "zlib",
-            note = "【备用】全球最大的电子书库（EPUB/PDF），走官方 App 接口检索",
+            detail = DetailRule(
+                name = "h2@text",
+                author = ".book-detail li:contains(作者)@text##作者：## || .book-detail li:nth-child(1)@text##作者：## || .book-detail li@text",
+                cover = ".product-gallery img@src || .book-detail img@src",
+                intro = ".description@text",
+            ),
+            toc = TocRule(
+                list = ".chapter-list a, .tab-pane a[href*='/forum/']",
+                name = "@text",
+                url = "@href",
+            ),
+            content = ContentRule(body = ".forum-content@html || .reading-content@html"),
         ),
     )
 

@@ -14,7 +14,7 @@ class Wenku8AndReaderTest {
         assertNotNull("轻小说文库书源应存在", src)
         assertEquals("轻小说文库编码应为 GBK", "gbk", src!!.charset.lowercase())
         assertEquals("轻小说文库应标记为 verified 已实测", "verified", src.status)
-        assertTrue("应包含 wenku8.cc 镜像直连载点", src.mirrors.any { it.contains("wenku8.cc") })
+        assertTrue("应包含 wenku8.cc 镜像直连载点", src.bases.any { it.contains("wenku8.cc") })
         
         // TOC 规则验证
         val toc = src.toc

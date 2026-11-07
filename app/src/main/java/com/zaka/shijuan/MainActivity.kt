@@ -173,23 +173,14 @@ fun ShijuanApp() {
                     route = Route.Main
                     uiScope.launch { drawerState.close() }
                 },
-                onOpenSources = {
-                    route = Route.Sources
-                    uiScope.launch { drawerState.close() }
-                },
                 onOpenCache = {
                     route = Route.Cache
-                    uiScope.launch { drawerState.close() }
-                },
-                onOpenNetwork = {
-                    route = Route.Network
                     uiScope.launch { drawerState.close() }
                 },
                 onOpenSettings = {
                     route = Route.Settings
                     uiScope.launch { drawerState.close() }
                 },
-                enabledSourcesCount = enabled.size,
             )
         },
     ) {
@@ -368,17 +359,14 @@ private fun OfflineBar(onRetry: () -> Unit) {
 }
 
 /**
- * 侧边栏：小说 / 漫画模式切换、书源管理、缓存、网络、设置。
+ * 侧边栏：小说 / 漫画模式切换、缓存、设置。
  */
 @Composable
 private fun SectionDrawer(
     current: Section,
     onPick: (Section) -> Unit,
-    onOpenSources: () -> Unit = {},
     onOpenCache: () -> Unit = {},
-    onOpenNetwork: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
-    enabledSourcesCount: Int = 0,
 ) {
     ModalDrawerSheet(
         drawerShape = RoundedCornerShape(topEnd = 26.dp, bottomEnd = 26.dp),
@@ -452,33 +440,6 @@ private fun SectionDrawer(
         HorizontalDivider(Modifier.padding(horizontal = 22.dp))
         Spacer(Modifier.height(10.dp))
 
-        // 书源管理入口
-        Row(
-            modifier = Modifier
-                .padding(horizontal = 12.dp, vertical = 4.dp)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .clickable { onOpenSources() }
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Layers,
-                contentDescription = "书源管理",
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text("书源管理", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    "已启用 $enabledSourcesCount 个 · 体检与自定义",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-
         // 缓存管理：哪本存了多少、存全没有、不要了怎么删
         Row(
             modifier = Modifier
@@ -502,34 +463,6 @@ private fun SectionDrawer(
                     "占用 · 体检 · 删除",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-        }
-
-        // 网络：直连还是走代理，外加一个连通性体检
-        Row(
-            modifier = Modifier
-                .padding(horizontal = 12.dp, vertical = 4.dp)
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(16.dp))
-                .clickable { onOpenNetwork() }
-                .padding(horizontal = 14.dp, vertical = 12.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            Icon(
-                imageVector = Icons.Rounded.Wifi,
-                contentDescription = "网络",
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
-                modifier = Modifier.size(22.dp),
-            )
-            Spacer(Modifier.width(12.dp))
-            Column(Modifier.weight(1f)) {
-                Text("网络", style = MaterialTheme.typography.titleMedium)
-                Text(
-                    if (Net.proxy().usable) "代理已开 · ${Net.proxy().host}" else "直连 · 可设代理",
-                    fontSize = 11.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
                 )
             }
         }
