@@ -260,27 +260,14 @@ fun ComicScreen(
             }
             FilterChip(
                 selected = tab == 1,
-                onClick = { tab = 1; shelfTick++ },
-                label = { Text("书架", fontSize = 12.sp) },
+                onClick = { tab = 1 },
+                label = {
+                    Text(
+                        if (dlTasks.isNotEmpty()) "缓存 ${dlTasks.size}" else if (offline) "缓存管理" else "缓存",
+                        fontSize = 12.sp,
+                    )
+                },
             )
-            if (!offline) {
-                FilterChip(
-                    selected = tab == 2,
-                    onClick = { tab = 2; shelfTick++ },
-                    label = {
-                        Text(
-                            if (dlTasks.isNotEmpty()) "缓存 ${dlTasks.size}" else "缓存",
-                            fontSize = 12.sp,
-                        )
-                    },
-                )
-            } else {
-                FilterChip(
-                    selected = tab == 2,
-                    onClick = { tab = 2; shelfTick++ },
-                    label = { Text("缓存管理", fontSize = 12.sp) },
-                )
-            }
         }
 
         Spacer(Modifier.height(6.dp))
@@ -360,29 +347,7 @@ fun ComicScreen(
             }
         }
 
-        // 漫画源筛选 FilterChip：全部、动漫屋 (count)、漫画人 (count)，只展示真正有输出的源
-        val validHits = hits.filter { it.ok && it.list.isNotEmpty() }
-        if (validHits.isNotEmpty()) {
-            androidx.compose.foundation.lazy.LazyRow(
-                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                item {
-                    FilterChip(
-                        selected = picked == "all",
-                        onClick = { picked = "all" },
-                        label = { Text("全部", fontSize = 12.sp) },
-                    )
-                }
-                items(validHits) { hit ->
-                    FilterChip(
-                        selected = picked == hit.sourceId,
-                        onClick = { picked = if (picked == hit.sourceId) "all" else hit.sourceId },
-                        label = { Text("${hit.sourceName} ${hit.list.size}", fontSize = 12.sp) },
-                    )
-                }
-            }
-        }
+
 
         if (error.isNotBlank() && shown.isEmpty()) {
             Box(Modifier.fillMaxWidth().padding(24.dp), contentAlignment = Alignment.Center) {
@@ -509,14 +474,6 @@ fun ComicScreen(
             }
         }
         }
-        } else if (tab == 1) {
-            ComicShelfGrid(
-                items = shelfList,
-                store = store,
-                onOpen = onOpen,
-                onChanged = { shelfTick++ },
-                offline = offline,
-            )
         } else {
             DownloadPanel(
                 tasks = dlTasks,
@@ -726,6 +683,7 @@ fun ComicDetailScreen(
     store: Store,
     onBack: () -> Unit,
     onRead: (Comic, List<ComicChapter>, Int, Int) -> Unit = { _, _, _, _ -> },
+    onShelfChanged: () -> Unit = {},
 ) {
     var full by remember(comic.url) { mutableStateOf(comic) }
     var chapters by remember(comic.url) { mutableStateOf<List<ComicChapter>>(emptyList()) }
@@ -881,6 +839,7 @@ fun ComicDetailScreen(
                                     if (inShelf) store.removeComicFromShelf(full)
                                     else store.addComicToShelf(full)
                                     shelfTick++
+                                    onShelfChanged()
                                 },
                                 shape = RoundedCornerShape(10.dp),
                                 contentPadding = PaddingValues(horizontal = 12.dp),
@@ -1030,7 +989,7 @@ fun ComicReaderScreen(
     var pageHeaders by remember(comic.url) { mutableStateOf<Map<String, String>>(emptyMap()) }
     var loading by remember(comic.url, index) { mutableStateOf(true) }
     var error by remember(comic.url, index) { mutableStateOf("") }
-    var attempt by remember { mutableStateOf(0) }
+    var attempt by remember(comic.url, index) { mutableIntStateOf(0) }
     var chrome by remember { mutableStateOf(true) }
     var showSettings by remember { mutableStateOf(false) }
     var mode by remember { mutableStateOf(store.comicMode()) }
@@ -1041,11 +1000,15 @@ fun ComicReaderScreen(
     var zoomOffset by remember { mutableStateOf(androidx.compose.ui.geometry.Offset.Zero) }
 
     val scope = rememberCoroutineScope()
-    val listState = androidx.compose.foundation.lazy.rememberLazyListState()
-    val pagerState = androidx.compose.foundation.pager.rememberPagerState(
-        initialPage = if (targetPage < 0) 0 else targetPage.coerceAtLeast(0),
-        pageCount = { images.size }
-    )
+    val listState = key(comic.url, index) {
+        androidx.compose.foundation.lazy.rememberLazyListState()
+    }
+    val pagerState = key(comic.url, index) {
+        androidx.compose.foundation.pager.rememberPagerState(
+            initialPage = 0,
+            pageCount = { images.size }
+        )
+    }
     val defaultHeaders = remember(comic.sourceId) { ComicRepo.imageHeaders(comic) }
     val activeHeaders = if (pageHeaders.isNotEmpty()) pageHeaders else defaultHeaders
 
@@ -1072,10 +1035,12 @@ fun ComicReaderScreen(
     LaunchedEffect(images, index) {
         if (images.isNotEmpty()) {
             val dest = if (targetPage < 0) images.size - 1 else targetPage.coerceIn(0, images.size - 1)
-            if (mode == "page") {
-                runCatching { pagerState.scrollToPage(dest) }
-            } else {
-                runCatching { listState.scrollToItem(dest) }
+            if (dest > 0) {
+                if (mode == "page") {
+                    runCatching { pagerState.scrollToPage(dest) }
+                } else {
+                    runCatching { listState.scrollToItem(dest) }
+                }
             }
             store.putComicRecord(comic, index, chapters.getOrNull(index)?.name.orEmpty(), dest)
         }
@@ -1180,8 +1145,8 @@ fun ComicReaderScreen(
                 if (local.isNotEmpty()) {
                     images = local.map { f -> "file://" + f.absolutePath }
                     fromCache = true
-                } else if (attempt == 0) {
-                    // 自动重试一次：移动端网络偶发抖动无感自愈，免去用户手动点击重试
+                } else if (attempt < 2) {
+                    // 自动重试最多2次：移动端网络偶发抖动无感自愈，免去用户手动点击重试
                     kotlinx.coroutines.delay(400)
                     attempt++
                     return@LaunchedEffect

@@ -1015,9 +1015,11 @@ object ComicRepo {
     )
 
     fun source(id: String): ComicSource =
-        sources.firstOrNull { it.id == id } ?: sources.first()
+        if (id == "local") localSource else (sources.firstOrNull { it.id == id } ?: sources.first())
 
-    fun byIdOrNull(id: String): ComicSource? = sources.firstOrNull { it.id == id }
+    val localSource: ComicSource = LocalComicSource()
+
+    fun byIdOrNull(id: String): ComicSource? = if (id == "local") localSource else sources.firstOrNull { it.id == id }
 
     val pool = Executors.newFixedThreadPool(4)
     private val failedUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()

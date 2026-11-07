@@ -49,9 +49,10 @@ class MainActivity : ComponentActivity() {
     }
 }
 
-/** 侧边栏里的两件事：小说 / 漫画 */
+/** 侧边栏导航：书架（综合默认首页） / 小说 / 漫画 */
 enum class Section(val label: String, val desc: String, val icon: ImageVector) {
-    Novel("小说", "多源搜索 · 书架 · 18+ 源", Icons.Rounded.Book),
+    Shelf("书架", "综合书架 · 本地导入 · 畅读", Icons.Rounded.CollectionsBookmark),
+    Novel("小说", "多源搜索 · 极速聚合 · 18+ 源", Icons.Rounded.Book),
     Comic("漫画", "动漫屋 · 漫画人 · 极速聚合", Icons.Rounded.PhotoLibrary),
 }
 
@@ -99,6 +100,8 @@ fun ShijuanApp() {
     var shelf by remember { mutableStateOf(store.shelf()) }
     var enabled by remember { mutableStateOf(store.enabledSources()) }
     var records by remember { mutableStateOf(store.records()) }
+    var comicShelf by remember { mutableStateOf(store.comicShelf()) }
+    var comicRecords by remember { mutableStateOf(store.comicRecords()) }
 
     // 离线：书架上只留本地有正文缓存的，最近读的也一样
     val shelfShown = remember(online, shelf) {
@@ -107,25 +110,38 @@ fun ShijuanApp() {
     val recordsShown = remember(online, records) {
         if (online) records else records.filter { store.cachedChaptersOf(it.book) > 0 }
     }
+    val comicShelfShown = remember(online, comicShelf) {
+        if (online) comicShelf else comicShelf.filter { ComicDownloader.cachedChapters(it).isNotEmpty() }
+    }
+    val comicRecordsShown = remember(online, comicRecords) {
+        if (online) comicRecords else comicRecords.filter { ComicDownloader.cachedChapters(it.comic).isNotEmpty() }
+    }
 
     val refreshShelf = {
         shelf = store.shelf()
         records = store.records()
-    }
-
-    BackHandler(enabled = route !is Route.Main) {
-        route = when (val r = route) {
-            is Route.ComicRead -> Route.ComicDetail(r.comic)
-            is Route.Reader -> Route.Detail(r.book, r.fromSearch)
-            is Route.Detail -> if (r.fromSearch) Route.Search else Route.Main
-            is Route.CustomSourceEdit -> Route.Sources
-            else -> Route.Main
-        }
+        comicShelf = store.comicShelf()
+        comicRecords = store.comicRecords()
     }
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val uiScope = rememberCoroutineScope()
-    var section by remember { mutableStateOf(Section.Novel) }
+    var section by remember { mutableStateOf(Section.Shelf) }
+
+    BackHandler(enabled = route !is Route.Main || section != Section.Shelf) {
+        if (route !is Route.Main) {
+            route = when (val r = route) {
+                is Route.ComicRead -> Route.ComicDetail(r.comic)
+                is Route.Reader -> Route.Detail(r.book, r.fromSearch)
+                is Route.Detail -> if (r.fromSearch && section != Section.Novel) Route.Search else Route.Main
+                is Route.ComicDetail -> Route.Main
+                is Route.CustomSourceEdit -> Route.Sources
+                else -> Route.Main
+            }
+        } else if (section != Section.Shelf) {
+            section = Section.Shelf
+        }
+    }
     var activeUpdateInfo by remember { mutableStateOf<ReleaseInfo?>(null) }
     val openDrawer = { uiScope.launch { drawerState.open() }; Unit }
 
@@ -207,32 +223,54 @@ fun ShijuanApp() {
                     label = "route",
                 ) { r ->
                     when (r) {
-                        is Route.Main -> if (section == Section.Comic) {
-                            ComicScreen(
+                        is Route.Main -> when (section) {
+                            Section.Shelf -> ShelfScreen(
+                                store = store,
+                                shelf = shelfShown,
+                                records = recordsShown,
+                                comicShelf = comicShelfShown,
+                                comicRecords = comicRecordsShown,
+                                onOpenNovel = { item -> route = Route.Detail(item.book, fromSearch = false) },
+                                onRemoveNovel = { item ->
+                                    store.removeFromShelf(item.book.url, item.book.sourceId)
+                                    refreshShelf()
+                                },
+                                onOpenNovelRecord = { rec -> route = Route.Detail(rec.book, fromSearch = false) },
+                                onRemoveNovelRecord = { book ->
+                                    store.removeRecord(book)
+                                    refreshShelf()
+                                },
+                                onBrowseNovel = {
+                                    section = Section.Novel
+                                },
+                                onOpenComic = { c -> route = Route.ComicDetail(c) },
+                                onRemoveComic = { c ->
+                                    store.removeComicFromShelf(c)
+                                    refreshShelf()
+                                },
+                                onOpenComicRecord = { rec -> route = Route.ComicDetail(rec.comic) },
+                                onBrowseComic = {
+                                    section = Section.Comic
+                                },
+                                onOpenDrawer = openDrawer,
+                                offline = !online,
+                                onImportSuccess = { refreshShelf() },
+                            )
+                            Section.Novel -> SearchScreen(
+                                store = store,
+                                enabled = enabled,
+                                onOpenBook = { route = Route.Detail(it, fromSearch = true) },
+                                onOpenDrawer = openDrawer,
+                                onBack = null,
+                                searchState = searchState,
+                            )
+                            Section.Comic -> ComicScreen(
                                 store = store,
                                 onOpen = { route = Route.ComicDetail(it) },
                                 onOpenDrawer = openDrawer,
                                 offline = !online,
                                 onOpenCache = { route = Route.Cache },
                                 state = comicSearchState,
-                            )
-                        } else {
-                            ShelfScreen(
-                                shelf = shelfShown,
-                                records = recordsShown,
-                                onOpen = { item -> route = Route.Detail(item.book) },
-                                onRemove = { item ->
-                                    store.removeFromShelf(item.book.url, item.book.sourceId)
-                                    refreshShelf()
-                                },
-                                onOpenRecord = { rec -> route = Route.Detail(rec.book) },
-                                onRemoveRecord = { book ->
-                                    store.removeRecord(book)
-                                    refreshShelf()
-                                },
-                                onBrowse = { route = Route.Search },
-                                onOpenDrawer = openDrawer,
-                                offline = !online,
                             )
                         }
 
@@ -317,6 +355,7 @@ fun ShijuanApp() {
                             store = store,
                             onBack = { route = Route.Main },
                             onRead = { c, chs, idx, initPage -> route = Route.ComicRead(c, chs, idx, initPage) },
+                            onShelfChanged = { refreshShelf() },
                         )
 
                         is Route.ComicRead -> ComicReaderScreen(

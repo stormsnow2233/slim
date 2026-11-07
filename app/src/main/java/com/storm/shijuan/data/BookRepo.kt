@@ -934,6 +934,7 @@ object BookRepo {
 
     /** 目录（支持单页抓取与基于 nextPage / page 模板的真实多页分页拉取） */
     fun getToc(src: Source, book: Book): Result<Toc> {
+        if (src.id == "local") return Result.success(Toc(chapters = emptyList()))
         val base = getActiveBase(src) ?: src.base
         val t = src.toc
         // 有的站书页和目录页是分开的两页（SF 手机站就是），规则里可以单独给目录页模板
@@ -1136,6 +1137,14 @@ object BookRepo {
 
     /** 正文 */
     fun getChapter(src: Source, chapter: Chapter): Result<Content> {
+        if (src.id == "local") {
+            val file = java.io.File(chapter.url.removePrefix("file://"))
+            if (file.exists()) {
+                val text = file.readText()
+                NovelContentCache.put("local", chapter.url, text)
+                return Result.success(Content(chapter.name, text, text))
+            }
+        }
         // 1. 优先命中正文两级缓存（L1 内存 / L2 磁盘）
         val cached = NovelContentCache.get(src.id, chapter.url)
         if (cached != null) {

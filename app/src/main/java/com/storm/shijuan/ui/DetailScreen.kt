@@ -74,6 +74,14 @@ fun DetailScreen(
     }
 
     fun loadToc(force: Boolean = false) {
+        if (book.sourceId == "local") {
+            val localToc = store.loadToc(book.url)
+            if (localToc.isNotEmpty()) {
+                toc = localToc
+                loading = false
+                return
+            }
+        }
         scope.launch {
             // 离线：本地有目录就直接用，不去撞网络；本地没有就直说
             if (!force && !Offline.isOnline(ctx)) {
@@ -107,6 +115,14 @@ fun DetailScreen(
     }
 
     LaunchedEffect(book.url) {
+        if (book.sourceId == "local") {
+            val localToc = store.loadToc(book.url)
+            if (localToc.isNotEmpty()) {
+                toc = localToc
+                loading = false
+            }
+            return@LaunchedEffect
+        }
         if (toc.isNotEmpty()) {
             // 有缓存：先把目录放出来，详情后台补，打开就秒显
             val s0 = Sources.byId(book.sourceId)

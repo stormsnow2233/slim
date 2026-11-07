@@ -316,7 +316,16 @@ object Sources {
         ),
     )
 
-    fun byId(id: String): Source? = all.firstOrNull { it.id == id }
+    val LOCAL = Source(
+        id = "local",
+        name = "本地导入",
+        group = "本地",
+        base = "file://",
+        status = "verified",
+        enabledByDefault = true,
+    )
+
+    fun byId(id: String): Source? = if (id == "local") LOCAL else all.firstOrNull { it.id == id }
 
     // ─────────── 自定义源（用户自己加的，运行时注册） ───────────
 
