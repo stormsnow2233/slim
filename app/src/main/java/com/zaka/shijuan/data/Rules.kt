@@ -230,10 +230,11 @@ object Rules {
         RegexOption.IGNORE_CASE
     )
 
-    /** 轻小说文库已知支持 HTTPS 访问的图片 CDN 域名 */
+    /** 轻小说与源站已知支持 HTTPS 访问的图片 CDN 域名 */
     val WENKU8_IMG_HOSTS = setOf(
         "img.wenku8.com", "pic.777743.xyz", "image.wenku8.cc",
-        "img.wenku8.cc", "pic.wenku8.com", "pic.wenku8.cn", "dl.wenku8.com"
+        "img.wenku8.cc", "pic.wenku8.com", "pic.wenku8.cn", "dl.wenku8.com",
+        "rs.sfacg.com", "img.faloo.com"
     )
 
     /** 升级 Wenku8 图片明文 http 为 https，规避 Android 明文流量限制与 Mixed Content 拦截 */

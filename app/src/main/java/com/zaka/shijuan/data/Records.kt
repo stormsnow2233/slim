@@ -58,12 +58,14 @@ data class ComicRecord(
     val comic: Comic,
     val chapterIndex: Int = 0,
     val chapterName: String = "",
+    val pageIndex: Int = 0,
     val lastReadAt: Long = 0,
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("comic", comic.toJson())
         put("chapterIndex", chapterIndex)
         put("chapterName", chapterName)
+        put("pageIndex", pageIndex)
         put("lastReadAt", lastReadAt)
     }
 
@@ -72,6 +74,7 @@ data class ComicRecord(
             comic = Comic.from(o.optJSONObject("comic") ?: JSONObject()),
             chapterIndex = o.optInt("chapterIndex"),
             chapterName = o.optString("chapterName"),
+            pageIndex = o.optInt("pageIndex"),
             lastReadAt = o.optLong("lastReadAt"),
         )
 

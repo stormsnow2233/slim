@@ -64,13 +64,14 @@ sealed class Route {
     data object Network : Route()
     /** 自定义书源编辑；id 为 null 表示新建 */
     data class CustomSourceEdit(val id: String? = null) : Route()
-    data class Detail(val book: Book) : Route()
-    data class Reader(val book: Book, val chapters: List<Chapter>, val index: Int, val initialPage: Int = 0) : Route()
+    data class Detail(val book: Book, val fromSearch: Boolean = false) : Route()
+    data class Reader(val book: Book, val chapters: List<Chapter>, val index: Int, val initialPage: Int = 0, val fromSearch: Boolean = false) : Route()
     data class ComicDetail(val comic: Comic) : Route()
     data class ComicRead(
         val comic: Comic,
         val chapters: List<ComicChapter>,
         val index: Int,
+        val initialPage: Int = 0,
     ) : Route()
 }
 
@@ -93,6 +94,7 @@ fun ShijuanApp() {
     }
     val online by Offline.online.collectAsState()
     var route by remember { mutableStateOf<Route>(Route.Main) }
+    val searchState = remember { SearchState() }
     var shelf by remember { mutableStateOf(store.shelf()) }
     var enabled by remember { mutableStateOf(store.enabledSources()) }
     var records by remember { mutableStateOf(store.records()) }
@@ -113,7 +115,8 @@ fun ShijuanApp() {
     BackHandler(enabled = route !is Route.Main) {
         route = when (val r = route) {
             is Route.ComicRead -> Route.ComicDetail(r.comic)
-            is Route.Reader -> Route.Detail(r.book)
+            is Route.Reader -> Route.Detail(r.book, r.fromSearch)
+            is Route.Detail -> if (r.fromSearch) Route.Search else Route.Main
             is Route.CustomSourceEdit -> Route.Sources
             else -> Route.Main
         }
@@ -243,9 +246,10 @@ fun ShijuanApp() {
                         is Route.Search -> SearchScreen(
                             store = store,
                             enabled = enabled,
-                            onOpenBook = { route = Route.Detail(it) },
+                            onOpenBook = { route = Route.Detail(it, fromSearch = true) },
                             onOpenDrawer = openDrawer,
                             onBack = { route = Route.Main },
+                            searchState = searchState,
                         )
 
                         is Route.Sources -> SourcesScreen(
@@ -294,9 +298,9 @@ fun ShijuanApp() {
                         is Route.Detail -> DetailScreen(
                             book = r.book,
                             store = store,
-                            onBack = { route = Route.Main },
+                            onBack = { route = if (r.fromSearch) Route.Search else Route.Main },
                             onRead = { book, chapters, idx, initPage ->
-                                route = Route.Reader(book, chapters, idx, initPage)
+                                route = Route.Reader(book, chapters, idx, initPage, fromSearch = r.fromSearch)
                             },
                             onShelfChanged = { refreshShelf() },
                         )
@@ -307,8 +311,8 @@ fun ShijuanApp() {
                             startIndex = r.index,
                             initialPage = r.initialPage,
                             store = store,
-                            onBack = { route = Route.Detail(r.book) },
-                            onSwitchBook = { other -> route = Route.Detail(other) },
+                            onBack = { route = Route.Detail(r.book, fromSearch = r.fromSearch) },
+                            onSwitchBook = { other -> route = Route.Detail(other, fromSearch = r.fromSearch) },
                             onProgress = { ci, cn, p, page, total ->
                                 store.updateProgress(r.book, ci, cn, p, page, total)
                                 refreshShelf()
@@ -319,7 +323,7 @@ fun ShijuanApp() {
                             comic = r.comic,
                             store = store,
                             onBack = { route = Route.Main },
-                            onRead = { c, chs, idx -> route = Route.ComicRead(c, chs, idx) },
+                            onRead = { c, chs, idx, initPage -> route = Route.ComicRead(c, chs, idx, initPage) },
                         )
 
                         is Route.ComicRead -> ComicReaderScreen(
@@ -328,6 +332,7 @@ fun ShijuanApp() {
                             startIndex = r.index,
                             store = store,
                             onBack = { route = Route.ComicDetail(r.comic) },
+                            initialPage = r.initialPage,
                         )
                     }
                 }

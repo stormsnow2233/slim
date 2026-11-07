@@ -1269,9 +1269,13 @@ object BookRepo {
                 recordContentResult(src.id, ok = false, error = "抓到书籍页而非正文")
                 return Result.failure(Exception("抓到的这页是书籍页/目录页，不是正文，可能这站改版了"))
             }
-            val err = "正文内容过短（仅 ${len} 字），可能触发源站拦截或防盗提示"
-            recordContentResult(src.id, ok = false, error = err)
-            return Result.failure(Exception(err))
+            // 若显式规则已精确命中正文区域（如 SF 的 .Content_Frame、正文 div），短文本多为作者通知/小节，正常展示，不阻断报错
+            val ruleMatched = c != null && c.body.isNotBlank() && html.isNotBlank()
+            if (!ruleMatched) {
+                val err = "正文内容过短（仅 ${len} 字），可能触发源站拦截或防盗提示"
+                recordContentResult(src.id, ok = false, error = err)
+                return Result.failure(Exception(err))
+            }
         }
 
         NovelContentCache.put(src.id, chapter.url, text)

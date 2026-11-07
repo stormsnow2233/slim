@@ -141,77 +141,7 @@ object Sources {
             content = ContentRule(body = "#content@html"),
         ),
 
-        Source(
-            id = "novel8", name = "无限轻小说", group = "轻小说",
-            base = "https://www.8novel.com", charset = "utf-8", status = "local",
-            enabledByDefault = false,
-            note = "【备用】正文由前端 JS 动态异步加载，纯 HTTP 抓取无正文",
-            search = SearchRule(
-                url = "/search/?key={key}",
-                list = ".card .col-4",
-                fields = mapOf(
-                    "name" to "a.text-blue@text",
-                    "bookUrl" to "a.text-blue@href",
-                    "cover" to "img@src",
-                ),
-            ),
-            detail = DetailRule(
-                name = "meta[property=\"og:novel:book_name\"]@content",
-                author = "meta[property=\"og:novel:author\"]@content",
-                cover = "meta[property=\"og:image\"]@content",
-                intro = "meta[property=\"og:description\"]@content",
-            ),
-            toc = TocRule(list = "a[href*=\"/read/\"]", name = "@text", url = "@href"),
-            content = ContentRule(body = "#text@html || #content .text@html"),
-        ),
-
         // ─────────── 国内网络直连（规则来自维护中的书源合集） ───────────
-        Source(
-            id = "qianbi", name = "铅笔小说", group = "综合",
-            base = "https://www.23qb.com", charset = "utf-8", status = "local",
-            note = "【备用】海外/部分地区 403 拦截",
-            search = SearchRule(
-                url = "/search.html?searchkey={key}",
-                list = ".module-search-item",
-                fields = mapOf(
-                    "name" to "a@title",
-                    "bookUrl" to "a@href",
-                    "cover" to "img@data-src",
-                    "intro" to ".novel-info-item@text",
-                ),
-                auto = true,
-            ),
-            detail = DetailRule(
-                name = "h1@text || .book-name@text",
-                author = ".author a@text",
-                cover = ".book-img img@src || .cover img@src",
-                intro = ".book-dec@text || .intro@text",
-            ),
-            toc = TocRule(list = "#list-chapterAll a, .module-row-text, .module-volume-list a", name = "@text", url = "@href"),
-            content = ContentRule(body = "#mlfy_main_text@html || .article-content@html"),
-        ),
-
-        Source(
-            id = "ttkan", name = "天天看小说", group = "综合",
-            base = "https://cn.ttkan.co", charset = "utf-8", status = "local",
-            note = "【备用】源站 502 Bad Gateway",
-            search = SearchRule(
-                url = "/novel/search?q={key}",
-                list = ".novel_cell",
-                fields = mapOf(
-                    "name" to "h3@text",
-                    "bookUrl" to "a@href",
-                    "cover" to "amp-img@src",
-                    "author" to "li:nth-child(2)@text",
-                    "intro" to "li:nth-child(3)@text",
-                ),
-                auto = true,
-            ),
-            detail = DetailRule(name = "h1@text", author = ".author@text", intro = ".description@text"),
-            toc = TocRule(list = ".full_chapters a", name = "@text", url = "@href"),
-            content = ContentRule(body = ".content p@texts || .content@html"),
-        ),
-
         Source(
             id = "sudugu", name = "速读谷", group = "综合",
             base = "https://www.sudugu.cc", charset = "utf-8", status = "local",
@@ -237,42 +167,28 @@ object Sources {
         ),
 
         Source(
-            id = "shoujix", name = "手机小说", group = "综合",
-            base = "https://www.shoujix.com", charset = "gbk", status = "local",
-            note = "【停用】源站没有搜索入口（任何查询都返回同一张导航页），只能用直链看书",
+            id = "qianbi", name = "铅笔小说", group = "综合",
+            base = "https://www.23qb.com", charset = "utf-8", status = "local",
+            note = "【备用】海外/部分地区 403 拦截",
             search = SearchRule(
-                url = "/modules/article/search.php", method = "POST",
-                body = "searchkey={key}",
-                list = ".novel-item",
+                url = "/search.html?searchkey={key}",
+                list = ".module-search-item",
                 fields = mapOf(
-                    "name" to "img@alt",
+                    "name" to "a@title",
                     "bookUrl" to "a@href",
-                    "cover" to "img@src",
-                    "author" to ".novel-author@text",
-                    "intro" to ".novel-intro@text",
+                    "cover" to "img@data-src",
+                    "intro" to ".novel-info-item@text",
                 ),
                 auto = true,
             ),
-            detail = DetailRule(name = "h1@text", author = ".author@text", intro = ".intro@text"),
-            toc = TocRule(list = "#lbks dd a || #list dd a", name = "@text", url = "@href"),
-            content = ContentRule(body = "#zjny@html"),
-        ),
-
-        Source(
-            id = "kuaishu", name = "快书网", group = "综合",
-            base = "https://www.kuaishu5.com", charset = "utf-8", status = "local",
-            note = "【备用】源站 SSL 证书失效",
-            search = SearchRule(url = "/search/?searchkey={key}", auto = true),
-            toc = TocRule(list = "", name = "@text", url = "@href"),
-            content = ContentRule(body = ""),
-        ),
-
-        Source(
-            id = "deqixs", name = "得奇小说网", group = "综合",
-            base = "https://www.deqixs.com", charset = "utf-8", status = "local",
-            note = "【备用】源站直接掐断连接",
-            search = SearchRule(url = "/tag/?key={key}", auto = true),
-            content = ContentRule(body = ""),
+            detail = DetailRule(
+                name = "h1@text || .book-name@text",
+                author = ".author a@text",
+                cover = ".book-img img@src || .cover img@src",
+                intro = ".book-dec@text || .intro@text",
+            ),
+            toc = TocRule(list = "#list-chapterAll a, .module-row-text, .module-volume-list a", name = "@text", url = "@href"),
+            content = ContentRule(body = "#mlfy_main_text@html || .article-content@html"),
         ),
 
         // ─────────── 正版源 ───────────
@@ -399,76 +315,47 @@ object Sources {
             toc = TocRule(
                 list = "ul.mulu_list a", name = "@text", url = "@href",
                 page = "https://m.sfacg.com/i/{id}/",
-                // SF 的目录按卷切开，「人设」「书友画廊」整卷都是图片（正文区只有一个 <img>），
-                // 阅读器只排文字，从这些章点进去必然空白——整卷跳过，直接落到「第一卷」
                 volume = "div.mulu",
-                skipVolume = "(人设|设定集|书友画廊|画廊|插画|插图|图集|彩图|线稿)",
-                skip = "(插图|插画|图集|人设|设定集|彩图|线稿|图片版|漫画版|改命链接|链接|公告|群号|通知|下线说明)",
+                skipVolume = "(人设|设定集|书友画廊|画廊|插画|插图|图集|彩图|彩页|线稿|草稿|相关|首发)",
+                skip = "(插图|插画|图集|人设|设定集|彩图|彩页|线稿|草稿|图片版|漫画版|改命链接|链接|公告|群号|通知|下线说明|版权|免责|免责声明|文&图|首发|新书首发|投票|求票|收藏|求收藏|感言|加更|活动说明|试看)",
             ),
             content = ContentRule(body = "div.yuedu.Content_Frame > div@html || .Content_Frame > div@html || .yuedu [style*=\"text-indent\"]@html || [style*=\"text-indent\"]@html || .yuedu@html || #content@html"),
         ),
 
         Source(
-            id = "trxs", name = "同人小说", group = "轻小说",
-            base = "https://www.trxs.cc", charset = "utf-8", status = "local",
-            note = "【备用】源站改版，搜索路径 404",
+            id = "faloo", name = "飞卢小说", group = "轻小说",
+            base = "https://b.faloo.com", charset = "gbk", status = "verified",
+            enabledByDefault = true,
+            note = "【推荐】二次元/同人轻小说与原创小说，检索极快，更新活跃",
             search = SearchRule(
-                url = "/modules/article/search.php?searchkey={key}", auto = true,
-                list = ".bookbox, .novel-item, .grid tr",
+                url = "https://b.faloo.com/l/0/1.html?t=1&k={key}",
+                list = ".TwoBox02",
                 fields = mapOf(
-                    "name" to "h4 a@text || td:nth-child(1) a@text || a@title",
-                    "bookUrl" to "h4 a@href || td:nth-child(1) a@href || a@href",
-                    "author" to ".author@text || td:nth-child(3)@text",
-                    "cover" to "img@src || img@data-src",
+                    "name" to "h1 a@title || a@title || h1 a@text",
+                    "bookUrl" to "h1 a@href || a@href",
+                    "cover" to "img@data-original || img@src",
+                    "author" to ".TwoBox02_09 a@text || a[href*='t=2']@text",
+                    "intro" to ".TwoBox02_06@text",
+                    "latest" to ".TwoBox02_05@text",
                 ),
+                keyCharset = "gbk",
+                auto = false,
             ),
-            detail = DetailRule(name = "h1@text", author = ".author@text || #info a@text", cover = "#fmimg img@src", intro = "#intro@text || .intro@text"),
-            toc = TocRule(list = "#list dl dd a, .chapter-list a, #content table td a", name = "@text", url = "@href"),
-            content = ContentRule(body = "#content@html || #acontent@html"),
+            detail = DetailRule(
+                name = "h1@text",
+                author = ".TwoBox02_09 a@text || a[href*='t=2']@text || .author@text",
+                cover = "img.TYImg@src || #fmimg img@src",
+                intro = ".TwoBox02_06@text || #intro@text",
+            ),
+            toc = TocRule(list = "a[href*='_']", name = "@text", url = "@href"),
+            content = ContentRule(body = "div.noveContent@html || .noveContent@html || #content@html"),
         ),
 
         // ─────────── 综合补充 ───────────
         Source(
-            id = "ptwxz", name = "飘天文学", group = "综合",
-            base = "https://www.ptwxz.com", charset = "gbk", status = "local",
-            enabledByDefault = false,
-            note = "【备用】老牌 GBK 完本站，规则易失效",
-            search = SearchRule(
-                url = "/modules/article/search.php?searchkey={key}", auto = true,
-                list = ".grid tr, .bookbox, .novel-list li",
-                fields = mapOf(
-                    "name" to "td:nth-child(1) a@text || h4 a@text || a@title",
-                    "bookUrl" to "td:nth-child(1) a@href || h4 a@href || a@href",
-                    "author" to "td:nth-child(3)@text || .author@text",
-                ),
-            ),
-            detail = DetailRule(name = "h1@text", author = "#info a@text || .author@text", cover = "#fmimg img@src", intro = "#intro@text || .intro@text"),
-            toc = TocRule(list = "#list dl dd a, #content table td a, .chapter-list a", name = "@text", url = "@href"),
-            content = ContentRule(body = "#content@html || #acontent@html"),
-        ),
-
-        Source(
             id = "ddxs", name = "顶点小说", group = "综合",
             base = "https://www.ddxs.com", charset = "gbk", status = "local",
             note = "【备用】海外/部分地区 403 拦截",
-            search = SearchRule(
-                url = "/modules/article/search.php?searchkey={key}", auto = true,
-                list = ".grid tr, .bookbox, .novel-list li",
-                fields = mapOf(
-                    "name" to "td:nth-child(1) a@text || h4 a@text || a@title",
-                    "bookUrl" to "td:nth-child(1) a@href || h4 a@href || a@href",
-                    "author" to "td:nth-child(3)@text || .author@text",
-                ),
-            ),
-            detail = DetailRule(name = "h1@text", author = "#info a@text || .author@text", cover = "#fmimg img@src", intro = "#intro@text || .intro@text"),
-            toc = TocRule(list = "#list dl dd a, #content table td a, .chapter-list a", name = "@text", url = "@href"),
-            content = ContentRule(body = "#content@html || #acontent@html"),
-        ),
-
-        Source(
-            id = "xbiquge", name = "新笔趣阁", group = "笔趣阁系",
-            base = "https://www.xbiquge.la", charset = "utf-8", status = "local",
-            note = "【备用】源站 SSL 证书失效",
             search = SearchRule(
                 url = "/modules/article/search.php?searchkey={key}", auto = true,
                 list = ".grid tr, .bookbox, .novel-list li",

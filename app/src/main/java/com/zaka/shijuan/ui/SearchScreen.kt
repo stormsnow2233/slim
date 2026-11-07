@@ -40,6 +40,17 @@ data class MergedBook(
     val primary: Book get() = sources.first()
 }
 
+/** 搜索界面状态持久容器：页面离开/跳转详情返回时保留关键词与结果 */
+class SearchState {
+    var keyword by mutableStateOf("")
+    var results by mutableStateOf<Map<String, SourceResult>>(emptyMap())
+    var running by mutableStateOf(false)
+    var searched by mutableStateOf("")
+    var showStates by mutableStateOf(false)
+    var filterSource by mutableStateOf<String?>(null)
+    var searchSeq by mutableIntStateOf(0)
+}
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun SearchScreen(
@@ -48,15 +59,16 @@ fun SearchScreen(
     onOpenBook: (Book) -> Unit,
     onOpenDrawer: () -> Unit = {},
     onBack: (() -> Unit)? = null,
+    searchState: SearchState = remember { SearchState() },
 ) {
-    var keyword by remember { mutableStateOf("") }
-    var results by remember { mutableStateOf<Map<String, SourceResult>>(emptyMap()) }
-    var running by remember { mutableStateOf(false) }
-    var searched by remember { mutableStateOf("") }
+    var keyword by searchState::keyword
+    var results by searchState::results
+    var running by searchState::running
+    var searched by searchState::searched
     var history by remember { mutableStateOf(store.history()) }
-    var showStates by remember { mutableStateOf(false) }
-    var filterSource by remember { mutableStateOf<String?>(null) }
-    var searchSeq by remember { mutableStateOf(0) }
+    var showStates by searchState::showStates
+    var filterSource by searchState::filterSource
+    var searchSeq by searchState::searchSeq
     var searchJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var verifyTarget by remember { mutableStateOf<Source?>(null) }
 
@@ -66,7 +78,7 @@ fun SearchScreen(
 
     DisposableEffect(Unit) {
         onDispose {
-            BookRepo.cancelSearch("search_$searchSeq")
+            searchJob?.cancel()
         }
     }
 

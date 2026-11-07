@@ -48,6 +48,7 @@ import coil.compose.AsyncImage
 import coil.compose.SubcomposeAsyncImage
 import coil.request.ImageRequest
 import com.zaka.shijuan.data.Comic
+import kotlin.math.roundToInt
 import com.zaka.shijuan.data.ComicChapter
 import com.zaka.shijuan.data.ComicHit
 import com.zaka.shijuan.data.ComicDownloader
@@ -293,40 +294,7 @@ fun ComicScreen(
                 .padding(horizontal = 18.dp),
         )
 
-        Spacer(Modifier.height(8.dp))
-
-        // 源切换：全部 / 单个站
-        androidx.compose.foundation.lazy.LazyRow(
-            contentPadding = PaddingValues(horizontal = 18.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-        ) {
-            item {
-                FilterChip(
-                    selected = picked == "all",
-                    onClick = { picked = "all" },
-                    label = { Text("全部", fontSize = 12.sp) },
-                )
-            }
-            items(ComicRepo.sources, key = { it.id }) { src ->
-                val hit = hits.firstOrNull { it.sourceId == src.id }
-                FilterChip(
-                    selected = picked == src.id,
-                    onClick = { picked = src.id },
-                    label = {
-                        Text(
-                            buildString {
-                                append(src.name)
-                                if (hit != null) {
-                                    if (hit.ok) append(" ${hit.list.size}") else append(" ×")
-                                }
-                            },
-                            fontSize = 12.sp,
-                            maxLines = 1,
-                        )
-                    },
-                )
-            }
-        }
+        Spacer(Modifier.height(4.dp))
 
         Row(
             Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
@@ -707,7 +675,7 @@ fun ComicDetailScreen(
     comic: Comic,
     store: Store,
     onBack: () -> Unit,
-    onRead: (Comic, List<ComicChapter>, Int) -> Unit,
+    onRead: (Comic, List<ComicChapter>, Int, Int) -> Unit = { _, _, _, _ -> },
 ) {
     var full by remember(comic.url) { mutableStateOf(comic) }
     var chapters by remember(comic.url) { mutableStateOf<List<ComicChapter>>(emptyList()) }
@@ -838,7 +806,7 @@ fun ComicDetailScreen(
                         }
                         Spacer(Modifier.height(10.dp))
                         Button(
-                            onClick = { if (chapters.isNotEmpty()) onRead(full, chapters, startIdx) },
+                            onClick = { if (chapters.isNotEmpty()) onRead(full, chapters, startIdx, record?.pageIndex ?: 0) },
                             enabled = chapters.isNotEmpty(),
                             shape = RoundedCornerShape(10.dp),
                         ) {
@@ -874,7 +842,7 @@ fun ComicDetailScreen(
                                     when (dlTask?.state) {
                                         STATE_RUNNING -> ComicDownloader.pause(dlTask.key)
                                         STATE_PAUSED, STATE_ERROR -> ComicDownloader.resume(dlTask.key)
-                                        STATE_DONE -> onRead(full, chapters, 0)
+                                        STATE_DONE -> onRead(full, chapters, 0, 0)
                                         else -> ComicDownloader.start(full, chapters)
                                     }
                                 },
@@ -962,7 +930,7 @@ fun ComicDetailScreen(
                                     android.widget.Toast.LENGTH_SHORT,
                                 ).show()
                             } else {
-                                onRead(full, chapters, ch.index)
+                                onRead(full, chapters, ch.index, if (ch.index == record?.chapterIndex) record.pageIndex else 0)
                             }
                         }
                         .padding(horizontal = 20.dp, vertical = 13.dp),
@@ -1003,8 +971,10 @@ fun ComicReaderScreen(
     startIndex: Int,
     store: Store,
     onBack: () -> Unit,
+    initialPage: Int = 0,
 ) {
     var index by remember(comic.url, startIndex) { mutableIntStateOf(startIndex.coerceIn(0, (chapters.size - 1).coerceAtLeast(0))) }
+    var targetPage by remember(index) { mutableIntStateOf(if (index == startIndex) initialPage else 0) }
     var images by remember(comic.url, index) { mutableStateOf<List<String>>(emptyList()) }
     var pageHeaders by remember(comic.url) { mutableStateOf<Map<String, String>>(emptyMap()) }
     var loading by remember(comic.url, index) { mutableStateOf(true) }
@@ -1044,12 +1014,24 @@ fun ComicReaderScreen(
         ComicRepo.prefetchPages(comic, chapters.getOrNull(index + 1))
     }
 
-    LaunchedEffect(images.size, mode, activeHeaders) {
+    LaunchedEffect(images.size, mode, activeHeaders, index) {
         if (images.isEmpty()) return@LaunchedEffect
-        snapshotFlow { pagerState.currentPage }.collect { p ->
-            withContext(Dispatchers.IO) {
-                for (i in (p + 1)..(p + 3)) {
-                    images.getOrNull(i)?.let { ComicImages.prefetch(ctx, it, activeHeaders, screenW, screenH) }
+        if (mode == "page") {
+            snapshotFlow { pagerState.currentPage }.collect { p ->
+                store.putComicRecord(comic, index, chapters.getOrNull(index)?.name.orEmpty(), p)
+                withContext(Dispatchers.IO) {
+                    for (i in (p + 1)..(p + 3)) {
+                        images.getOrNull(i)?.let { ComicImages.prefetch(ctx, it, activeHeaders, screenW, screenH) }
+                    }
+                }
+            }
+        } else {
+            snapshotFlow { listState.firstVisibleItemIndex }.collect { p ->
+                store.putComicRecord(comic, index, chapters.getOrNull(index)?.name.orEmpty(), p)
+                withContext(Dispatchers.IO) {
+                    for (i in (p + 1)..(p + 3)) {
+                        images.getOrNull(i)?.let { ComicImages.prefetch(ctx, it, activeHeaders, screenW, screenH) }
+                    }
                 }
             }
         }
@@ -1066,21 +1048,27 @@ fun ComicReaderScreen(
                 f < 0.30f -> when {
                     pagerState.currentPage > 0 ->
                         scope.launch { pagerState.animateScrollToPage(pagerState.currentPage - 1) }
-                    index > 0 -> index--
+                    index > 0 -> {
+                        targetPage = -1
+                        index--
+                    }
                     else -> chrome = !chrome
                 }
                 f > 0.70f -> when {
                     pagerState.currentPage < images.size - 1 ->
                         scope.launch { pagerState.animateScrollToPage(pagerState.currentPage + 1) }
-                    index < chapters.size - 1 -> index++
+                    index < chapters.size - 1 -> {
+                        targetPage = 0
+                        index++
+                    }
                     else -> chrome = !chrome
                 }
                 else -> chrome = !chrome
             }
         } else {
             when {
-                f < 0.28f -> if (index > 0) index-- else chrome = !chrome
-                f > 0.72f -> if (index < chapters.size - 1) index++ else chrome = !chrome
+                f < 0.28f -> if (index > 0) { targetPage = -1; index-- } else chrome = !chrome
+                f > 0.72f -> if (index < chapters.size - 1) { targetPage = 0; index++ } else chrome = !chrome
                 else -> chrome = !chrome
             }
         }
@@ -1101,9 +1089,10 @@ fun ComicReaderScreen(
             images = local.map { "file://" + it.absolutePath }
             fromCache = true
             loading = false
-            store.putComicRecord(comic, index, ch.name)
-            runCatching { listState.scrollToItem(0) }
-            runCatching { pagerState.scrollToPage(0) }
+            val pageToScroll = if (targetPage < 0) (images.size - 1).coerceAtLeast(0) else targetPage.coerceIn(0, (images.size - 1).coerceAtLeast(0))
+            store.putComicRecord(comic, index, ch.name, pageToScroll)
+            runCatching { listState.scrollToItem(pageToScroll) }
+            runCatching { pagerState.scrollToPage(pageToScroll) }
             return@LaunchedEffect
         }
         if (!online) {
@@ -1121,20 +1110,26 @@ fun ComicReaderScreen(
                 if (it.headers.isNotEmpty()) merged.putAll(it.headers)
                 if (it.referer.isNotBlank()) merged["Referer"] = it.referer
                 pageHeaders = merged
-                if (it.images.isNotEmpty()) store.putComicRecord(comic, index, ch.name)
+                val pageToScroll = if (targetPage < 0) (it.images.size - 1).coerceAtLeast(0) else targetPage.coerceIn(0, (it.images.size - 1).coerceAtLeast(0))
+                if (it.images.isNotEmpty()) {
+                    store.putComicRecord(comic, index, ch.name, pageToScroll)
+                    runCatching { listState.scrollToItem(pageToScroll) }
+                    runCatching { pagerState.scrollToPage(pageToScroll) }
+                }
             }
             .onFailure {
                 // 网络没拿到但本地有半话的图：先给用户看，别白屏
                 if (local.isNotEmpty()) {
                     images = local.map { f -> "file://" + f.absolutePath }
                     fromCache = true
+                    val pageToScroll = if (targetPage < 0) (images.size - 1).coerceAtLeast(0) else targetPage.coerceIn(0, (images.size - 1).coerceAtLeast(0))
+                    runCatching { listState.scrollToItem(pageToScroll) }
+                    runCatching { pagerState.scrollToPage(pageToScroll) }
                 } else {
                     error = it.message ?: "这一话加载失败"
                 }
             }
         loading = false
-        runCatching { listState.scrollToItem(0) }
-        runCatching { pagerState.scrollToPage(0) }
     }
 
     Box(
@@ -1313,29 +1308,78 @@ fun ComicReaderScreen(
             exit = fadeOut(),
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
-            Row(
+            Column(
                 Modifier
                     .fillMaxWidth()
                     .background(MaterialTheme.colorScheme.surface.copy(alpha = 0.94f))
                     .navigationBarsPadding()
-                    .padding(horizontal = 10.dp, vertical = 8.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(horizontal = 12.dp, vertical = 6.dp),
             ) {
-                OutlinedButton(
-                    onClick = { if (index > 0) index-- },
-                    enabled = index > 0,
-                    modifier = Modifier.weight(1f),
-                ) { Text("上一话") }
-                OutlinedButton(
-                    onClick = { showSettings = true },
-                    shape = RoundedCornerShape(10.dp),
-                ) { Text("设置", fontSize = 12.sp) }
-                Button(
-                    onClick = { if (index < chapters.size - 1) index++ },
-                    enabled = index < chapters.size - 1,
-                    modifier = Modifier.weight(1f),
-                ) { Text("下一话") }
+                // 页面进度条与页码指示
+                if (images.isNotEmpty()) {
+                    val curPage = if (mode == "page") pagerState.currentPage else listState.firstVisibleItemIndex
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 4.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "${(curPage + 1).coerceAtMost(images.size)} / ${images.size}",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.width(64.dp),
+                        )
+                        var sliderPos by remember(curPage) { mutableFloatStateOf(curPage.toFloat()) }
+                        Slider(
+                            value = sliderPos,
+                            onValueChange = { sliderPos = it },
+                            onValueChangeFinished = {
+                                val target = sliderPos.roundToInt().coerceIn(0, images.size - 1)
+                                targetPage = target
+                                scope.launch {
+                                    if (mode == "page") pagerState.scrollToPage(target)
+                                    else listState.scrollToItem(target)
+                                }
+                            },
+                            valueRange = 0f..(images.size - 1).coerceAtLeast(0).toFloat(),
+                            steps = (images.size - 2).coerceAtLeast(0),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
+                }
+
+                Row(
+                    Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    OutlinedButton(
+                        onClick = {
+                            if (index > 0) {
+                                targetPage = 0
+                                index--
+                            }
+                        },
+                        enabled = index > 0,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("上一话") }
+                    OutlinedButton(
+                        onClick = { showSettings = true },
+                        shape = RoundedCornerShape(10.dp),
+                    ) { Text("设置", fontSize = 12.sp) }
+                    Button(
+                        onClick = {
+                            if (index < chapters.size - 1) {
+                                targetPage = 0
+                                index++
+                            }
+                        },
+                        enabled = index < chapters.size - 1,
+                        modifier = Modifier.weight(1f),
+                    ) { Text("下一话") }
+                }
             }
         }
     }

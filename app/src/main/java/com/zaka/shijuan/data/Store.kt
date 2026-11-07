@@ -212,10 +212,10 @@ class Store(context: Context) {
     fun comicRecordOf(comic: Comic): ComicRecord? =
         comicRecords().firstOrNull { it.comic.url == comic.url }
 
-    fun putComicRecord(comic: Comic, chapterIndex: Int, chapterName: String) {
+    fun putComicRecord(comic: Comic, chapterIndex: Int, chapterName: String, pageIndex: Int = 0) {
         val list = comicRecords().toMutableList()
         val idx = list.indexOfFirst { it.comic.url == comic.url }
-        val rec = ComicRecord(comic, chapterIndex, chapterName, System.currentTimeMillis())
+        val rec = ComicRecord(comic, chapterIndex, chapterName, pageIndex, System.currentTimeMillis())
         if (idx >= 0) list[idx] = rec else list.add(0, rec)
         val sorted = list.sortedByDescending { it.lastReadAt }.take(40)
         sp.edit().putString("comic_records", ComicRecord.listToJson(sorted)).apply()

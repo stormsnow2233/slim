@@ -1114,9 +1114,22 @@ object ComicRepo {
     fun pages(comic: Comic, chapter: ComicChapter): ComicPages {
         val key = comic.sourceId + "|" + comic.url + "|" + chapter.url
         synchronized(pagesCache) { pagesCache[key] }?.let { return it }
-        val got = source(comic.sourceId).pages(comic, chapter)
-        synchronized(pagesCache) { pagesCache[key] = got }
-        return got
+        var lastErr: Throwable? = null
+        for (attempt in 1..2) {
+            try {
+                val got = source(comic.sourceId).pages(comic, chapter)
+                if (got.images.isNotEmpty()) {
+                    synchronized(pagesCache) { pagesCache[key] = got }
+                    return got
+                }
+            } catch (t: Throwable) {
+                lastErr = t
+                if (attempt < 2) {
+                    try { Thread.sleep(300L) } catch (_: InterruptedException) {}
+                }
+            }
+        }
+        throw lastErr ?: IllegalStateException("漫画章节加载失败")
     }
 
     /** 后台把下一话的图地址先拿回来，翻页时就少等一次往返 */
