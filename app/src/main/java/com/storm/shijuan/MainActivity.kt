@@ -54,6 +54,7 @@ enum class Section(val label: String, val desc: String, val icon: ImageVector) {
     Shelf("书架", "综合书架 · 本地导入 · 畅读", Icons.Rounded.CollectionsBookmark),
     Novel("小说", "多源搜索 · 极速聚合 · 18+ 源", Icons.Rounded.Book),
     Comic("漫画", "动漫屋 · 漫画人 · 极速聚合", Icons.Rounded.PhotoLibrary),
+    JM("JM源", "JMcomic 禁漫 · 单源独享", Icons.Rounded.AutoAwesome),
 }
 
 sealed class Route {
@@ -271,6 +272,13 @@ fun ShijuanApp() {
                                 offline = !online,
                                 onOpenCache = { route = Route.Cache },
                                 state = comicSearchState,
+                            )
+                            Section.JM -> JmComicScreen(
+                                store = store,
+                                onOpen = { route = Route.ComicDetail(it) },
+                                onOpenDrawer = openDrawer,
+                                offline = !online,
+                                onOpenCache = { route = Route.Cache },
                             )
                         }
 

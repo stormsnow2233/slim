@@ -994,6 +994,8 @@ class LiziSource : ComicSource {
 
 object ComicRepo {
 
+    val jmSource: JmComicSource = JmComicSource()
+
     val sources: List<ComicSource> = listOf(
         BaoziComicSource(),
         Dm5FamilySource(
@@ -1014,12 +1016,19 @@ object ComicRepo {
         ),
     )
 
-    fun source(id: String): ComicSource =
-        if (id == "local") localSource else (sources.firstOrNull { it.id == id } ?: sources.first())
-
     val localSource: ComicSource = LocalComicSource()
 
-    fun byIdOrNull(id: String): ComicSource? = if (id == "local") localSource else sources.firstOrNull { it.id == id }
+    fun source(id: String): ComicSource = when (id) {
+        "local" -> localSource
+        "jm" -> jmSource
+        else -> sources.firstOrNull { it.id == id } ?: sources.first()
+    }
+
+    fun byIdOrNull(id: String): ComicSource? = when (id) {
+        "local" -> localSource
+        "jm" -> jmSource
+        else -> sources.firstOrNull { it.id == id }
+    }
 
     val pool = Executors.newFixedThreadPool(4)
     private val failedUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()

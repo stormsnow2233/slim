@@ -1476,10 +1476,16 @@ private fun ComicPage(
 ) {
     val ctx = LocalContext.current
     var retryKey by remember(src) { mutableIntStateOf(0) }
+    val isJm = src.contains("/media/photos/") || headers.containsKey("X-JM")
     SubcomposeAsyncImage(
         model = ImageRequest.Builder(ctx)
             .data(src)
-            .apply { headers.forEach { (k, v) -> setHeader(k, v) } }
+            .apply {
+                headers.forEach { (k, v) -> setHeader(k, v) }
+                if (isJm) {
+                    transformations(com.storm.shijuan.data.JmDescrambleTransformation(src))
+                }
+            }
             .memoryCacheKey(src)
             .diskCacheKey(src)
             .setParameter("retry", retryKey, memoryCacheKey = null)
