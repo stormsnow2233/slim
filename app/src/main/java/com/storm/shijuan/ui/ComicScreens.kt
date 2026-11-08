@@ -233,15 +233,12 @@ fun ComicScreen(
         ) {
             DrawerButton(onClick = onOpenDrawer)
             Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text("漫画", style = MaterialTheme.typography.headlineLarge)
-                Text(
-                    if (offline) "离线模式 · 只显示缓存过的漫画"
-                    else ComicRepo.sources.joinToString(" · ") { it.name },
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
+            Text(
+                "漫画",
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Bold,
+                modifier = Modifier.weight(1f),
+            )
         }
 
         Row(
@@ -305,24 +302,7 @@ fun ComicScreen(
                 .padding(horizontal = 18.dp),
         )
 
-        if (query.isBlank()) {
-            androidx.compose.foundation.lazy.LazyRow(
-                contentPadding = PaddingValues(horizontal = 18.dp, vertical = 2.dp),
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
-            ) {
-                items(listOf("古见同学有社交障碍", "败犬女主", "咒术回战", "葬送的芙莉莲", "鬼灭之刃", "电锯人", "海贼王")) { kw ->
-                    SuggestionChip(
-                        onClick = {
-                            query = kw
-                            searchToken++
-                        },
-                        label = { Text(kw, fontSize = 11.sp) },
-                    )
-                }
-            }
-        }
-
-        Spacer(Modifier.height(4.dp))
+        Spacer(Modifier.height(8.dp))
 
         Row(
             Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
