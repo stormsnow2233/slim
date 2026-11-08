@@ -20,14 +20,17 @@ data class Book(
     val year: String = "",
     val language: String = "",
     val altSources: List<Book> = emptyList(),
+    val isImported: Boolean = false,
 ) {
+    val isLocalOrImported: Boolean
+        get() = isImported || sourceId == "local" || url.startsWith("file://") || url.startsWith("content://")
     fun toJson(): JSONObject = JSONObject().apply {
         put("name", name); put("author", author); put("cover", cover)
         put("intro", intro); put("latest", latest); put("url", url)
         put("sourceId", sourceId); put("sourceName", sourceName)
         put("kind", kind); put("wordCount", wordCount)
         put("external", external); put("downloadUrl", downloadUrl)
-        put("year", year); put("language", language)
+        put("year", year); put("language", language); put("isImported", isImported)
         if (altSources.isNotEmpty()) {
             val arr = JSONArray()
             altSources.forEach { arr.put(it.copy(altSources = emptyList()).toJson()) }
@@ -53,6 +56,7 @@ data class Book(
                 external = o.optBoolean("external"), downloadUrl = o.optString("downloadUrl"),
                 year = o.optString("year"), language = o.optString("language"),
                 altSources = alts,
+                isImported = o.optBoolean("isImported", o.optString("sourceId") == "local" || o.optString("url").startsWith("file://") || o.optString("url").startsWith("content://")),
             )
         }
     }
@@ -135,4 +139,5 @@ data class ReaderPrefs(
     val themeIndex: Int = 0,
     val pageMode: Int = 1, // 0 上下滚动 1 章内左右翻页
     val indent: Boolean = true,
+    val convertSimplified: Boolean = false,
 )

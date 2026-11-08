@@ -424,14 +424,23 @@ fun ReaderScreen(
 
                 prefs.pageMode == 1 -> {
                     // ── 章内左右滑动翻页 ──
-                    val bodyText = remember(content, prefs.indent) {
-                        TextPaginator.normalize(content?.text.orEmpty(), prefs.indent)
+                    val rawText = content?.text.orEmpty()
+                    val rawTitle = content?.title ?: chapter?.name ?: ""
+                    val isTraditional = remember(rawText) { ChineseConverter.isTraditional(rawText) }
+                    val effectiveText = remember(rawText, prefs.convertSimplified) {
+                        if (prefs.convertSimplified) ChineseConverter.toSimplified(rawText) else rawText
+                    }
+                    val effectiveTitle = remember(rawTitle, prefs.convertSimplified) {
+                        if (prefs.convertSimplified) ChineseConverter.toSimplified(rawTitle) else rawTitle
+                    }
+                    val bodyText = remember(effectiveText, prefs.indent) {
+                        TextPaginator.normalize(effectiveText, prefs.indent)
                     }
                     Box(Modifier.fillMaxSize()) {
-                        key(index, prefs.fontSize, prefs.lineHeight, prefs.indent) {
+                        key(index, prefs.fontSize, prefs.lineHeight, prefs.indent, prefs.convertSimplified) {
                             PagedChapter(
                                 bodyText = bodyText,
-                                title = content?.title ?: chapter?.name ?: "",
+                                title = effectiveTitle,
                                 prefs = prefs,
                                 colors = theme,
                                 initialPage = targetPageForChapter,
@@ -463,6 +472,14 @@ fun ReaderScreen(
                 }
 
                 else -> {
+                    val rawText = content?.text.orEmpty()
+                    val rawTitle = content?.title ?: chapter?.name ?: ""
+                    val effectiveText = remember(rawText, prefs.convertSimplified) {
+                        if (prefs.convertSimplified) ChineseConverter.toSimplified(rawText) else rawText
+                    }
+                    val effectiveTitle = remember(rawTitle, prefs.convertSimplified) {
+                        if (prefs.convertSimplified) ChineseConverter.toSimplified(rawTitle) else rawTitle
+                    }
                     Column(
                         Modifier
                             .fillMaxSize()
@@ -470,8 +487,8 @@ fun ReaderScreen(
                             .padding(horizontal = 22.dp)
                     ) {
                         Spacer(Modifier.height(10.dp))
-                        ChapterTitle(content?.title ?: chapter?.name ?: "", chapter?.volume.orEmpty(), prefs, theme)
-                        BodyText(content?.text ?: "", prefs, theme, onImageClick = { previewImageUrl = it })
+                        ChapterTitle(effectiveTitle, chapter?.volume.orEmpty(), prefs, theme)
+                        BodyText(effectiveText, prefs, theme, onImageClick = { previewImageUrl = it })
                         Spacer(Modifier.height(24.dp))
                         FootNav(index, currentChapters.size, theme) { }
                         Spacer(Modifier.height(60.dp))
@@ -626,6 +643,32 @@ fun ReaderScreen(
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                 )
+
+                val rawText = content?.text.orEmpty()
+                val isTraditional = remember(rawText) { ChineseConverter.isTraditional(rawText) }
+                if (isTraditional || prefs.convertSimplified) {
+                    Spacer(Modifier.height(16.dp))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.fillMaxWidth(),
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("简繁转换", style = MaterialTheme.typography.bodyMedium)
+                            Text(
+                                if (prefs.convertSimplified) "当前已转换为简体中文" else "检测到正文为繁体中文，可转为简体",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
+                            )
+                        }
+                        Switch(
+                            checked = prefs.convertSimplified,
+                            onCheckedChange = {
+                                prefs = prefs.copy(convertSimplified = it)
+                                store.saveReaderPrefs(prefs)
+                            },
+                        )
+                    }
+                }
             }
         }
     }

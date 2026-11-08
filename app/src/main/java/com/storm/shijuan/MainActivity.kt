@@ -133,7 +133,7 @@ fun ShijuanApp() {
             route = when (val r = route) {
                 is Route.ComicRead -> Route.ComicDetail(r.comic)
                 is Route.Reader -> Route.Detail(r.book, r.fromSearch)
-                is Route.Detail -> if (r.fromSearch && section != Section.Novel) Route.Search else Route.Main
+                is Route.Detail -> Route.Main
                 is Route.ComicDetail -> Route.Main
                 is Route.CustomSourceEdit -> Route.Sources
                 else -> Route.Main
@@ -329,7 +329,7 @@ fun ShijuanApp() {
                         is Route.Detail -> DetailScreen(
                             book = r.book,
                             store = store,
-                            onBack = { route = if (r.fromSearch) Route.Search else Route.Main },
+                            onBack = { route = Route.Main },
                             onRead = { book, chapters, idx, initPage ->
                                 route = Route.Reader(book, chapters, idx, initPage, fromSearch = r.fromSearch)
                             },

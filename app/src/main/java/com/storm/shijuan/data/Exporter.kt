@@ -74,10 +74,20 @@ object Exporter {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var job: Job? = null
 
-    fun cancel() {
+    private const val CHANNEL_ID = "shijuan_export"
+    private const val NOTIF_ID = 1001
+    private var lastNotifTime = 0L
+
+    fun cancel(ctx: Context? = null) {
         job?.cancel()
         job = null
         state.value = state.value.copy(running = false, message = "已取消")
+        ctx?.let {
+            runCatching {
+                val nm = it.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+                nm.cancel(NOTIF_ID)
+            }
+        }
     }
 
     /** format: "txt" / "epub" */
@@ -92,6 +102,7 @@ object Exporter {
         state.value = ExportState(
             running = true, bookName = book.name, format = format.uppercase(), total = total,
         )
+        notifyProgress(appCtx, book.name, 0, total, "准备下载…", force = true)
 
         job = scope.launch {
             val src = Sources.byId(book.sourceId)
@@ -104,6 +115,7 @@ object Exporter {
                 val direct = directTxtUrl(book)
                 if (direct != null) {
                     state.value = state.value.copy(current = "尝试整本直下…")
+                    notifyProgress(appCtx, book.name, 0, total, "尝试整本直下…", force = true)
                     val bytes = Net.getBytes(direct, referer = "https://www.wenku8.net/")
                     if (bytes != null && bytes.size > 4000) {
                         val text = decodeNovelBytes(bytes)
@@ -147,6 +159,7 @@ object Exporter {
                         state.value = state.value.copy(
                             done = d, current = ch.name,
                         )
+                        notifyProgress(appCtx, book.name, d, total, ch.name)
                     }
                 }
             }
@@ -375,26 +388,65 @@ $spine  </spine>
             }
         }
 
-    // ───────────── 通知 ─────────────
+    // ───────────── 系统通知与灵动岛/胶囊适配 ─────────────
+
+    private fun ensureChannel(ctx: Context, nm: NotificationManager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+                val ch = NotificationChannel(
+                    CHANNEL_ID,
+                    "下载与导出",
+                    NotificationManager.IMPORTANCE_LOW
+                ).apply {
+                    description = "显示书籍整本下载与导出实时进度"
+                    setShowBadge(false)
+                }
+                nm.createNotificationChannel(ch)
+            }
+        }
+    }
+
+    private fun notifyProgress(
+        ctx: Context,
+        bookName: String,
+        done: Int,
+        total: Int,
+        chName: String,
+        force: Boolean = false,
+    ) {
+        val now = System.currentTimeMillis()
+        if (!force && now - lastNotifTime < 300 && done < total) return
+        lastNotifTime = now
+        runCatching {
+            val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            ensureChannel(ctx, nm)
+            val percent = if (total > 0) (done * 100 / total) else 0
+            val n = NotificationCompat.Builder(ctx, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download)
+                .setContentTitle("正在下载《$bookName》 ($percent%)")
+                .setContentText(if (chName.isNotBlank()) "[$done/$total] $chName" else "$done / $total 章")
+                .setProgress(total, done, false)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .build()
+            nm.notify(NOTIF_ID, n)
+        }
+    }
 
     private fun notifyDone(ctx: Context, bookName: String, path: String) {
         runCatching {
             val nm = ctx.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
-            val channelId = "shijuan_export"
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
-                if (nm.getNotificationChannel(channelId) == null) {
-                    nm.createNotificationChannel(
-                        NotificationChannel(channelId, "整本导出", NotificationManager.IMPORTANCE_DEFAULT)
-                    )
-                }
-            }
-            val n = NotificationCompat.Builder(ctx, channelId)
+            ensureChannel(ctx, nm)
+            val n = NotificationCompat.Builder(ctx, CHANNEL_ID)
                 .setSmallIcon(android.R.drawable.stat_sys_download_done)
-                .setContentTitle("《$bookName》导出完成")
-                .setContentText(path)
+                .setContentTitle("《$bookName》下载完成")
+                .setContentText("已保存至 $path")
                 .setAutoCancel(true)
+                .setOngoing(false)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .build()
-            nm.notify(1001, n)
+            nm.notify(NOTIF_ID, n)
         }
     }
 }

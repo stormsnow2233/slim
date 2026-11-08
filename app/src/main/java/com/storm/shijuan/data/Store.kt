@@ -463,6 +463,7 @@ class Store(context: Context) {
         themeIndex = sp.getInt("theme", 0),
         pageMode = sp.getInt("page_mode", 1),
         indent = sp.getBoolean("indent", true),
+        convertSimplified = sp.getBoolean("convert_simplified", false),
     )
 
     // ── 软件更新设置 ──
@@ -485,6 +486,7 @@ class Store(context: Context) {
             .putInt("theme", p.themeIndex)
             .putInt("page_mode", p.pageMode)
             .putBoolean("indent", p.indent)
+            .putBoolean("convert_simplified", p.convertSimplified)
             .apply()
     }
 

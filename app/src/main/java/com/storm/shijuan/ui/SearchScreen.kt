@@ -298,22 +298,16 @@ fun SearchScreen(
                     FlowRowChips(history.take(10)) { doSearch(it) }
                     Spacer(Modifier.height(18.dp))
                 }
-                Text("试试这些", style = MaterialTheme.typography.titleMedium)
-                Spacer(Modifier.height(4.dp))
-                FlowRowChips(
-                    listOf("败犬女主角太多了", "古见同学有社交障碍", "邻家天使", "魔王", "斗破苍穹", "诡秘之主", "十日终焉", "凡人修仙传", "三体", "大奉打更人", "剑来", "遮天")
-                ) { doSearch(it) }
-                Spacer(Modifier.height(20.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("已启用 ${activeSources.size} 个书源", style = MaterialTheme.typography.bodyMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+                Text("小说推荐", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 Spacer(Modifier.height(8.dp))
-                LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
-                    items(activeSources) { s ->
-                        TinyTag(s.name, if (s.status == "verified") Color_OK else MaterialTheme.colorScheme.primary)
-                    }
-                }
+                FlowRowChips(
+                    listOf(
+                        "败犬女主角太多了", "古见同学有社交障碍", "邻家天使",
+                        "诡秘之主", "十日终焉", "大奉打更人", "剑来", "遮天",
+                        "欢迎来到实力至上主义的教室", "无职转生", "义妹生活", "凡人修仙传",
+                        "关于我转生变成史莱姆这档事", "斗破苍穹", "三体"
+                    )
+                ) { doSearch(it) }
             }
         } else if (merged.isEmpty() && running) {
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {

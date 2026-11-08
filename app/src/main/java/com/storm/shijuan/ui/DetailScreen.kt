@@ -296,7 +296,7 @@ fun DetailScreen(
                             shape = RoundedCornerShape(14.dp),
                             containerColor = MaterialTheme.colorScheme.surface,
                         ) {
-                            if (!full.external) {
+                            if (!full.isLocalOrImported && !full.external) {
                                 DropdownMenuItem(
                                     text = { Text("下载 TXT") },
                                     leadingIcon = { Icon(Icons.Rounded.Description, null) },
@@ -326,26 +326,28 @@ fun DetailScreen(
                                     loadToc()
                                 },
                             )
-                            DropdownMenuItem(
-                                text = { Text("复制书籍链接") },
-                                leadingIcon = { Icon(Icons.Rounded.Link, null) },
-                                onClick = {
-                                    menuOpen = false
-                                    val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                                    cm.setPrimaryClip(ClipData.newPlainText("书架", full.url))
-                                    Toast.makeText(ctx, "链接已复制", Toast.LENGTH_SHORT).show()
-                                },
-                            )
-                            DropdownMenuItem(
-                                text = { Text("浏览器打开") },
-                                leadingIcon = { Icon(Icons.Rounded.OpenInBrowser, null) },
-                                onClick = {
-                                    menuOpen = false
-                                    runCatching {
-                                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(full.url)))
-                                    }
-                                },
-                            )
+                            if (!full.isLocalOrImported) {
+                                DropdownMenuItem(
+                                    text = { Text("复制书籍链接") },
+                                    leadingIcon = { Icon(Icons.Rounded.Link, null) },
+                                    onClick = {
+                                        menuOpen = false
+                                        val cm = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
+                                        cm.setPrimaryClip(ClipData.newPlainText("书架", full.url))
+                                        Toast.makeText(ctx, "链接已复制", Toast.LENGTH_SHORT).show()
+                                    },
+                                )
+                                DropdownMenuItem(
+                                    text = { Text("浏览器打开") },
+                                    leadingIcon = { Icon(Icons.Rounded.OpenInBrowser, null) },
+                                    onClick = {
+                                        menuOpen = false
+                                        runCatching {
+                                            ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(full.url)))
+                                        }
+                                    },
+                                )
+                            }
                         }
                     }
                 }
@@ -373,7 +375,6 @@ fun DetailScreen(
                         )
                         Spacer(Modifier.height(8.dp))
                         Row(horizontalArrangement = Arrangement.spacedBy(5.dp)) {
-                            TinyTag(full.sourceName)
                             if (full.kind.isNotBlank()) TinyTag(full.kind, MaterialTheme.colorScheme.secondary)
                             if (full.latest.isNotBlank()) {
                                 TinyTag("更新 ${full.latest.take(10)}", MaterialTheme.colorScheme.onSurfaceVariant)
@@ -561,7 +562,7 @@ fun DetailScreen(
         if (showExport && (export.running || export.finished || export.failed)) {
             ExportSheet(
                 export = export,
-                onCancel = { Exporter.cancel(); showExport = false },
+                onCancel = { Exporter.cancel(ctx); showExport = false },
                 onClose = { showExport = false },
             )
         }
@@ -665,12 +666,7 @@ private fun ExportSheet(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "章节多的话要等几分钟，退出这个页面也会继续下",
-                        fontSize = 11.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.75f),
-                    )
+
                 } else {
                     Text(export.message, fontSize = 13.sp)
                     if (export.savedPath.isNotBlank()) {

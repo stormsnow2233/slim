@@ -263,6 +263,7 @@ object LocalImporter {
             cover = "",
             intro = fullText.take(200).trim(),
             latest = chapterList.lastOrNull()?.name ?: "",
+            isImported = true,
         )
 
         store.saveToc(book.url, chapterList)
@@ -385,6 +386,7 @@ object LocalImporter {
             cover = coverUrl,
             intro = "本地 EPUB 导入，包含插图与正文（共 ${chapterList.size} 章）",
             latest = chapterList.lastOrNull()?.name ?: "",
+            isImported = true,
         )
 
         store.saveToc(book.url, chapterList)
@@ -606,6 +608,7 @@ object LocalImporter {
             cover = coverUrl,
             intro = "本地 PDF 导入（共 $pageCount 页）",
             latest = "第 $pageCount 页",
+            isImported = true,
         )
 
         store.saveToc(book.url, chapterList)

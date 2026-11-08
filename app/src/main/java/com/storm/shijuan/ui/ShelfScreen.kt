@@ -158,11 +158,7 @@ fun ShelfScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                 }
-                if (!offline) {
-                    FilledTonalIconButton(onClick = onBrowseNovel) {
-                        Icon(Icons.Rounded.Search, contentDescription = "搜索")
-                    }
-                }
+
             }
 
             LazyColumn(
