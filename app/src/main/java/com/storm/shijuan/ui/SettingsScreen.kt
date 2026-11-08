@@ -20,8 +20,10 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import kotlin.math.roundToInt
 import com.storm.shijuan.BuildConfig
 import com.storm.shijuan.data.Net
 import com.storm.shijuan.data.ReleaseInfo
@@ -101,14 +103,16 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Slider(
+                    CleanSlider(
                         value = prefs.fontSize,
                         onValueChange = {
-                            prefs = prefs.copy(fontSize = it)
-                            store.saveReaderPrefs(prefs)
+                            val rounded = it.roundToInt().toFloat()
+                            if (rounded != prefs.fontSize) {
+                                prefs = prefs.copy(fontSize = rounded)
+                                store.saveReaderPrefs(prefs)
+                            }
                         },
                         valueRange = 14f..30f,
-                        steps = 15,
                     )
                     Spacer(Modifier.height(6.dp))
                     Text(
@@ -116,17 +120,22 @@ fun SettingsScreen(
                         style = MaterialTheme.typography.titleMedium,
                         fontWeight = FontWeight.SemiBold,
                     )
-                    Slider(
+                    CleanSlider(
                         value = prefs.lineHeight,
                         onValueChange = {
-                            prefs = prefs.copy(lineHeight = it)
-                            store.saveReaderPrefs(prefs)
+                            val rounded = ((it * 20).roundToInt() / 20f)
+                            if (rounded != prefs.lineHeight) {
+                                prefs = prefs.copy(lineHeight = rounded)
+                                store.saveReaderPrefs(prefs)
+                            }
                         },
                         valueRange = 1.2f..2.4f,
-                        steps = 11,
                     )
                     Spacer(Modifier.height(8.dp))
-                    Row(verticalAlignment = Alignment.CenterVertically) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
                         Column(Modifier.weight(1f)) {
                             Text(
                                 "翻页模式",
@@ -139,23 +148,51 @@ fun SettingsScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        FilterChip(
-                            selected = prefs.pageMode == 0,
-                            onClick = {
-                                prefs = prefs.copy(pageMode = 0)
-                                store.saveReaderPrefs(prefs)
-                            },
-                            label = { Text("上下滚动") },
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        FilterChip(
-                            selected = prefs.pageMode == 1,
-                            onClick = {
-                                prefs = prefs.copy(pageMode = 1)
-                                store.saveReaderPrefs(prefs)
-                            },
-                            label = { Text("左右翻页") },
-                        )
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
+                        ) {
+                            Row(modifier = Modifier.padding(3.dp)) {
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(9.dp))
+                                        .background(
+                                            if (prefs.pageMode == 0) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent
+                                        )
+                                        .clickable {
+                                            prefs = prefs.copy(pageMode = 0)
+                                            store.saveReaderPrefs(prefs)
+                                        }
+                                        .padding(horizontal = 14.dp, vertical = 7.dp)
+                                ) {
+                                    Text(
+                                        text = "上下滚动",
+                                        fontSize = 13.sp,
+                                        fontWeight = if (prefs.pageMode == 0) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (prefs.pageMode == 0) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                                Box(
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(9.dp))
+                                        .background(
+                                            if (prefs.pageMode == 1) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent
+                                        )
+                                        .clickable {
+                                            prefs = prefs.copy(pageMode = 1)
+                                            store.saveReaderPrefs(prefs)
+                                        }
+                                        .padding(horizontal = 14.dp, vertical = 7.dp)
+                                ) {
+                                    Text(
+                                        text = "左右翻页",
+                                        fontSize = 13.sp,
+                                        fontWeight = if (prefs.pageMode == 1) FontWeight.Bold else FontWeight.Normal,
+                                        color = if (prefs.pageMode == 1) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
+                                    )
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -358,12 +395,12 @@ fun SettingsScreen(
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                     Spacer(Modifier.height(12.dp))
-                    OutlinedButton(
+                    FilledTonalButton(
                         onClick = {
                             val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/stormsnow2233/slim"))
                             ctx.startActivity(intent)
                         },
-                        shape = RoundedCornerShape(10.dp)
+                        shape = RoundedCornerShape(12.dp)
                     ) {
                         Icon(Icons.Rounded.Code, contentDescription = null, modifier = Modifier.size(16.dp))
                         Spacer(Modifier.width(8.dp))
@@ -514,25 +551,23 @@ fun UpdateDialog(
                 )
                 Spacer(Modifier.height(6.dp))
 
-                // 完整更新日志，支持上下滑动，彻底解决内容显示不全
+                // 完整 Markdown 格式化更新日志，支持上下滑动与富文本展示
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
                     modifier = Modifier
                         .fillMaxWidth()
-                        .heightIn(max = 240.dp)
+                        .heightIn(max = 340.dp)
                 ) {
                     val scroll = rememberScrollState()
                     Box(
                         Modifier
                             .fillMaxWidth()
                             .verticalScroll(scroll)
-                            .padding(12.dp)
+                            .padding(14.dp)
                     ) {
-                        Text(
-                            text = info.changelog.ifBlank { "本次版本包含常规体验优化与问题修复。" },
-                            fontSize = 12.5.sp,
-                            lineHeight = 18.sp,
+                        MarkdownContent(
+                            markdown = info.changelog.ifBlank { "本次版本包含常规体验优化与问题修复。" },
                             color = MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
@@ -618,6 +653,42 @@ fun UpdateDialog(
                     }
                 }
             }
+        }
+    )
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun CleanSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    valueRange: ClosedFloatingPointRange<Float>,
+    modifier: Modifier = Modifier,
+) {
+    Slider(
+        value = value,
+        onValueChange = onValueChange,
+        valueRange = valueRange,
+        modifier = modifier.fillMaxWidth(),
+        colors = SliderDefaults.colors(
+            thumbColor = MaterialTheme.colorScheme.primary,
+            activeTrackColor = MaterialTheme.colorScheme.primary,
+            inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+        ),
+        thumb = {
+            Box(
+                modifier = Modifier
+                    .size(18.dp)
+                    .clip(CircleShape)
+                    .background(MaterialTheme.colorScheme.primary)
+            )
+        },
+        track = { sliderState ->
+            SliderDefaults.Track(
+                sliderState = sliderState,
+                thumbTrackGapSize = 0.dp,
+                drawStopIndicator = null
+            )
         }
     )
 }
