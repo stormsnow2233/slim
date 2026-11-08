@@ -143,7 +143,11 @@ object CustomSources {
     }
 
     fun fromJson(o: JSONObject): Source? {
-        val base = o.optString("base").ifBlank { o.optString("bookSourceUrl") }.trim()
+        val base = o.optString("base")
+            .ifBlank { o.optString("bookSourceUrl") }
+            .ifBlank { o.optString("sourceUrl") }
+            .ifBlank { o.optString("url") }
+            .trim()
         if (base.isBlank()) return null
         return build(base, o)
     }
@@ -157,10 +161,19 @@ object CustomSources {
 
     private fun build(rawBase: String, o: JSONObject): Source? {
         val base = normalizeBase(rawBase) ?: return null
-        val name = o.optString("name").ifBlank {
-            o.optString("bookSourceName").ifBlank { runCatching { java.net.URI(base).host }.getOrDefault("自定义源") }
-        }.trim()
+        val name = o.optString("name")
+            .ifBlank { o.optString("bookSourceName") }
+            .ifBlank { o.optString("sourceName") }
+            .ifBlank { o.optString("title") }
+            .ifBlank { runCatching { java.net.URI(base).host }.getOrDefault("自定义源") }
+            .trim()
         if (base.contains("bilibili.com") || name.contains("请勿删除") || name.contains("关注B站")) return null
+
+        val group = o.optString("group")
+            .ifBlank { o.optString("bookSourceGroup") }
+            .ifBlank { o.optString("sourceGroup") }
+            .ifBlank { "我的书源" }
+            .trim()
 
         val mirrors = buildList {
             val arr = o.optJSONArray("mirrors")
@@ -172,18 +185,14 @@ object CustomSources {
             }
         }
 
-        val rawSearchUrl = o.optString("searchUrl").ifBlank { o.optJSONObject("ruleSearch")?.optString("searchUrl").orEmpty() }.trim()
-        if (rawSearchUrl.startsWith("@js:") || rawSearchUrl.contains("java.ajax") || rawSearchUrl.contains("java.connect")) {
-            return null
-        }
-        val ruleContentStr = o.optJSONObject("ruleContent")?.optString("content", "").orEmpty()
-        if (ruleContentStr.startsWith("@js:") || ruleContentStr.contains("<js>")) {
-            return null
-        }
+        val rawSearchUrl = o.optString("searchUrl")
+            .ifBlank { o.optJSONObject("ruleSearch")?.optString("searchUrl").orEmpty() }
+            .trim()
+        val isJsSearch = rawSearchUrl.startsWith("@js:") || rawSearchUrl.contains("java.ajax") || rawSearchUrl.contains("java.connect")
 
         val searchO = o.optJSONObject("search")
         val ruleSearch = o.optJSONObject("ruleSearch")
-        val parsedSearch = if (rawSearchUrl.isNotBlank()) parseSearchUrl(rawSearchUrl) else null
+        val parsedSearch = if (!isJsSearch && rawSearchUrl.isNotBlank()) parseSearchUrl(rawSearchUrl) else null
         val search = when {
             searchO != null -> SearchRule(
                 url = searchO.optString("url"),
@@ -203,19 +212,40 @@ object CustomSources {
                 },
                 keyCharset = searchO.optString("keyCharset", "utf-8"),
             )
-            ruleSearch != null || parsedSearch != null -> {
-                val p = parsedSearch ?: parseSearchUrl(ruleSearch?.optString("searchUrl").orEmpty())
+            isJsSearch -> {
                 val bookList = ruleSearch?.optString("bookList").orEmpty()
                 SearchRule(
-                    url = p.url.ifBlank { "/search.php?searchkey={key}" },
-                    method = p.method,
-                    body = p.body,
+                    url = "/search?searchkey={key}",
+                    method = "GET",
+                    body = "",
                     list = readCss(bookList),
                     fields = mapOf(
                         "name" to readCss(ruleSearch?.optString("name").orEmpty()),
                         "bookUrl" to readCss(ruleSearch?.optString("bookUrl").orEmpty()),
                         "cover" to readCss(ruleSearch?.optString("coverUrl").orEmpty()),
                         "author" to readCss(ruleSearch?.optString("author").orEmpty()),
+                        "intro" to readCss(ruleSearch?.optString("intro").orEmpty()),
+                        "latest" to readCss(ruleSearch?.optString("lastChapter").orEmpty()),
+                    ).filterValues { it.isNotBlank() },
+                    auto = true,
+                    keyCharset = "utf-8",
+                )
+            }
+            ruleSearch != null || parsedSearch != null -> {
+                val p = parsedSearch ?: parseSearchUrl(ruleSearch?.optString("searchUrl").orEmpty())
+                val bookList = ruleSearch?.optString("bookList")
+                    ?.ifBlank { o.optString("ruleArticles") }
+                    ?: o.optString("ruleArticles")
+                SearchRule(
+                    url = p.url.ifBlank { "/search.php?searchkey={key}" },
+                    method = p.method,
+                    body = p.body,
+                    list = readCss(bookList),
+                    fields = mapOf(
+                        "name" to readCss(ruleSearch?.optString("name").orEmpty()).ifBlank { readCss(o.optString("ruleTitle")) },
+                        "bookUrl" to readCss(ruleSearch?.optString("bookUrl").orEmpty()).ifBlank { readCss(o.optString("ruleLink")) },
+                        "cover" to readCss(ruleSearch?.optString("coverUrl").orEmpty()).ifBlank { readCss(o.optString("ruleImage")) },
+                        "author" to readCss(ruleSearch?.optString("author").orEmpty()).ifBlank { readCss(o.optString("rulePubDate")) },
                         "intro" to readCss(ruleSearch?.optString("intro").orEmpty()),
                         "latest" to readCss(ruleSearch?.optString("lastChapter").orEmpty()),
                     ).filterValues { it.isNotBlank() },
@@ -263,19 +293,28 @@ object CustomSources {
                 url = readCss(ruleToc.optString("chapterUrl")).ifBlank { "@href" },
                 nextPage = readCss(ruleToc.optString("nextTocUrl")),
             )
+            o.has("ruleArticles") -> TocRule(
+                list = readCss(o.optString("ruleArticles")),
+                name = readCss(o.optString("ruleTitle")).ifBlank { "@text" },
+                url = readCss(o.optString("ruleLink")).ifBlank { "@href" },
+                nextPage = readCss(o.optString("ruleNextPage")),
+            )
             else -> null
         }
 
         val contentO = o.optJSONObject("content")
-        val ruleContent = o.optJSONObject("ruleContent")
+        val ruleContentStr = when (val rc = o.opt("ruleContent")) {
+            is JSONObject -> rc.optString("content")
+            is String -> rc
+            else -> ""
+        }
         val content = when {
             contentO != null -> ContentRule(contentO.optString("body"), contentO.optString("next"))
-            ruleContent != null -> {
-                val c = ruleContent.optString("content")
-                if (c.startsWith("@js:") || c.contains("<js>")) null
-                else ContentRule(readCss(c))
+            ruleContentStr.isNotBlank() -> {
+                val cleaned = readCss(ruleContentStr)
+                ContentRule(cleaned.ifBlank { "#content@html" })
             }
-            else -> null
+            else -> ContentRule("#content@html")
         }
 
         val charset = o.optString("charset").ifBlank {
@@ -284,7 +323,7 @@ object CustomSources {
         return Source(
             id = o.optString("id").ifBlank { newId(base) },
             name = name,
-            group = o.optString("group").ifBlank { "我的书源" },
+            group = group,
             base = base,
             mirrors = mirrors,
             charset = charset,
@@ -481,9 +520,18 @@ object CustomSources {
     fun readCss(raw: String): String {
         var r0 = raw.trim()
         if (r0.isBlank()) return ""
-        if (r0.startsWith("@js:") || r0.contains("<js>") || r0.contains("java.")) return ""
+        if (r0.startsWith("@js:") || r0.startsWith("<js>")) return ""
+        if (r0.contains("<js>")) r0 = r0.substringBefore("<js>").trim()
+        if (r0.contains("@js:")) r0 = r0.substringBefore("@js:").trim()
         if (r0.startsWith("@css:")) r0 = r0.removePrefix("@css:").trim()
-        r0 = r0.substringBefore("##").trim()
+
+        var regexPart = ""
+        if (r0.contains("##")) {
+            val idx = r0.indexOf("##")
+            regexPart = r0.substring(idx)
+            r0 = r0.substring(0, idx).trim()
+        }
+
         // 多规则取第一条能用的
         val r = r0.split("||").firstOrNull { it.isNotBlank() }?.trim().orEmpty()
         if (r.isBlank()) return ""
@@ -497,7 +545,7 @@ object CustomSources {
             when {
                 p == "text" || p == "ownText" -> { field = "text"; explicitField = true }
                 p == "html" || p == "all" -> { field = "html"; explicitField = true }
-                p == "href" || p == "src" || p == "content" || p == "data-src" || p == "title" -> {
+                p == "href" || p == "src" || p == "content" || p == "data-src" || p == "data-original" || p == "title" || p == "onclick" -> {
                     field = p; explicitField = true
                 }
                 p.startsWith("class.") -> sels += "." + p.removePrefix("class.")
@@ -505,15 +553,41 @@ object CustomSources {
                 p.startsWith("tag.") -> sels += p.removePrefix("tag.")
                 p == "children" || p.startsWith("index.") || p.startsWith("text.") -> Unit
                 p.contains("@") -> Unit
-                // 最后一段看着像属性名（没有标签感），当字段
                 isLast && !p.contains(".") && !p.contains("#") && !p.contains(" ") && p != "a" -> {
                     field = p; explicitField = true
                 }
                 else -> sels += p
             }
         }
-        if (sels.isEmpty()) return ""
-        // 列表选择器那种只有一段的，别硬加 @text（否则取列表时会当字段处理）
-        return sels.joinToString(" ") + if (explicitField) "@$field" else ""
+        if (sels.isEmpty() && !explicitField) return ""
+        val css = sels.joinToString(" ") + if (explicitField) "@$field" else ""
+        return css + (if (explicitField) regexPart else "")
+    }
+
+    /** 一键导入 JSON 书源文本（支持单个对象、数组、阅读3.0合集等） */
+    fun importJsonText(raw: String): Pair<Int, String> {
+        val parsed = parseAll(raw)
+        if (parsed.isEmpty()) {
+            return Pair(0, "未识别到有效书源，请检查 JSON 格式")
+        }
+        val current = all().associateBy { it.id }.toMutableMap()
+        for (s in parsed) {
+            current[s.id] = s
+            storeRef?.setSourceEnabled(s.id, true)
+        }
+        save(current.values.toList())
+        return Pair(parsed.size, "成功导入 ${parsed.size} 个书源并已自动启用")
+    }
+
+    /** 从本地 Uri 读取并导入 JSON 文件 */
+    fun importJsonUri(context: Context, uri: android.net.Uri): Pair<Int, String> {
+        return runCatching {
+            val stream = context.contentResolver.openInputStream(uri)
+                ?: return Pair(0, "无法打开所选文件")
+            val text = stream.bufferedReader(Charsets.UTF_8).use { it.readText() }
+            importJsonText(text)
+        }.getOrElse {
+            Pair(0, "读取或导入文件失败：${it.message}")
+        }
     }
 }

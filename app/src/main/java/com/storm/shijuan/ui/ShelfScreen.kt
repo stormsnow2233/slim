@@ -106,6 +106,17 @@ fun ShelfScreen(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri: Uri? ->
         if (uri != null) {
+            val fileName = LocalImporter.getFileName(context, uri)
+            val ext = fileName.substringAfterLast('.', "").lowercase()
+            if (ext == "json") {
+                scope.launch {
+                    val (count, msg) = withContext(Dispatchers.IO) {
+                        com.storm.shijuan.data.CustomSources.importJsonUri(context, uri)
+                    }
+                    Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                }
+                return@rememberLauncherForActivityResult
+            }
             scope.launch(Dispatchers.IO) {
                 val det = LocalImporter.detectType(context, uri)
                 withContext(Dispatchers.Main) {
@@ -573,6 +584,7 @@ fun ShelfScreen(
                         "application/epub+zip",
                         "text/plain",
                         "application/pdf",
+                        "application/json",
                         "application/octet-stream",
                         "*/*",
                     )

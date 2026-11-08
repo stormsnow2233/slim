@@ -26,11 +26,20 @@ object Rules {
         return runCatching { root.select(selector).toList() }.getOrDefault(emptyList())
     }
 
-    private val REGEX_SPEC = Regex("^#+(.+?)#+(.*)$", RegexOption.DOT_MATCHES_ALL)
+    private val ONCLICK_URL_REGEX = Regex("""(?:location\.href|window\.open)\s*(?:=|\()\s*['"]([^'"]+)['"]""")
 
     internal fun applyRegex(s: String, spec: String): String {
-        val m = REGEX_SPEC.find(spec) ?: return s
-        return runCatching { s.replace(Regex(m.groupValues[1]), m.groupValues[2]) }.getOrDefault(s)
+        if (spec.isBlank()) return s
+        var clean = spec.trim()
+        if (clean.startsWith("##")) clean = clean.substring(2)
+        if (clean.endsWith("##")) clean = clean.substring(0, clean.length - 2)
+        val parts = clean.split("##")
+        if (parts.isEmpty() || parts[0].isEmpty()) return s
+        val pattern = parts[0]
+        val replacement = if (parts.size > 1) parts[1] else ""
+        return runCatching {
+            s.replace(Regex(pattern), replacement)
+        }.getOrDefault(s)
     }
 
     private fun readValue(el: Element?, field: String): String {
@@ -84,7 +93,11 @@ object Rules {
             var v = readValue(el, field)
             if (v.isNotEmpty()) {
                 if (regex.isNotEmpty()) v = applyRegex(v, regex)
-                if (field == "href" || field == "src" || field == "data-src" || field == "content") {
+                if (field == "onclick" && (v.contains("location.href", true) || v.contains("window.open", true))) {
+                    val m = ONCLICK_URL_REGEX.find(v)
+                    if (m != null) v = m.groupValues[1]
+                }
+                if (field == "href" || field == "src" || field == "data-src" || field == "content" || field == "onclick") {
                     v = absUrl(baseUrl, v)
                 }
                 if (v.isNotEmpty() && v != baseUrl) return v

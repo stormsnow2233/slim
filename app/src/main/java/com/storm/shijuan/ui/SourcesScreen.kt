@@ -11,7 +11,15 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
+import android.widget.Toast
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.material.icons.rounded.ContentPaste
+import androidx.compose.material.icons.rounded.Description
+import androidx.compose.material.icons.rounded.FileDownload
+import androidx.compose.material.icons.rounded.Link
 import androidx.compose.material.icons.rounded.NetworkCheck
+import com.storm.shijuan.data.CustomSources
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -44,9 +52,29 @@ fun SourcesScreen(
     onEditSource: (Source) -> Unit = {},
 ) {
     val scope = rememberCoroutineScope()
+    val context = androidx.compose.ui.platform.LocalContext.current
     var checks by remember { mutableStateOf<Map<String, SourceResult>>(emptyMap()) }
     var checking by remember { mutableStateOf(false) }
     var verifyTarget by remember { mutableStateOf<Source?>(null) }
+
+    var showImportSheet by remember { mutableStateOf(false) }
+    var showPasteDialog by remember { mutableStateOf(false) }
+    var pasteText by remember { mutableStateOf("") }
+    var showUrlDialog by remember { mutableStateOf(false) }
+    var urlText by remember { mutableStateOf("") }
+
+    val fileLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.OpenDocument()
+    ) { uri ->
+        if (uri != null) {
+            scope.launch {
+                val (count, msg) = withContext(Dispatchers.IO) {
+                    CustomSources.importJsonUri(context, uri)
+                }
+                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+            }
+        }
+    }
 
     // 自定义源增删改后要跟着刷新
     val customVersion = Sources.customVersion
@@ -102,6 +130,14 @@ fun SourcesScreen(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            FilledTonalButton(
+                onClick = { showImportSheet = true },
+            ) {
+                Icon(Icons.Rounded.FileDownload, null, Modifier.size(16.dp))
+                Spacer(Modifier.width(4.dp))
+                Text("导入")
+            }
+            Spacer(Modifier.width(4.dp))
             IconButton(onClick = onAddSource) {
                 Icon(
                     Icons.Rounded.Add,
@@ -109,6 +145,7 @@ fun SourcesScreen(
                     tint = MaterialTheme.colorScheme.primary,
                 )
             }
+            Spacer(Modifier.width(4.dp))
             FilledTonalButton(
                 onClick = {
                     if (checking) return@FilledTonalButton
@@ -182,6 +219,186 @@ fun SourcesScreen(
                 )
             }
         }
+    }
+
+    if (showImportSheet) {
+        ModalBottomSheet(onDismissRequest = { showImportSheet = false }) {
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(horizontal = 24.dp)
+                    .padding(bottom = 36.dp)
+            ) {
+                Text("导入书源", style = MaterialTheme.typography.titleLarge)
+                Spacer(Modifier.height(6.dp))
+                Text(
+                    "支持阅读 3.0、大合集、RSS 订阅及自定义 JSON 书源",
+                    fontSize = 12.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(18.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    onClick = {
+                        showImportSheet = false
+                        fileLauncher.launch(arrayOf("application/json", "text/*", "*/*"))
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.Description, null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(14.dp))
+                        Column {
+                            Text("本地 JSON 文件导入", style = MaterialTheme.typography.titleMedium)
+                            Text("从手机存储选取 .json 书源配置文件直接导入", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    onClick = {
+                        showImportSheet = false
+                        pasteText = ""
+                        showPasteDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.ContentPaste, null, tint = MaterialTheme.colorScheme.secondary)
+                        Spacer(Modifier.width(14.dp))
+                        Column {
+                            Text("粘贴 JSON 文本导入", style = MaterialTheme.typography.titleMedium)
+                            Text("从剪贴板粘贴单本或批量书源 JSON 内容", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    onClick = {
+                        showImportSheet = false
+                        urlText = ""
+                        showUrlDialog = true
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.Link, null, tint = MaterialTheme.colorScheme.tertiary)
+                        Spacer(Modifier.width(14.dp))
+                        Column {
+                            Text("网络链接订阅导入", style = MaterialTheme.typography.titleMedium)
+                            Text("输入 http:// 或 https:// 网络书源地址在线拉取", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if (showPasteDialog) {
+        AlertDialog(
+            onDismissRequest = { showPasteDialog = false },
+            title = { Text("粘贴 JSON 书源") },
+            text = {
+                Column {
+                    Text("直接粘贴单本源或合集数组 JSON 格式：", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = pasteText,
+                        onValueChange = { pasteText = it },
+                        placeholder = { Text("在此粘贴 JSON 内容...") },
+                        modifier = Modifier.fillMaxWidth().height(160.dp),
+                        maxLines = 8,
+                    )
+                    Spacer(Modifier.height(8.dp))
+                    TextButton(
+                        onClick = {
+                            val cm = context.getSystemService(android.content.Context.CLIPBOARD_SERVICE) as? android.content.ClipboardManager
+                            val clip = cm?.primaryClip?.getItemAt(0)?.text?.toString()
+                            if (!clip.isNullOrBlank()) pasteText = clip
+                        }
+                    ) {
+                        Icon(Icons.Rounded.ContentPaste, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("从剪贴板粘贴")
+                    }
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showPasteDialog = false
+                        if (pasteText.isNotBlank()) {
+                            scope.launch {
+                                val (count, msg) = withContext(Dispatchers.IO) {
+                                    CustomSources.importJsonText(pasteText)
+                                }
+                                Toast.makeText(context, msg, Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                ) { Text("立即导入") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showPasteDialog = false }) { Text("取消") }
+            }
+        )
+    }
+
+    if (showUrlDialog) {
+        AlertDialog(
+            onDismissRequest = { showUrlDialog = false },
+            title = { Text("网络书源订阅") },
+            text = {
+                Column {
+                    Text("输入在线书源 JSON 网址：", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(8.dp))
+                    OutlinedTextField(
+                        value = urlText,
+                        onValueChange = { urlText = it },
+                        placeholder = { Text("https://example.com/sources.json") },
+                        modifier = Modifier.fillMaxWidth(),
+                        singleLine = true,
+                    )
+                }
+            },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        showUrlDialog = false
+                        if (urlText.isNotBlank()) {
+                            scope.launch {
+                                val res = withContext(Dispatchers.IO) {
+                                    CustomSources.importSubscription(urlText)
+                                }
+                                Toast.makeText(context, res.message, Toast.LENGTH_LONG).show()
+                            }
+                        }
+                    }
+                ) { Text("拉取并导入") }
+            },
+            dismissButton = {
+                TextButton(onClick = { showUrlDialog = false }) { Text("取消") }
+            }
+        )
     }
 }
 
