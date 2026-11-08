@@ -7,6 +7,7 @@ import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
@@ -17,13 +18,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import kotlin.math.roundToInt
 import com.storm.shijuan.BuildConfig
 import com.storm.shijuan.data.Net
 import com.storm.shijuan.data.ReleaseInfo
@@ -31,6 +31,7 @@ import com.storm.shijuan.data.Store
 import com.storm.shijuan.data.UpdateManager
 import kotlinx.coroutines.launch
 import java.io.File
+import kotlin.math.roundToInt
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -85,119 +86,100 @@ fun SettingsScreen(
                 onClick = onOpenSources,
             )
 
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(24.dp))
 
             // ── 小说阅读偏好 ──
             SettingsGroupHeader("小说阅读偏好")
 
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(vertical = 4.dp),
+                    .padding(horizontal = 4.dp, vertical = 4.dp)
             ) {
-                Column(Modifier.padding(16.dp)) {
-                    Text(
-                        "正文字号 ${prefs.fontSize.toInt()} sp",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    CleanSlider(
-                        value = prefs.fontSize,
-                        onValueChange = {
-                            val rounded = it.roundToInt().toFloat()
-                            if (rounded != prefs.fontSize) {
-                                prefs = prefs.copy(fontSize = rounded)
-                                store.saveReaderPrefs(prefs)
-                            }
-                        },
-                        valueRange = 14f..30f,
-                    )
-                    Spacer(Modifier.height(6.dp))
-                    Text(
-                        "正文行距 ${String.format(java.util.Locale.US, "%.2f", prefs.lineHeight)} 倍",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                    )
-                    CleanSlider(
-                        value = prefs.lineHeight,
-                        onValueChange = {
-                            val rounded = ((it * 20).roundToInt() / 20f)
-                            if (rounded != prefs.lineHeight) {
-                                prefs = prefs.copy(lineHeight = rounded)
-                                store.saveReaderPrefs(prefs)
-                            }
-                        },
-                        valueRange = 1.2f..2.4f,
-                    )
-                    Spacer(Modifier.height(8.dp))
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Column(Modifier.weight(1f)) {
-                            Text(
-                                "翻页模式",
-                                style = MaterialTheme.typography.titleMedium,
-                                fontWeight = FontWeight.SemiBold,
-                            )
-                            Text(
-                                if (prefs.pageMode == 0) "上下连续平滑滚动" else "左右仿真点击/滑动翻页",
-                                fontSize = 12.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
+                Text(
+                    "正文字号 ${prefs.fontSize.toInt()} sp",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                CleanSlider(
+                    value = prefs.fontSize,
+                    onValueChange = {
+                        val rounded = it.roundToInt().toFloat()
+                        if (rounded != prefs.fontSize) {
+                            prefs = prefs.copy(fontSize = rounded)
+                            store.saveReaderPrefs(prefs)
                         }
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = MaterialTheme.colorScheme.surface.copy(alpha = 0.7f),
-                        ) {
-                            Row(modifier = Modifier.padding(3.dp)) {
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(9.dp))
-                                        .background(
-                                            if (prefs.pageMode == 0) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent
-                                        )
-                                        .clickable {
-                                            prefs = prefs.copy(pageMode = 0)
+                    },
+                    valueRange = 14f..30f,
+                )
+                Spacer(Modifier.height(14.dp))
+                Text(
+                    "正文行距 ${String.format(java.util.Locale.US, "%.2f", prefs.lineHeight)} 倍",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                CleanSlider(
+                    value = prefs.lineHeight,
+                    onValueChange = {
+                        val rounded = ((it * 20).roundToInt() / 20f)
+                        if (rounded != prefs.lineHeight) {
+                            prefs = prefs.copy(lineHeight = rounded)
+                            store.saveReaderPrefs(prefs)
+                        }
+                    },
+                    valueRange = 1.2f..2.4f,
+                )
+                Spacer(Modifier.height(14.dp))
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Column(Modifier.weight(1f)) {
+                        Text(
+                            "翻页模式",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            if (prefs.pageMode == 0) "上下连续平滑滚动" else "左右仿真点击/滑动翻页",
+                            fontSize = 12.sp,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    Row(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(22.dp))
+                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
+                            .padding(3.dp)
+                    ) {
+                        val modes = listOf(0 to "上下滚动", 1 to "左右翻页")
+                        modes.forEach { (mode, label) ->
+                            val isSelected = prefs.pageMode == mode
+                            Box(
+                                modifier = Modifier
+                                    .clip(RoundedCornerShape(18.dp))
+                                    .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                                    .clickable {
+                                        if (prefs.pageMode != mode) {
+                                            prefs = prefs.copy(pageMode = mode)
                                             store.saveReaderPrefs(prefs)
                                         }
-                                        .padding(horizontal = 14.dp, vertical = 7.dp)
-                                ) {
-                                    Text(
-                                        text = "上下滚动",
-                                        fontSize = 13.sp,
-                                        fontWeight = if (prefs.pageMode == 0) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (prefs.pageMode == 0) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
-                                Box(
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(9.dp))
-                                        .background(
-                                            if (prefs.pageMode == 1) MaterialTheme.colorScheme.primaryContainer else androidx.compose.ui.graphics.Color.Transparent
-                                        )
-                                        .clickable {
-                                            prefs = prefs.copy(pageMode = 1)
-                                            store.saveReaderPrefs(prefs)
-                                        }
-                                        .padding(horizontal = 14.dp, vertical = 7.dp)
-                                ) {
-                                    Text(
-                                        text = "左右翻页",
-                                        fontSize = 13.sp,
-                                        fontWeight = if (prefs.pageMode == 1) FontWeight.Bold else FontWeight.Normal,
-                                        color = if (prefs.pageMode == 1) MaterialTheme.colorScheme.onPrimaryContainer else MaterialTheme.colorScheme.onSurfaceVariant
-                                    )
-                                }
+                                    }
+                                    .padding(horizontal = 14.dp, vertical = 6.dp)
+                            ) {
+                                Text(
+                                    text = label,
+                                    fontSize = 13.sp,
+                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
                             }
                         }
                     }
                 }
             }
 
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(24.dp))
 
             // ── 软件更新 ──
             SettingsGroupHeader("版本与更新")
@@ -214,15 +196,14 @@ fun SettingsScreen(
                 }
             )
 
-            Spacer(Modifier.height(10.dp))
+            SettingsDivider()
 
-            // 检查更新按钮卡片
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            // 检查更新按钮
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(RoundedCornerShape(8.dp))
                     .clickable {
                         if (checking) return@clickable
                         checking = true
@@ -247,42 +228,40 @@ fun SettingsScreen(
                             )
                         }
                     }
-                    .padding(16.dp)
+                    .padding(vertical = 12.dp, horizontal = 4.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Rounded.Update,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
+                Icon(
+                    Icons.Rounded.Update,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("检查更新", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = when {
+                            checking -> "正在连接 GitHub 最新 Release…"
+                            checkStatusText.isNotBlank() -> checkStatusText
+                            else -> "当前版本 v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})"
+                        },
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("检查更新", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(2.dp))
-                        Text(
-                            text = when {
-                                checking -> "正在连接 GitHub 最新 Release…"
-                                checkStatusText.isNotBlank() -> checkStatusText
-                                else -> "当前版本 v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})"
-                            },
-                            fontSize = 12.sp,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    if (checking) {
-                        CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                    } else {
-                        Icon(
-                            Icons.Rounded.ChevronRight,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-                        )
-                    }
+                }
+                if (checking) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                } else {
+                    Icon(
+                        Icons.Rounded.ChevronRight,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+                    )
                 }
             }
 
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(24.dp))
 
             // ── 网络与存储 ──
             SettingsGroupHeader("网络与存储")
@@ -294,7 +273,7 @@ fun SettingsScreen(
                 onClick = onOpenNetwork
             )
 
-            Spacer(Modifier.height(10.dp))
+            SettingsDivider()
 
             SettingsNavigationItem(
                 title = "缓存管理",
@@ -303,37 +282,34 @@ fun SettingsScreen(
                 onClick = onOpenCache
             )
 
-            Spacer(Modifier.height(10.dp))
+            SettingsDivider()
 
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
                 modifier = Modifier
                     .fillMaxWidth()
-                    .clip(RoundedCornerShape(16.dp))
+                    .clip(RoundedCornerShape(8.dp))
                     .clickable {
                         store.clearHistory()
                         Toast.makeText(ctx, "搜索历史已清空", Toast.LENGTH_SHORT).show()
                     }
-                    .padding(16.dp),
+                    .padding(vertical = 12.dp, horizontal = 4.dp)
             ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Rounded.History,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp),
-                    )
-                    Spacer(Modifier.width(14.dp))
-                    Column(Modifier.weight(1f)) {
-                        Text("清空搜索历史", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                        Spacer(Modifier.height(2.dp))
-                        Text("一键清除小说和漫画搜索框的历史关键词记录", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    }
+                Icon(
+                    Icons.Rounded.History,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp),
+                )
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("清空搜索历史", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
+                    Spacer(Modifier.height(2.dp))
+                    Text("一键清除小说和漫画搜索框的历史关键词记录", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
 
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(24.dp))
 
             // ── 漫画阅读偏好 ──
             SettingsGroupHeader("漫画阅读偏好")
@@ -350,7 +326,7 @@ fun SettingsScreen(
                 }
             )
 
-            Spacer(Modifier.height(10.dp))
+            SettingsDivider()
 
             SettingsSwitchItem(
                 title = "手势缩放支持",
@@ -363,53 +339,57 @@ fun SettingsScreen(
                 }
             )
 
-            Spacer(Modifier.height(22.dp))
+            Spacer(Modifier.height(24.dp))
 
             // ── 关于 ──
             SettingsGroupHeader("关于")
 
-            Surface(
-                shape = RoundedCornerShape(16.dp),
-                color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f),
+            Column(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .padding(horizontal = 4.dp, vertical = 4.dp)
                     .padding(bottom = 24.dp)
-                    .padding(16.dp)
             ) {
-                Column {
-                    Row(verticalAlignment = Alignment.CenterVertically) {
-                        Icon(
-                            Icons.Rounded.AutoStories,
-                            contentDescription = null,
-                            tint = MaterialTheme.colorScheme.primary,
-                            modifier = Modifier.size(24.dp)
-                        )
-                        Spacer(Modifier.width(10.dp))
-                        Text("拾卷 Shijuan", fontWeight = FontWeight.Bold, fontSize = 16.sp)
-                    }
-                    Spacer(Modifier.height(8.dp))
-                    Text(
-                        "纯原生轻小说与漫画阅读器，找书快，排版舒服，无 WebView 闪退卡顿。完全开源，纯净无广告。",
-                        fontSize = 12.5.sp,
-                        lineHeight = 18.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Icon(
+                        Icons.Rounded.AutoStories,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(24.dp)
                     )
-                    Spacer(Modifier.height(12.dp))
-                    FilledTonalButton(
-                        onClick = {
-                            val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/stormsnow2233/slim"))
-                            ctx.startActivity(intent)
-                        },
-                        shape = RoundedCornerShape(12.dp)
-                    ) {
-                        Icon(Icons.Rounded.Code, contentDescription = null, modifier = Modifier.size(16.dp))
-                        Spacer(Modifier.width(8.dp))
-                        Text("查看 GitHub 开源仓库")
-                    }
+                    Spacer(Modifier.width(10.dp))
+                    Text("拾卷 Shijuan", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+                }
+                Spacer(Modifier.height(8.dp))
+                Text(
+                    "纯原生轻小说与漫画阅读器，找书快，排版舒服，无 WebView 闪退卡顿。完全开源，纯净无广告。",
+                    fontSize = 12.5.sp,
+                    lineHeight = 18.sp,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+                Spacer(Modifier.height(14.dp))
+                FilledTonalButton(
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/stormsnow2233/slim"))
+                        ctx.startActivity(intent)
+                    },
+                    shape = RoundedCornerShape(12.dp)
+                ) {
+                    Icon(Icons.Rounded.Code, contentDescription = null, modifier = Modifier.size(16.dp))
+                    Spacer(Modifier.width(8.dp))
+                    Text("查看 GitHub 开源仓库")
                 }
             }
         }
     }
+}
+
+@Composable
+private fun SettingsDivider() {
+    HorizontalDivider(
+        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
+        modifier = Modifier.padding(start = 38.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
+    )
 }
 
 @Composable
@@ -419,7 +399,7 @@ private fun SettingsGroupHeader(title: String) {
         style = MaterialTheme.typography.labelLarge,
         color = MaterialTheme.colorScheme.primary,
         fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(start = 4.dp, bottom = 8.dp)
+        modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
     )
 }
 
@@ -431,31 +411,28 @@ private fun SettingsSwitchItem(
     checked: Boolean,
     onCheckedChange: (Boolean) -> Unit,
 ) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(8.dp))
             .clickable { onCheckedChange(!checked) }
-            .padding(14.dp)
+            .padding(vertical = 10.dp, horizontal = 4.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                if (subtitle.isNotBlank()) {
-                    Spacer(Modifier.height(2.dp))
-                    Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
+            if (subtitle.isNotBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Spacer(Modifier.width(8.dp))
-            Switch(
-                checked = checked,
-                onCheckedChange = onCheckedChange,
-            )
         }
+        Spacer(Modifier.width(8.dp))
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+        )
     }
 }
 
@@ -466,37 +443,34 @@ private fun SettingsNavigationItem(
     icon: ImageVector,
     onClick: () -> Unit,
 ) {
-    Surface(
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+    Row(
+        verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
+            .clip(RoundedCornerShape(8.dp))
             .clickable(onClick = onClick)
-            .padding(14.dp)
+            .padding(vertical = 12.dp, horizontal = 4.dp)
     ) {
-        Row(verticalAlignment = Alignment.CenterVertically) {
-            Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.onSurfaceVariant, modifier = Modifier.size(22.dp))
-            Spacer(Modifier.width(14.dp))
-            Column(Modifier.weight(1f)) {
-                Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-                if (subtitle.isNotBlank()) {
-                    Spacer(Modifier.height(2.dp))
-                    Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
+        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
+        Spacer(Modifier.width(14.dp))
+        Column(Modifier.weight(1f)) {
+            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
+            if (subtitle.isNotBlank()) {
+                Spacer(Modifier.height(2.dp))
+                Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
-            Icon(
-                Icons.Rounded.ChevronRight,
-                contentDescription = null,
-                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.6f)
-            )
         }
+        Icon(
+            Icons.Rounded.ChevronRight,
+            contentDescription = null,
+            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+        )
     }
 }
 
 /**
  * 全局统一更新弹窗：启动自动检查与设置中手动检查完全复用同一个弹窗。
- * 完整展示更新日志，支持上下滑动，提供「立即更新」「稍后」「不再提示」。
+ * 完整 Markdown 格式化更新日志，支持上下滑动与富文本展示。
  */
 @Composable
 fun UpdateDialog(
@@ -673,19 +647,20 @@ private fun CleanSlider(
         colors = SliderDefaults.colors(
             thumbColor = MaterialTheme.colorScheme.primary,
             activeTrackColor = MaterialTheme.colorScheme.primary,
-            inactiveTrackColor = MaterialTheme.colorScheme.surfaceVariant,
+            inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
         ),
         thumb = {
-            Box(
-                modifier = Modifier
-                    .size(18.dp)
-                    .clip(CircleShape)
-                    .background(MaterialTheme.colorScheme.primary)
-            )
+            Surface(
+                shape = CircleShape,
+                color = MaterialTheme.colorScheme.primary,
+                shadowElevation = 2.dp,
+                modifier = Modifier.size(20.dp)
+            ) {}
         },
         track = { sliderState ->
             SliderDefaults.Track(
                 sliderState = sliderState,
+                modifier = Modifier.height(4.dp),
                 thumbTrackGapSize = 0.dp,
                 drawStopIndicator = null
             )
