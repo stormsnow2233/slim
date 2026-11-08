@@ -148,24 +148,42 @@ object CustomSources {
         return build(base, o)
     }
 
+    data class ParsedSearchUrl(
+        val url: String,
+        val method: String,
+        val body: String,
+        val charset: String = "utf-8",
+    )
+
     private fun build(rawBase: String, o: JSONObject): Source? {
         val base = normalizeBase(rawBase) ?: return null
         val name = o.optString("name").ifBlank {
             o.optString("bookSourceName").ifBlank { runCatching { java.net.URI(base).host }.getOrDefault("自定义源") }
         }.trim()
+        if (base.contains("bilibili.com") || name.contains("请勿删除") || name.contains("关注B站")) return null
 
         val mirrors = buildList {
             val arr = o.optJSONArray("mirrors")
             if (arr != null) {
-                for (i in 0 until arr.length()) {
-                    val m = arr.optString(i).trim()
+                for (idx in 0 until arr.length()) {
+                    val m = arr.optString(idx).trim()
                     if (m.isNotBlank()) add(m)
                 }
             }
         }
 
+        val rawSearchUrl = o.optString("searchUrl").ifBlank { o.optJSONObject("ruleSearch")?.optString("searchUrl").orEmpty() }.trim()
+        if (rawSearchUrl.startsWith("@js:") || rawSearchUrl.contains("java.ajax") || rawSearchUrl.contains("java.connect")) {
+            return null
+        }
+        val ruleContentStr = o.optJSONObject("ruleContent")?.optString("content", "").orEmpty()
+        if (ruleContentStr.startsWith("@js:") || ruleContentStr.contains("<js>")) {
+            return null
+        }
+
         val searchO = o.optJSONObject("search")
         val ruleSearch = o.optJSONObject("ruleSearch")
+        val parsedSearch = if (rawSearchUrl.isNotBlank()) parseSearchUrl(rawSearchUrl) else null
         val search = when {
             searchO != null -> SearchRule(
                 url = searchO.optString("url"),
@@ -177,29 +195,34 @@ object CustomSources {
                 extraUrls = buildList {
                     val arr = searchO.optJSONArray("extraUrls")
                     if (arr != null) {
-                        for (i in 0 until arr.length()) {
-                            val u = arr.optString(i).trim()
+                        for (idx in 0 until arr.length()) {
+                            val u = arr.optString(idx).trim()
                             if (u.isNotBlank()) add(u)
                         }
                     }
                 },
                 keyCharset = searchO.optString("keyCharset", "utf-8"),
             )
-            ruleSearch != null -> SearchRule(
-                url = readUrl(ruleSearch.optString("searchUrl")).ifBlank { "/search.php?searchkey={key}" },
-                method = if (ruleSearch.optString("searchUrl", "").contains("POST", true)) "POST" else "GET",
-                body = readBody(ruleSearch.optString("searchUrl")),
-                list = readCss(ruleSearch.optString("bookList")),
-                fields = mapOf(
-                    "name" to readCss(ruleSearch.optString("name")),
-                    "bookUrl" to readCss(ruleSearch.optString("bookUrl")),
-                    "cover" to readCss(ruleSearch.optString("coverUrl")),
-                    "author" to readCss(ruleSearch.optString("author")),
-                    "intro" to readCss(ruleSearch.optString("intro")),
-                    "latest" to readCss(ruleSearch.optString("lastChapter")),
-                ).filterValues { it.isNotBlank() },
-                auto = ruleSearch.optString("bookList").isBlank(),
-            )
+            ruleSearch != null || parsedSearch != null -> {
+                val p = parsedSearch ?: parseSearchUrl(ruleSearch?.optString("searchUrl").orEmpty())
+                val bookList = ruleSearch?.optString("bookList").orEmpty()
+                SearchRule(
+                    url = p.url.ifBlank { "/search.php?searchkey={key}" },
+                    method = p.method,
+                    body = p.body,
+                    list = readCss(bookList),
+                    fields = mapOf(
+                        "name" to readCss(ruleSearch?.optString("name").orEmpty()),
+                        "bookUrl" to readCss(ruleSearch?.optString("bookUrl").orEmpty()),
+                        "cover" to readCss(ruleSearch?.optString("coverUrl").orEmpty()),
+                        "author" to readCss(ruleSearch?.optString("author").orEmpty()),
+                        "intro" to readCss(ruleSearch?.optString("intro").orEmpty()),
+                        "latest" to readCss(ruleSearch?.optString("lastChapter").orEmpty()),
+                    ).filterValues { it.isNotBlank() },
+                    auto = readCss(bookList).isBlank(),
+                    keyCharset = p.charset.ifBlank { "utf-8" },
+                )
+            }
             else -> null
         }
 
@@ -247,15 +270,17 @@ object CustomSources {
         val ruleContent = o.optJSONObject("ruleContent")
         val content = when {
             contentO != null -> ContentRule(contentO.optString("body"), contentO.optString("next"))
-            ruleContent != null -> ContentRule(readCss(ruleContent.optString("content")))
+            ruleContent != null -> {
+                val c = ruleContent.optString("content")
+                if (c.startsWith("@js:") || c.contains("<js>")) null
+                else ContentRule(readCss(c))
+            }
             else -> null
         }
 
         val charset = o.optString("charset").ifBlank {
-            // 阅读格式不写编码，老 GBK 站只能靠用户自己选；这里默认 utf-8
-            "utf-8"
+            parsedSearch?.charset?.ifBlank { "utf-8" } ?: "utf-8"
         }
-
         return Source(
             id = o.optString("id").ifBlank { newId(base) },
             name = name,
@@ -422,27 +447,43 @@ object CustomSources {
     // 阅读语法：class.bookbox@tag.a@text    → .bookbox a@text
     // 已经是 CSS 的（含 . # > 空格）原样保留
 
-    private fun readUrl(raw: String): String {
-        var s = raw.substringBefore("##").substringBefore(",{").trim()
-        if (s.isBlank()) return ""
-        s = s.replace("{{key}}", "{key}").replace("{key}", "{key}")
-        if (!s.startsWith("http") && !s.startsWith("/")) s = "/$s"
-        return s
+    fun parseSearchUrl(raw: String): ParsedSearchUrl {
+        var s = raw.trim()
+        if (s.startsWith("{{") && s.contains("}}")) {
+            s = s.substringAfter("}}").trim()
+        }
+        var method = "GET"
+        var body = ""
+        var charset = "utf-8"
+        if (s.contains(",{") || s.contains(", {")) {
+            val idx = if (s.contains(",{")) s.indexOf(",{") else s.indexOf(", {")
+            val urlPart = s.substring(0, idx).trim()
+            val jsonPart = s.substring(idx + 1).trim()
+            val json = runCatching { JSONObject(jsonPart) }.getOrNull()
+            if (json != null) {
+                method = json.optString("method", "GET").uppercase()
+                body = json.optString("body").replace("{{key}}", "{key}").replace("{key}", "{key}")
+                charset = json.optString("charset").ifBlank { "utf-8" }
+            }
+            s = urlPart
+        } else {
+            s = s.substringBefore("##").trim()
+        }
+        s = s.replace("{{key}}", "{key}").replace("{{page}}", "1")
+        if (!s.startsWith("http://") && !s.startsWith("https://") && !s.startsWith("/")) s = "/$s"
+        return ParsedSearchUrl(s, method, body, charset)
     }
-
-    private fun readBody(raw: String): String = runCatching {
-        val body = raw.substringAfter("body:", "").substringBefore(",\"")
-        body.replace("{{key}}", "{key}").trim()
-    }.getOrDefault("")
 
     /**
      * 把阅读的选择器语法翻成 CSS + @字段。
      * 认不出的部分就丢掉，宁可让自动识别兜底，也不要给一条错规则把页面解析歪。
      */
     fun readCss(raw: String): String {
-        val r0 = raw.trim()
+        var r0 = raw.trim()
         if (r0.isBlank()) return ""
-        if (r0.startsWith("@css:")) return r0.removePrefix("@css:").trim()
+        if (r0.startsWith("@js:") || r0.contains("<js>") || r0.contains("java.")) return ""
+        if (r0.startsWith("@css:")) r0 = r0.removePrefix("@css:").trim()
+        r0 = r0.substringBefore("##").trim()
         // 多规则取第一条能用的
         val r = r0.split("||").firstOrNull { it.isNotBlank() }?.trim().orEmpty()
         if (r.isBlank()) return ""

@@ -175,4 +175,64 @@ object NovelAliasHelper {
         }
         return dp[m][n]
     }
+
+    /** 智能章节匹配：用于自动换源时精准定位新源中对应的章节 */
+    fun matchChapterIndex(targetName: String, fallbackIndex: Int, chapters: List<Chapter>): Int {
+        if (chapters.isEmpty()) return 0
+        // 1. 完全相同
+        val exact = chapters.indexOfFirst { it.name == targetName }
+        if (exact >= 0) return exact
+
+        // 2. 规范化后相同（去除空格、标点、括号、卷号）
+        fun norm(s: String): String = s.replace(Regex("[\\s\\-_（）()《》【】\\[\\]·]+"), "")
+            .replace(Regex("^(第[0-9一二三四五六七八九十百]+卷|卷[0-9一二三四五六七八九十百]+)"), "")
+            .lowercase()
+
+        val normTarget = norm(targetName)
+        val normMatch = chapters.indexOfFirst { norm(it.name) == normTarget }
+        if (normMatch >= 0) return normMatch
+
+        // 3. 包含关系（如果标题较长）
+        if (normTarget.length >= 4) {
+            val containMatch = chapters.indexOfFirst {
+                val n = norm(it.name)
+                n.contains(normTarget) || normTarget.contains(n)
+            }
+            if (containMatch >= 0) return containMatch
+        }
+
+        // 4. 章节数字序号匹配（第 X 章 / 第 X 话 / X ）
+        fun extractNum(s: String): Int? {
+            val m = Regex("第\\s*([0-9]+|[零一二三四五六七八九十百千万]+)\\s*[章话回节]").find(s)
+            if (m != null) {
+                val raw = m.groupValues[1]
+                raw.toIntOrNull()?.let { return it }
+                return chineseToInt(raw)
+            }
+            val m2 = Regex("^\\s*([0-9]+)\\b").find(s)
+            return m2?.groupValues?.get(1)?.toIntOrNull()
+        }
+
+        val targetNum = extractNum(targetName)
+        if (targetNum != null && targetNum > 0) {
+            val numMatch = chapters.indexOfFirst { extractNum(it.name) == targetNum }
+            if (numMatch >= 0) return numMatch
+        }
+
+        // 5. 兜底：序号安全对齐
+        return fallbackIndex.coerceIn(0, chapters.size - 1)
+    }
+
+    private fun chineseToInt(s: String): Int? {
+        val digits = mapOf(
+            '零' to 0, '一' to 1, '二' to 2, '两' to 2, '三' to 3, '四' to 4,
+            '五' to 5, '六' to 6, '七' to 7, '八' to 8, '九' to 9
+        )
+        if (s.length == 1) return digits[s[0]]
+        if (s == "十") return 10
+        if (s.startsWith("十") && s.length == 2) return 10 + (digits[s[1]] ?: 0)
+        if (s.endsWith("十") && s.length == 2) return (digits[s[0]] ?: 1) * 10
+        if (s.length == 3 && s[1] == '十') return (digits[s[0]] ?: 1) * 10 + (digits[s[2]] ?: 0)
+        return null
+    }
 }

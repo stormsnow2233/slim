@@ -1,5 +1,6 @@
 package com.storm.shijuan.ui
 
+import android.widget.Toast
 import androidx.activity.compose.BackHandler
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.fadeIn
@@ -52,6 +53,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -65,9 +67,12 @@ fun ReaderScreen(
     onSwitchBook: (Book) -> Unit = {},
     onProgress: (Int, String, Float, Int, Int) -> Unit,
 ) {
-    var index by remember { mutableIntStateOf(startIndex.coerceIn(0, maxOf(0, chapters.size - 1))) }
+    var currentBook by remember(book.url) { mutableStateOf(book) }
+    var currentChapters by remember(book.url) { mutableStateOf(chapters) }
+    val triedSources = remember(book.name) { mutableSetOf(book.sourceId) }
+    var index by remember { mutableIntStateOf(startIndex.coerceIn(0, maxOf(0, currentChapters.size - 1))) }
     var targetPageForChapter by remember {
-        mutableIntStateOf(if (initialPage > 0) initialPage else store.loadBookPage(book.url, startIndex))
+        mutableIntStateOf(if (initialPage > 0) initialPage else store.loadBookPage(currentBook.url, startIndex))
     }
     var content by remember { mutableStateOf<Content?>(null) }
     var loading by remember { mutableStateOf(true) }
@@ -92,61 +97,115 @@ fun ReaderScreen(
     val scope = rememberCoroutineScope()
     val scrollState = rememberScrollState()
     val tocState = rememberLazyListState()
-    val chapter = chapters.getOrNull(index)
+    val chapter = currentChapters.getOrNull(index)
 
     // 切章统一方法：离开前保存当前章页码，切到新章指定页
     fun switchChapter(newIndex: Int, newPage: Int = 0) {
-        if (newIndex !in chapters.indices || newIndex == index) return
+        if (newIndex !in currentChapters.indices || newIndex == index) return
         val p = when {
             prefs.pageMode == 1 && pageCount > 0 -> (currentPage + 1).toFloat() / pageCount
             scrollState.maxValue > 0 -> scrollState.value.toFloat() / scrollState.maxValue
             else -> 0f
         }
-        store.saveBookPage(book.url, index, currentPage)
-        onProgress(index, chapter?.name ?: "", p, currentPage, chapters.size)
+        store.saveBookPage(currentBook.url, index, currentPage)
+        onProgress(index, chapter?.name ?: "", p, currentPage, currentChapters.size)
 
         targetPageForChapter = newPage
         currentPage = newPage
         index = newIndex
     }
 
-    // 加载章节 + 后台预取下一章
-    LaunchedEffect(index) {
-        val ch = chapters.getOrNull(index) ?: return@LaunchedEffect
+    // 加载章节 + 30s超时自动换源 + 后台预取下一章
+    LaunchedEffect(index, currentBook.url) {
+        val ch = currentChapters.getOrNull(index) ?: return@LaunchedEffect
         loading = true
         error = ""
         content = null
         pageCount = 1
         currentPage = targetPageForChapter
-        val savedScroll = store.loadBookScroll(book.url, index)
+        val savedScroll = store.loadBookScroll(currentBook.url, index)
         if (savedScroll <= 0) scrollState.scrollTo(0)
         withContext(Dispatchers.IO) {
-            val src = Sources.byId(book.sourceId)
-            val cached = store.loadContent(ch.url, book.sourceId)
+            val src = Sources.byId(currentBook.sourceId)
+            val cached = store.loadContent(ch.url, currentBook.sourceId)
             if (cached != null && !BookRepo.isTranscodeOrPiracyError(cached) && !BookRepo.isSoftError(cached)) {
                 content = Content(ch.name, cached)
                 loading = false
             } else if (src == null) {
                 error = "这个书源已被删除或停用，换个源看这本"; loading = false
             } else {
-                BookRepo.getChapter(src, ch)
-                    .onSuccess {
-                        content = it
-                        store.saveContent(ch.url, it.text, book.sourceId)
+                // 30s 内尝试加载正文
+                val chapOutcome = withTimeoutOrNull(30_000L) {
+                    BookRepo.getChapter(src, ch)
+                }
+                val loadedContent = chapOutcome?.getOrNull()
+                val text = loadedContent?.text.orEmpty()
+                val isOk = loadedContent != null && text.isNotBlank() &&
+                    !BookRepo.isTranscodeOrPiracyError(text) &&
+                    !BookRepo.isSoftError(text)
+
+                if (isOk) {
+                    content = loadedContent
+                    store.saveContent(ch.url, text, currentBook.sourceId)
+                    loading = false
+                } else {
+                    // 正文加载超时（30s）或内容失效，尝试自动换源
+                    var switched = false
+                    val candidates = currentBook.altSources.filter { it.sourceId !in triedSources && it.url.isNotBlank() }
+                    for (alt in candidates) {
+                        triedSources.add(alt.sourceId)
+                        val altSrc = Sources.byId(alt.sourceId) ?: continue
+                        // 获取备选源目录
+                        val altTocOutcome = withTimeoutOrNull(10_000L) {
+                            runCatching { BookRepo.getToc(altSrc, alt) }.getOrNull()
+                        }
+                        val altChapters = altTocOutcome?.getOrNull()?.chapters.orEmpty()
+                        if (altChapters.isEmpty()) continue
+
+                        // 智能对齐章节
+                        val targetIdx = NovelAliasHelper.matchChapterIndex(ch.name, index, altChapters)
+                        val altCh = altChapters.getOrNull(targetIdx) ?: continue
+
+                        // 尝试拉取备选源正文（20s以内）
+                        val altContentOutcome = withTimeoutOrNull(20_000L) {
+                            BookRepo.getChapter(altSrc, altCh)
+                        }
+                        val altText = altContentOutcome?.getOrNull()?.text.orEmpty()
+                        if (altText.isNotBlank() && !BookRepo.isTranscodeOrPiracyError(altText) && !BookRepo.isSoftError(altText)) {
+                            // 换源成功！
+                            store.saveContent(altCh.url, altText, alt.sourceId)
+                            store.saveToc(alt.url, altChapters)
+                            val newBook = alt.copy(altSources = currentBook.altSources)
+                            store.rememberBook(newBook)
+                            withContext(Dispatchers.Main) {
+                                Toast.makeText(ctx, "正文加载超时，已自动换源至「${alt.sourceName}」", Toast.LENGTH_SHORT).show()
+                                currentBook = newBook
+                                currentChapters = altChapters
+                                index = targetIdx
+                                content = Content(altCh.name, altText)
+                                loading = false
+                            }
+                            switched = true
+                            break
+                        }
                     }
-                    .onFailure {
+
+                    if (!switched) {
                         error = if (!Offline.isOnline(ctx)) "离线模式：这一章没缓存过，联网后再看"
-                        else it.message ?: "加载失败"
+                        else if (chapOutcome == null) "正文加载超时（30s），已自动重试备选源均未成功"
+                        else chapOutcome.exceptionOrNull()?.message ?: "加载失败"
+                        loading = false
                     }
-                loading = false
+                }
             }
 
             // 提前把下一章拉回来，翻到下一章基本不用等
-            val next = chapters.getOrNull(index + 1)
-            if (src != null && next != null) {
-                BookRepo.prefetchChapter(src, next, store)
-                if (chapters.getOrNull(index + 2) != null) {
-                    chapters.getOrNull(index + 2)?.let { BookRepo.prefetchChapter(src, it, store) }
+            val next = currentChapters.getOrNull(index + 1)
+            val currentSrc = Sources.byId(currentBook.sourceId)
+            if (currentSrc != null && next != null) {
+                BookRepo.prefetchChapter(currentSrc, next, store)
+                if (currentChapters.getOrNull(index + 2) != null) {
+                    currentChapters.getOrNull(index + 2)?.let { BookRepo.prefetchChapter(currentSrc, it, store) }
                 }
             }
         }
@@ -158,14 +217,14 @@ fun ReaderScreen(
         val now = System.currentTimeMillis()
         if (now - lastSave < 1200) return
         lastSave = now
-        store.saveBookPage(book.url, index, page)
-        onProgress(index, chapter?.name ?: "", p, page, chapters.size)
+        store.saveBookPage(currentBook.url, index, page)
+        onProgress(index, chapter?.name ?: "", p, page, currentChapters.size)
     }
 
     LaunchedEffect(scrollState.value, scrollState.maxValue, loading) {
         if (scrollState.maxValue > 0) {
             val ratio = scrollState.value.toFloat() / scrollState.maxValue
-            store.saveBookScroll(book.url, index, scrollState.value)
+            store.saveBookScroll(currentBook.url, index, scrollState.value)
             saveProgress(ratio, 0)
         }
     }
@@ -173,7 +232,7 @@ fun ReaderScreen(
     // 翻页模式下按页数算进度并实时持久化当前页码
     LaunchedEffect(currentPage, pageCount) {
         if (prefs.pageMode == 1 && pageCount > 0) {
-            store.saveBookPage(book.url, index, currentPage)
+            store.saveBookPage(currentBook.url, index, currentPage)
             saveProgress((currentPage + 1).toFloat() / pageCount, currentPage)
         }
     }
@@ -195,8 +254,8 @@ fun ReaderScreen(
                 scrollState.maxValue > 0 -> scrollState.value.toFloat() / scrollState.maxValue
                 else -> 0f
             }
-            store.saveBookPage(book.url, index, currentPage)
-            onProgress(index, chapter?.name ?: "", p, currentPage, chapters.size)
+            store.saveBookPage(currentBook.url, index, currentPage)
+            onProgress(index, chapter?.name ?: "", p, currentPage, currentChapters.size)
         }
     }
 
@@ -219,14 +278,14 @@ fun ReaderScreen(
                     val p = pagerState
                     if (p != null && p.currentPage < pageCount - 1) {
                         scope.launch { p.animateScrollToPage(p.currentPage + 1) }
-                    } else if (index < chapters.size - 1) switchChapter(index + 1)
+                    } else if (index < currentChapters.size - 1) switchChapter(index + 1)
                 }
                 else -> showBar = !showBar
             }
         } else {
             when {
                 x < width * 0.28f -> if (index > 0) switchChapter(index - 1) else showBar = true
-                x > width * 0.72f -> if (index < chapters.size - 1) switchChapter(index + 1) else showBar = true
+                x > width * 0.72f -> if (index < currentChapters.size - 1) switchChapter(index + 1) else showBar = true
                 else -> showBar = !showBar
             }
         }
@@ -317,7 +376,7 @@ fun ReaderScreen(
                     }) { Text("重试") }
                     Spacer(Modifier.height(12.dp))
                     Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
-                        OutlinedButton(onClick = { if (index < chapters.size - 1) switchChapter(index + 1) }) {
+                        OutlinedButton(onClick = { if (index < currentChapters.size - 1) switchChapter(index + 1) }) {
                             Text("下一章")
                         }
                         OutlinedButton(onClick = { showToc = true }) {
@@ -331,10 +390,10 @@ fun ReaderScreen(
                         TextButton(enabled = !altLoading, onClick = {
                             altLoading = true
                             scope.launch {
-                                val key = book.name.trim().take(24)
+                                val key = currentBook.name.trim().take(24)
                                 val found = withContext(Dispatchers.IO) {
                                     val on = store.enabledSources()
-                                    val srcs = Sources.all.filter { it.id in on && it.id != book.sourceId }
+                                    val srcs = Sources.all.filter { it.id in on && it.id != currentBook.sourceId }
                                     val got = mutableListOf<Book>()
                                     BookRepo.searchAll(srcs, key) { r ->
                                         if (r.ok) r.books
@@ -414,7 +473,7 @@ fun ReaderScreen(
                         ChapterTitle(content?.title ?: chapter?.name ?: "", chapter?.volume.orEmpty(), prefs, theme)
                         BodyText(content?.text ?: "", prefs, theme, onImageClick = { previewImageUrl = it })
                         Spacer(Modifier.height(24.dp))
-                        FootNav(index, chapters.size, theme) { }
+                        FootNav(index, currentChapters.size, theme) { }
                         Spacer(Modifier.height(60.dp))
                     }
                 }
@@ -442,19 +501,19 @@ fun ReaderScreen(
                         scrollState.maxValue > 0 -> scrollState.value.toFloat() / scrollState.maxValue
                         else -> 0f
                     }
-                    store.saveBookPage(book.url, index, currentPage)
-                    onProgress(index, chapter?.name ?: "", p, currentPage, chapters.size)
+                    store.saveBookPage(currentBook.url, index, currentPage)
+                    onProgress(index, chapter?.name ?: "", p, currentPage, currentChapters.size)
                     onBack()
                 }) {
                     Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回", tint = theme.text)
                 }
                 Column(Modifier.weight(1f)) {
                     Text(
-                        book.name, color = theme.text, style = MaterialTheme.typography.titleMedium,
+                        currentBook.name, color = theme.text, style = MaterialTheme.typography.titleMedium,
                         maxLines = 1, overflow = TextOverflow.Ellipsis,
                     )
                     Text(
-                        "${index + 1} / ${chapters.size}",
+                        "${index + 1} / ${currentChapters.size}",
                         color = theme.text.copy(alpha = 0.6f), fontSize = 11.sp,
                     )
                 }
@@ -485,7 +544,7 @@ fun ReaderScreen(
                 }
                 BarAction("目录", Icons.Rounded.FormatListBulleted, theme, true) { showToc = true }
                 BarAction("设置", Icons.Rounded.TextFields, theme, true) { showSettings = true }
-                BarAction("下一章", Icons.AutoMirrored.Rounded.KeyboardArrowRight, theme, index < chapters.size - 1) {
+                BarAction("下一章", Icons.AutoMirrored.Rounded.KeyboardArrowRight, theme, index < currentChapters.size - 1) {
                     switchChapter(index + 1)
                 }
             }
@@ -576,7 +635,7 @@ fun ReaderScreen(
         ModalBottomSheet(onDismissRequest = { showToc = false }) {
             Column(Modifier.fillMaxHeight(0.85f)) {
                 Text(
-                    "目录 · ${chapters.size} 章",
+                    "目录 · ${currentChapters.size} 章",
                     style = MaterialTheme.typography.titleLarge,
                     modifier = Modifier.padding(horizontal = 22.dp, vertical = 6.dp),
                 )
@@ -590,7 +649,7 @@ fun ReaderScreen(
                                 .fillMaxWidth()
                                 .clickable {
                                     showToc = false
-                                    switchChapter(ch.index, store.loadBookPage(book.url, ch.index))
+                                    switchChapter(ch.index, store.loadBookPage(currentBook.url, ch.index))
                                 }
                                 .padding(horizontal = 22.dp, vertical = 10.dp)
                         ) {

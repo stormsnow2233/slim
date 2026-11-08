@@ -37,7 +37,21 @@ data class MergedBook(
     val authors: Set<String>,
     val sources: List<Book>,
 ) {
-    val primary: Book get() = sources.first()
+    val primary: Book
+        get() {
+            val bestCover = sources.firstOrNull { it.cover.isNotBlank() }?.cover ?: sources.first().cover
+            val bestAuthor = authors.firstOrNull { it.isNotBlank() && it != "佚名" }
+                ?: sources.map { it.author }.firstOrNull { it.isNotBlank() && it != "佚名" }
+                ?: sources.first().author
+            val bestIntro = sources.maxByOrNull { it.intro.length }?.intro ?: sources.first().intro
+            val best = sources.firstOrNull { it.cover.isNotBlank() } ?: sources.first()
+            return best.copy(
+                author = bestAuthor,
+                cover = bestCover,
+                intro = bestIntro,
+                altSources = sources,
+            )
+        }
 }
 
 /** 搜索界面状态持久容器：页面离开/跳转详情返回时保留关键词与结果 */
@@ -257,149 +271,16 @@ fun SearchScreen(
             }
         }
 
-        // ── 搜索状态条 ──
-        if (searched.isNotBlank() && (results.isNotEmpty() || running)) {
-            Row(
+        // 搜索进度轻量指示（纯净无多余面板）
+        if (running) {
+            LinearProgressIndicator(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .padding(horizontal = 18.dp, vertical = 8.dp)
-                    .clickable { showStates = !showStates },
-                verticalAlignment = Alignment.CenterVertically,
-            ) {
-                if (running) {
-                    CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 1.5.dp)
-                    Spacer(Modifier.width(8.dp))
-                    Text(
-                        "正在搜 ${okCount + failCount}/${activeSources.size} 个源…",
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                } else {
-                    Text(
-                        buildString {
-                            append("$totalBooks 个结果 · 聚合 ${merged.size} 本")
-                            if (noHitCount > 0) append(" · $noHitCount 源没这本书")
-                            if (errCount > 0) append(" · $errCount 源没连上")
-                        },
-                        style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                }
-                Spacer(Modifier.weight(1f))
-                Text(
-                    if (showStates) "收起" else "源详情",
-                    style = MaterialTheme.typography.labelMedium,
-                    color = MaterialTheme.colorScheme.primary,
-                )
-                Icon(
-                    if (showStates) Icons.Rounded.ExpandLess else Icons.Rounded.ExpandMore,
-                    null, Modifier.size(16.dp), tint = MaterialTheme.colorScheme.primary,
-                )
-            }
-
-            AnimatedVisibility(showStates) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .padding(horizontal = 16.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f))
-                        .padding(12.dp)
-                ) {
-                    activeSources.forEach { src ->
-                        val st = results[src.id]
-                        val failed = st != null && !st.ok
-                        val noHit = failed && isNoHit(st!!.error)
-                        Row(
-                            Modifier.fillMaxWidth().padding(vertical = 3.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                        ) {
-                            Box(
-                                Modifier
-                                    .size(6.dp)
-                                    .clip(RoundedCornerShape(3.dp))
-                                    .background(
-                                        when {
-                                            st == null -> MaterialTheme.colorScheme.outline
-                                            st.ok -> Color_OK
-                                            noHit -> MaterialTheme.colorScheme.outline
-                                            else -> MaterialTheme.colorScheme.error.copy(alpha = 0.7f)
-                                        }
-                                    )
-                            )
-                            Spacer(Modifier.width(8.dp))
-                            Text(src.name, style = MaterialTheme.typography.labelMedium, modifier = Modifier.width(96.dp))
-                            Text(
-                                when {
-                                    st == null -> "搜索中…"
-                                    st.ok -> "${st.count} 本 · ${st.ms}ms"
-                                    else -> st.error
-                                },
-                                style = MaterialTheme.typography.labelMedium,
-                                color = if (failed && !noHit) MaterialTheme.colorScheme.error
-                                else MaterialTheme.colorScheme.onSurfaceVariant,
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis,
-                                modifier = Modifier.weight(1f),
-                            )
-                            if (failed) {
-                                val isRestricted = st.status == SourceStatus.ACCESS_RESTRICTED ||
-                                    st.status == SourceStatus.NEEDS_LOGIN ||
-                                    st.error.contains("Cloudflare") ||
-                                    st.error.contains("安全质询") ||
-                                    st.error.contains("登录") ||
-                                    (src.id == "wenku8" && st.error.contains("403"))
-                                if (isRestricted) {
-                                    val actionText = if (st.status == SourceStatus.NEEDS_LOGIN || st.error.contains("登录")) "去登录" else "去验证"
-                                    Text(
-                                        actionText,
-                                        style = MaterialTheme.typography.labelMedium,
-                                        color = MaterialTheme.colorScheme.primary,
-                                        fontWeight = FontWeight.Bold,
-                                        modifier = Modifier
-                                            .clip(RoundedCornerShape(8.dp))
-                                            .clickable { verifyTarget = src }
-                                            .padding(horizontal = 8.dp, vertical = 2.dp),
-                                    )
-                                    Spacer(Modifier.width(4.dp))
-                                }
-                                Text(
-                                    "重试",
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = MaterialTheme.colorScheme.primary,
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable { retrySource(src) }
-                                        .padding(horizontal = 8.dp, vertical = 2.dp),
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            // 源筛选
-            if (merged.isNotEmpty()) {
-                LazyRow(
-                    contentPadding = PaddingValues(horizontal = 16.dp, vertical = 6.dp),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                ) {
-                    item {
-                        FilterChip(
-                            selected = filterSource == null,
-                            onClick = { filterSource = null },
-                            label = { Text("全部", fontSize = 12.sp) },
-                        )
-                    }
-                    items(results.values.filter { it.ok }.sortedBy { srcOrder(it.sourceId) }) { st ->
-                        FilterChip(
-                            selected = filterSource == st.sourceId,
-                            onClick = { filterSource = if (filterSource == st.sourceId) null else st.sourceId },
-                            label = { Text(st.sourceName, fontSize = 12.sp) },
-                        )
-                    }
-                }
-            }
+                    .padding(horizontal = 16.dp, vertical = 4.dp)
+                    .height(2.dp),
+                color = MaterialTheme.colorScheme.primary,
+                trackColor = MaterialTheme.colorScheme.surfaceVariant,
+            )
         }
 
         // ── 内容区 ──
@@ -465,6 +346,7 @@ fun SearchScreen(
     }
 }
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun BookRow(m: MergedBook, onOpen: (Book) -> Unit) {
     val b = m.primary
@@ -513,16 +395,35 @@ private fun BookRow(m: MergedBook, onOpen: (Book) -> Unit) {
                 )
             }
             Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(4.dp)) {
-                m.sources.take(3).forEach { s ->
-                    TinyTag(
-                        s.sourceName,
-                        if (Sources.byId(s.sourceId)?.status == "verified") Color_OK
-                        else MaterialTheme.colorScheme.primary,
-                    )
-                }
-                if (m.sources.size > 3) {
-                    TinyTag("+${m.sources.size - 3}", MaterialTheme.colorScheme.onSurfaceVariant)
+            // 混合显示所有书源，支持单独点击切换
+            FlowRow(
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                verticalArrangement = Arrangement.spacedBy(4.dp),
+            ) {
+                m.sources.forEach { s ->
+                    val isVerified = Sources.byId(s.sourceId)?.status == "verified"
+                    val tagColor = if (isVerified) Color_OK else MaterialTheme.colorScheme.primary
+                    Surface(
+                        shape = RoundedCornerShape(4.dp),
+                        color = tagColor.copy(alpha = 0.12f),
+                        onClick = {
+                            val target = s.copy(
+                                cover = s.cover.ifBlank { b.cover },
+                                author = s.author.ifBlank { b.author },
+                                intro = s.intro.ifBlank { b.intro },
+                                altSources = listOf(s) + m.sources.filter { it.sourceId != s.sourceId },
+                            )
+                            onOpen(target)
+                        }
+                    ) {
+                        Text(
+                            s.sourceName,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = tagColor,
+                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                        )
+                    }
                 }
             }
         }

@@ -19,6 +19,7 @@ data class Book(
     val downloadUrl: String = "",
     val year: String = "",
     val language: String = "",
+    val altSources: List<Book> = emptyList(),
 ) {
     fun toJson(): JSONObject = JSONObject().apply {
         put("name", name); put("author", author); put("cover", cover)
@@ -27,18 +28,33 @@ data class Book(
         put("kind", kind); put("wordCount", wordCount)
         put("external", external); put("downloadUrl", downloadUrl)
         put("year", year); put("language", language)
+        if (altSources.isNotEmpty()) {
+            val arr = JSONArray()
+            altSources.forEach { arr.put(it.copy(altSources = emptyList()).toJson()) }
+            put("altSources", arr)
+        }
     }
 
     companion object {
-        fun from(o: JSONObject) = Book(
-            name = o.optString("name"), author = o.optString("author"),
-            cover = o.optString("cover"), intro = o.optString("intro"),
-            latest = o.optString("latest"), url = o.optString("url"),
-            sourceId = o.optString("sourceId"), sourceName = o.optString("sourceName"),
-            kind = o.optString("kind"), wordCount = o.optString("wordCount"),
-            external = o.optBoolean("external"), downloadUrl = o.optString("downloadUrl"),
-            year = o.optString("year"), language = o.optString("language"),
-        )
+        fun from(o: JSONObject): Book {
+            val alts = mutableListOf<Book>()
+            val altArr = o.optJSONArray("altSources")
+            if (altArr != null) {
+                for (i in 0 until altArr.length()) {
+                    altArr.optJSONObject(i)?.let { alts.add(from(it)) }
+                }
+            }
+            return Book(
+                name = o.optString("name"), author = o.optString("author"),
+                cover = o.optString("cover"), intro = o.optString("intro"),
+                latest = o.optString("latest"), url = o.optString("url"),
+                sourceId = o.optString("sourceId"), sourceName = o.optString("sourceName"),
+                kind = o.optString("kind"), wordCount = o.optString("wordCount"),
+                external = o.optBoolean("external"), downloadUrl = o.optString("downloadUrl"),
+                year = o.optString("year"), language = o.optString("language"),
+                altSources = alts,
+            )
+        }
     }
 }
 

@@ -302,10 +302,10 @@ object Sources {
                 ),
             ),
             detail = DetailRule(
-                name = "meta[property='og:title']@content || title@text",
-                author = "meta[name='description']@content",
-                cover = "meta[property='og:image']@content || img@src",
-                intro = "meta[name='description']@content",
+                name = "h1@text || meta[property='og:title']@content || title@text",
+                author = "a[href*='authors_id_eq']@text || a[href*='author']@text || dt:contains(作者) + dd@text || meta[name='author']@content",
+                cover = "img[src*='webpic']@src || .card img[src*='/uploads/']@src || meta[property='og:image']@content || img@src",
+                intro = "div.card-body p.my-2@text || meta[name='description']@content || .card-text@text",
             ),
             toc = TocRule(
                 list = "a[href*='/chapters-']",

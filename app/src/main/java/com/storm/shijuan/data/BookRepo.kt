@@ -674,6 +674,12 @@ object BookRepo {
                 }
             }
         }
+        if (c.isNotBlank() && !c.startsWith("http://") && !c.startsWith("https://") && !c.startsWith("file://") && !c.startsWith("content://")) {
+            val root = bookUrl.ifBlank { src.base }
+            if (root.isNotBlank()) {
+                c = Rules.absUrl(root, c)
+            }
+        }
         return c
     }
 
@@ -804,17 +810,21 @@ object BookRepo {
         var cover = normalizeCover(src, book.cover, book.url)
         var intro = book.intro
         if (d != null) {
-            if (d.name.isNotBlank()) Rules.extract(doc.body(), d.name, book.url).ifBlank { null }?.let { name = it }
-            if (d.author.isNotBlank()) Rules.extract(doc.body(), d.author, book.url).ifBlank { null }?.let { author = it }
-            if (d.cover.isNotBlank()) Rules.extract(doc.body(), d.cover, book.url).ifBlank { null }?.let { cover = normalizeCover(src, it, book.url) }
-            if (d.intro.isNotBlank()) Rules.extract(doc.body(), d.intro, book.url).ifBlank { null }?.let { intro = it }
+            val root = doc
+            if (d.name.isNotBlank()) Rules.extract(root, d.name, book.url).ifBlank { null }?.let { name = it }
+            if (d.author.isNotBlank()) Rules.extract(root, d.author, book.url).ifBlank { null }?.let { author = it }
+            if (d.cover.isNotBlank()) Rules.extract(root, d.cover, book.url).ifBlank { null }?.let { cover = normalizeCover(src, it, book.url) }
+            if (d.intro.isNotBlank()) Rules.extract(root, d.intro, book.url).ifBlank { null }?.let { intro = it }
+        }
+        if (author.isBlank()) {
+            doc.selectFirst("meta[name=author]")?.attr("content")?.ifBlank { null }?.let { author = it }
         }
         if (intro.isBlank()) {
-            doc.selectFirst("meta[name=description]")?.attr("content")?.let { intro = it }
+            doc.selectFirst("meta[name=description]")?.attr("content")?.ifBlank { null }?.let { intro = it }
         }
         // 通用兜底：og 标签
         if (cover.isBlank()) {
-            doc.selectFirst("meta[property=og:image]")?.attr("content")?.let { cover = Rules.absUrl(book.url, it) }
+            doc.selectFirst("meta[property=og:image]")?.attr("content")?.let { cover = normalizeCover(src, it, book.url) }
         }
         return book.copy(name = name, author = author, cover = cover, intro = intro)
     }
@@ -1100,12 +1110,16 @@ object BookRepo {
         }
         src.detail?.let { d ->
             if (d.cover.isNotBlank() && cover.isBlank())
-                Rules.extract(detailDoc.body(), d.cover, book.url).ifBlank { null }?.let { cover = it }
+                Rules.extract(detailDoc, d.cover, book.url).ifBlank { null }?.let { cover = normalizeCover(src, it, book.url) }
             if (d.intro.isNotBlank() && intro.isBlank())
-                Rules.extract(detailDoc.body(), d.intro, book.url).ifBlank { null }?.let { intro = it }
+                Rules.extract(detailDoc, d.intro, book.url).ifBlank { null }?.let { intro = it }
             if (d.author.isNotBlank() && author.isBlank())
-                Rules.extract(detailDoc.body(), d.author, book.url).ifBlank { null }?.let { author = it }
+                Rules.extract(detailDoc, d.author, book.url).ifBlank { null }?.let { author = it }
         }
+        if (author.isBlank()) {
+            detailDoc.selectFirst("meta[name=author]")?.attr("content")?.ifBlank { null }?.let { author = it }
+        }
+        cover = normalizeCover(src, cover, book.url)
         recordTocResult(src.id, ok = true)
         return Result.success(Toc(list, cover, intro, author))
     }

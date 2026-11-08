@@ -43,6 +43,7 @@ import com.storm.shijuan.data.*
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -73,9 +74,11 @@ fun DetailScreen(
         if (tocQuery.isBlank()) toc else toc.filter { it.name.contains(tocQuery, true) }
     }
 
+    val triedSources = remember(book.name) { mutableSetOf(book.sourceId) }
+
     fun loadToc(force: Boolean = false) {
-        if (book.sourceId == "local") {
-            val localToc = store.loadToc(book.url)
+        if (full.sourceId == "local") {
+            val localToc = store.loadToc(full.url)
             if (localToc.isNotEmpty()) {
                 toc = localToc
                 loading = false
@@ -92,23 +95,70 @@ fun DetailScreen(
             loading = true
             error = ""
             withContext(Dispatchers.IO) {
-                val src = Sources.byId(book.sourceId)
-                if (src == null) {
-                    error = "这个书源已被删除或停用，点「换个源」再找一次"; loading = false; return@withContext
+                var currentBook = full
+                var success = false
+
+                while (!success) {
+                    val src = Sources.byId(currentBook.sourceId)
+                    if (src != null) {
+                        // 30s 内必须获取到有效目录，否则自动换源
+                        val result = withTimeoutOrNull(30_000L) {
+                            runCatching { BookRepo.getDetailAndToc(src, currentBook) }.getOrNull()
+                        }
+                        if (result != null) {
+                            val (det, tocRes) = result
+                            currentBook = currentBook.copy(
+                                name = det.name.ifBlank { currentBook.name },
+                                author = det.author.ifBlank { currentBook.author },
+                                cover = det.cover.ifBlank { currentBook.cover },
+                                intro = det.intro.ifBlank { currentBook.intro },
+                                latest = det.latest.ifBlank { currentBook.latest },
+                                kind = det.kind.ifBlank { currentBook.kind },
+                                wordCount = det.wordCount.ifBlank { currentBook.wordCount },
+                            )
+                            val chs = tocRes.getOrNull()?.chapters.orEmpty()
+                            if (chs.isNotEmpty()) {
+                                toc = chs
+                                store.saveToc(currentBook.url, chs)
+                                currentBook = currentBook.copy(
+                                    cover = currentBook.cover.ifBlank { tocRes.getOrNull()?.cover.orEmpty() },
+                                    intro = currentBook.intro.ifBlank { tocRes.getOrNull()?.intro.orEmpty() },
+                                    author = currentBook.author.ifBlank { tocRes.getOrNull()?.author.orEmpty() },
+                                )
+                                store.rememberBook(currentBook)
+                                full = currentBook
+                                success = true
+                                break
+                            }
+                        }
+                    }
+
+                    // 30s 内未成功获取有效目录，尝试自动换源
+                    val nextSource = currentBook.altSources.firstOrNull { it.sourceId !in triedSources && it.url.isNotBlank() }
+                    if (nextSource != null) {
+                        triedSources.add(nextSource.sourceId)
+                        withContext(Dispatchers.Main) {
+                            Toast.makeText(
+                                ctx,
+                                "「${src?.name ?: "当前书源"}」目录获取超时，已自动切换至「${nextSource.sourceName}」",
+                                Toast.LENGTH_SHORT
+                            ).show()
+                        }
+                        currentBook = nextSource.copy(
+                            altSources = currentBook.altSources,
+                            cover = nextSource.cover.ifBlank { currentBook.cover },
+                            author = nextSource.author.ifBlank { currentBook.author },
+                            intro = nextSource.intro.ifBlank { currentBook.intro },
+                        )
+                        full = currentBook
+                    } else {
+                        break
+                    }
                 }
-                val (det, tocRes) = BookRepo.getDetailAndToc(src, full)
-                full = det
-                tocRes.onSuccess {
-                    toc = it.chapters
-                    store.saveToc(book.url, it.chapters)
-                    full = full.copy(
-                        cover = full.cover.ifBlank { it.cover },
-                        intro = full.intro.ifBlank { it.intro },
-                        author = full.author.ifBlank { it.author },
-                    )
-                    if (it.chapters.isEmpty()) error = "目录为空"
-                    store.rememberBook(full)
-                }.onFailure { error = it.message ?: "目录加载失败" }
+
+                if (!success && toc.isEmpty()) {
+                    error = "30s内未能获取到目录，已自动重试全部备选源。可点击右上角「换源」手动挑选"
+                }
                 loading = false
             }
         }
@@ -127,7 +177,18 @@ fun DetailScreen(
             // 有缓存：先把目录放出来，详情后台补，打开就秒显
             val s0 = Sources.byId(book.sourceId)
             if (s0 != null) withContext(Dispatchers.IO) {
-                full = runCatching { BookRepo.getDetail(s0, book) }.getOrDefault(book)
+                val det = runCatching { BookRepo.getDetail(s0, full) }.getOrNull()
+                if (det != null) {
+                    full = full.copy(
+                        name = det.name.ifBlank { full.name },
+                        author = det.author.ifBlank { full.author },
+                        cover = det.cover.ifBlank { full.cover },
+                        intro = det.intro.ifBlank { full.intro },
+                        latest = det.latest.ifBlank { full.latest },
+                        kind = det.kind.ifBlank { full.kind },
+                    )
+                    store.rememberBook(full)
+                }
             }
             return@LaunchedEffect
         }
