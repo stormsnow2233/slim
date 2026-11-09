@@ -21,6 +21,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -42,6 +43,7 @@ fun SettingsScreen(
     onOpenCache: () -> Unit,
     onOpenSources: () -> Unit,
     onShowUpdate: (ReleaseInfo) -> Unit,
+    onJmEnabledChanged: (Boolean) -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -52,6 +54,10 @@ fun SettingsScreen(
 
     var checking by remember { mutableStateOf(false) }
     var checkStatusText by remember { mutableStateOf("") }
+
+    var jmEnabled by remember { mutableStateOf(store.isJmEnabled()) }
+    var jmClickCount by remember { mutableIntStateOf(0) }
+    var jmLastClickTime by remember { mutableLongStateOf(0L) }
 
     Scaffold(
         topBar = {
@@ -339,47 +345,93 @@ fun SettingsScreen(
                 }
             )
 
+            if (jmEnabled) {
+                SettingsDivider()
+
+                SettingsSwitchItem(
+                    title = "JM入口",
+                    subtitle = "侧边栏显示 JM 源漫画频道，关闭后此项将重新隐藏",
+                    icon = Icons.Rounded.AutoAwesome,
+                    checked = true,
+                    onCheckedChange = { checked ->
+                        if (!checked) {
+                            store.setJmEnabled(false)
+                            jmEnabled = false
+                            onJmEnabledChanged(false)
+                            Toast.makeText(ctx, "JM入口已关闭", Toast.LENGTH_SHORT).show()
+                        }
+                    }
+                )
+            }
+
             Spacer(Modifier.height(24.dp))
 
             // ── 关于 ──
             SettingsGroupHeader("关于")
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 4.dp)
-                    .padding(bottom = 24.dp)
-            ) {
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Icon(
-                        Icons.Rounded.AutoStories,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(24.dp)
-                    )
-                    Spacer(Modifier.width(10.dp))
-                    Text("拾卷 Shijuan", fontWeight = FontWeight.Bold, fontSize = 16.sp)
+            val onClickShijuanTitle = {
+                val now = System.currentTimeMillis()
+                if (now - jmLastClickTime < 2500) {
+                    jmClickCount++
+                } else {
+                    jmClickCount = 1
                 }
-                Spacer(Modifier.height(8.dp))
-                Text(
-                    "纯原生轻小说与漫画阅读器，找书快，排版舒服，无 WebView 闪退卡顿。完全开源，纯净无广告。",
-                    fontSize = 12.5.sp,
-                    lineHeight = 18.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-                Spacer(Modifier.height(14.dp))
-                FilledTonalButton(
-                    onClick = {
-                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/stormsnow2233/slim"))
-                        ctx.startActivity(intent)
-                    },
-                    shape = RoundedCornerShape(12.dp)
-                ) {
-                    Icon(Icons.Rounded.Code, contentDescription = null, modifier = Modifier.size(16.dp))
-                    Spacer(Modifier.width(8.dp))
-                    Text("查看 GitHub 开源仓库")
+                jmLastClickTime = now
+                if (jmClickCount >= 10) {
+                    jmClickCount = 0
+                    if (!jmEnabled) {
+                        store.setJmEnabled(true)
+                        jmEnabled = true
+                        onJmEnabledChanged(true)
+                        Toast.makeText(ctx, "JM入口已开启", Toast.LENGTH_SHORT).show()
+                    }
+                } else if (jmClickCount >= 5 && !jmEnabled) {
+                    Toast.makeText(ctx, "再点 " + (10 - jmClickCount) + " 次开启神秘入口", Toast.LENGTH_SHORT).show()
                 }
             }
+
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable(onClick = onClickShijuanTitle)
+                    .padding(vertical = 10.dp, horizontal = 4.dp)
+            ) {
+                Icon(
+                    Icons.Rounded.AutoStories,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.primary,
+                    modifier = Modifier.size(24.dp)
+                )
+                Spacer(Modifier.width(14.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("拾卷 Shijuan", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        "纯原生轻小说与漫画阅读器，找书快，排版舒服，完全开源无广告。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Spacer(Modifier.height(8.dp))
+
+            FilledTonalButton(
+                onClick = {
+                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/stormsnow2233/slim"))
+                    ctx.startActivity(intent)
+                },
+                shape = RoundedCornerShape(12.dp),
+                modifier = Modifier.padding(start = 4.dp)
+            ) {
+                Icon(Icons.Rounded.Code, contentDescription = null, modifier = Modifier.size(16.dp))
+                Spacer(Modifier.width(8.dp))
+                Text("查看 GitHub 开源仓库")
+            }
+
+            Spacer(Modifier.height(24.dp))
         }
     }
 }

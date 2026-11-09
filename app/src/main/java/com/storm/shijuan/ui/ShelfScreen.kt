@@ -137,10 +137,13 @@ fun ShelfScreen(
         records.filter { (it.book.url + it.book.sourceId) !in keys }
     }
 
-    // 漫画：不在书架上的记忆
-    val offShelfComics = remember(comicShelf, comicRecords) {
-        val keys = comicShelf.map { it.url + it.sourceId }.toSet()
-        comicRecords.filter { (it.comic.url + it.comic.sourceId) !in keys }
+    val cleanComicShelf = remember(comicShelf) { comicShelf.filter { it.sourceId != "jm" } }
+    val cleanComicRecords = remember(comicRecords) { comicRecords.filter { it.comic.sourceId != "jm" } }
+
+    // 漫画：不在书架上的记忆（JM 源漫画永不显示在综合书架）
+    val offShelfComics = remember(cleanComicShelf, cleanComicRecords) {
+        val keys = cleanComicShelf.map { it.url + it.sourceId }.toSet()
+        cleanComicRecords.filter { (it.comic.url + it.comic.sourceId) !in keys }
     }
 
     var menuForNovel by remember { mutableStateOf<ShelfItem?>(null) }
@@ -164,7 +167,7 @@ fun ShelfScreen(
                     Text("书架", style = MaterialTheme.typography.headlineLarge, fontWeight = FontWeight.Bold)
                     Text(
                         if (offline) "离线模式 · 本地书架"
-                        else "${shelf.size} 本小说 · ${comicShelf.size} 部漫画",
+                        else "${shelf.size} 本小说 · ${cleanComicShelf.size} 部漫画",
                         style = MaterialTheme.typography.bodyMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -406,7 +409,7 @@ fun ShelfScreen(
                             color = MaterialTheme.colorScheme.tertiaryContainer,
                         ) {
                             Text(
-                                "${comicShelf.size} 部",
+                                "${cleanComicShelf.size} 部",
                                 fontSize = 11.sp,
                                 fontWeight = FontWeight.Medium,
                                 color = MaterialTheme.colorScheme.onTertiaryContainer,
@@ -472,7 +475,7 @@ fun ShelfScreen(
                 }
 
                 // 漫画书架书籍
-                if (comicShelf.isEmpty()) {
+                if (cleanComicShelf.isEmpty()) {
                     item(key = "comic_empty") {
                         Surface(
                             modifier = Modifier
@@ -502,7 +505,7 @@ fun ShelfScreen(
                     }
                 } else {
                     // 分行展示漫画卡片（每行 3 部）
-                    val comicChunks = comicShelf.chunked(3)
+                    val comicChunks = cleanComicShelf.chunked(3)
                     items(comicChunks.size, key = { "comic_row_$it" }) { rowIdx ->
                         val chunk = comicChunks[rowIdx]
                         Row(

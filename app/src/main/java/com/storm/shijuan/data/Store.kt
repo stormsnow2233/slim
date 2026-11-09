@@ -126,19 +126,20 @@ class Store(context: Context) {
         return runCatching {
             val arr = JSONArray(s)
             (0 until arr.length()).mapNotNull { arr.optJSONObject(it)?.let { o -> Comic.from(o) } }
-        }.getOrDefault(emptyList())
+        }.getOrDefault(emptyList()).filter { it.sourceId != "jm" }
     }
 
     fun saveComicShelf(items: List<Comic>) {
         val arr = JSONArray()
-        items.forEach { arr.put(it.toJson()) }
+        items.filter { it.sourceId != "jm" }.forEach { arr.put(it.toJson()) }
         sp.edit().putString("comic_shelf_v1", arr.toString()).apply()
     }
 
     fun inComicShelf(comic: Comic): Boolean =
-        comicShelf().any { it.url == comic.url && it.sourceId == comic.sourceId }
+        comic.sourceId != "jm" && comicShelf().any { it.url == comic.url && it.sourceId == comic.sourceId }
 
     fun addComicToShelf(comic: Comic): List<Comic> {
+        if (comic.sourceId == "jm") return comicShelf()
         val list = comicShelf().toMutableList()
         if (list.none { it.url == comic.url && it.sourceId == comic.sourceId }) list.add(0, comic)
         saveComicShelf(list)
@@ -149,6 +150,13 @@ class Store(context: Context) {
         val list = comicShelf().filterNot { it.url == comic.url && it.sourceId == comic.sourceId }
         saveComicShelf(list)
         return list
+    }
+
+    // ── JM 入口启用控制（彩蛋解锁） ──
+    fun isJmEnabled(): Boolean = sp.getBoolean("jm_enabled", false)
+
+    fun setJmEnabled(enabled: Boolean) {
+        sp.edit().putBoolean("jm_enabled", enabled).apply()
     }
 
     // ── 漫画热门榜单本地缓存（秒开） ──

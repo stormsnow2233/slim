@@ -106,7 +106,7 @@ fun ComicScreen(
     var loading by remember { mutableStateOf(false) }
 
     val records = remember(tick, store.comicTick, offline) {
-        val all = store.comicRecords()
+        val all = store.comicRecords().filter { it.comic.sourceId != "jm" }
         // 离线时「继续看」只留本地有图的，点进去别白屏
         if (offline) all.filter { ComicDownloader.cachedChapters(it.comic).isNotEmpty() } else all
     }
@@ -114,7 +114,7 @@ fun ComicScreen(
     // 顶部三个入口：探索 / 书架 / 缓存
     var shelfTick by remember { mutableStateOf(0) }
     val shelfList = remember(tab, shelfTick, store.comicTick, offline) {
-        val all = store.comicShelf()
+        val all = store.comicShelf().filter { it.sourceId != "jm" }
         // 离线只留本地有图的：缓存过至少一话的才算
         if (offline) all.filter { ComicDownloader.cachedChapters(it).isNotEmpty() } else all
     }
@@ -814,17 +814,19 @@ fun ComicDetailScreen(
                         val inShelf = remember(full.url, shelfTick) { store.inComicShelf(full) }
                         val dlTask = ComicDownloader.tasks.firstOrNull { it.key == ComicDownloader.keyOf(full) }
                         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                            OutlinedButton(
-                                onClick = {
-                                    if (inShelf) store.removeComicFromShelf(full)
-                                    else store.addComicToShelf(full)
-                                    shelfTick++
-                                    onShelfChanged()
-                                },
-                                shape = RoundedCornerShape(10.dp),
-                                contentPadding = PaddingValues(horizontal = 12.dp),
-                            ) {
-                                Text(if (inShelf) "已加入书架" else "加入书架", fontSize = 12.sp)
+                            if (full.sourceId != "jm") {
+                                OutlinedButton(
+                                    onClick = {
+                                        if (inShelf) store.removeComicFromShelf(full)
+                                        else store.addComicToShelf(full)
+                                        shelfTick++
+                                        onShelfChanged()
+                                    },
+                                    shape = RoundedCornerShape(10.dp),
+                                    contentPadding = PaddingValues(horizontal = 12.dp),
+                                ) {
+                                    Text(if (inShelf) "已加入书架" else "加入书架", fontSize = 12.sp)
+                                }
                             }
                             OutlinedButton(
                                 onClick = {

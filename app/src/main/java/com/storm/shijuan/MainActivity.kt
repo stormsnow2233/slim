@@ -103,8 +103,9 @@ fun ShijuanApp() {
     var records by remember { mutableStateOf(store.records()) }
     var comicShelf by remember { mutableStateOf(store.comicShelf()) }
     var comicRecords by remember { mutableStateOf(store.comicRecords()) }
+    var isJmEnabled by remember { mutableStateOf(store.isJmEnabled()) }
 
-    // 离线：书架上只留本地有正文缓存的，最近读的也一样
+    // 离线：书架上只留本地有正文缓存的，最近读的也一样；JM 漫画永不在书架显示
     val shelfShown = remember(online, shelf) {
         if (online) shelf else shelf.filter { store.cachedChaptersOf(it.book) > 0 }
     }
@@ -112,10 +113,12 @@ fun ShijuanApp() {
         if (online) records else records.filter { store.cachedChaptersOf(it.book) > 0 }
     }
     val comicShelfShown = remember(online, comicShelf) {
-        if (online) comicShelf else comicShelf.filter { ComicDownloader.cachedChapters(it).isNotEmpty() }
+        val list = comicShelf.filter { it.sourceId != "jm" }
+        if (online) list else list.filter { ComicDownloader.cachedChapters(it).isNotEmpty() }
     }
     val comicRecordsShown = remember(online, comicRecords) {
-        if (online) comicRecords else comicRecords.filter { ComicDownloader.cachedChapters(it.comic).isNotEmpty() }
+        val list = comicRecords.filter { it.comic.sourceId != "jm" }
+        if (online) list else list.filter { ComicDownloader.cachedChapters(it.comic).isNotEmpty() }
     }
 
     val refreshShelf = {
@@ -129,8 +132,18 @@ fun ShijuanApp() {
     val uiScope = rememberCoroutineScope()
     var section by remember { mutableStateOf(Section.Shelf) }
 
+    LaunchedEffect(drawerState.isOpen) {
+        if (drawerState.isOpen) {
+            isJmEnabled = store.isJmEnabled()
+            if (!isJmEnabled && section == Section.JM) {
+                section = Section.Shelf
+            }
+        }
+    }
+
     BackHandler(enabled = route !is Route.Main || section != Section.Shelf) {
         if (route !is Route.Main) {
+            val prev = route
             route = when (val r = route) {
                 is Route.ComicRead -> Route.ComicDetail(r.comic)
                 is Route.Reader -> Route.Detail(r.book, r.fromSearch)
@@ -138,6 +151,12 @@ fun ShijuanApp() {
                 is Route.ComicDetail -> Route.Main
                 is Route.CustomSourceEdit -> Route.Sources
                 else -> Route.Main
+            }
+            if (prev is Route.Settings) {
+                isJmEnabled = store.isJmEnabled()
+                if (!isJmEnabled && section == Section.JM) {
+                    section = Section.Shelf
+                }
             }
         } else if (section != Section.Shelf) {
             section = Section.Shelf
@@ -186,6 +205,7 @@ fun ShijuanApp() {
         drawerContent = {
             SectionDrawer(
                 current = section,
+                showJm = isJmEnabled,
                 onPick = { s ->
                     section = s
                     route = Route.Main
@@ -303,11 +323,23 @@ fun ShijuanApp() {
 
                         is Route.Settings -> SettingsScreen(
                             store = store,
-                            onBack = { route = Route.Main },
+                            onBack = {
+                                isJmEnabled = store.isJmEnabled()
+                                if (!isJmEnabled && section == Section.JM) {
+                                    section = Section.Shelf
+                                }
+                                route = Route.Main
+                            },
                             onOpenNetwork = { route = Route.Network },
                             onOpenCache = { route = Route.Cache },
                             onOpenSources = { route = Route.Sources },
                             onShowUpdate = { activeUpdateInfo = it },
+                            onJmEnabledChanged = { enabled ->
+                                isJmEnabled = enabled
+                                if (!enabled && section == Section.JM) {
+                                    section = Section.Shelf
+                                }
+                            },
                         )
 
                         is Route.Cache -> CacheScreen(
@@ -413,10 +445,14 @@ private fun OfflineBar(onRetry: () -> Unit) {
 @Composable
 private fun SectionDrawer(
     current: Section,
+    showJm: Boolean = false,
     onPick: (Section) -> Unit,
     onOpenCache: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
 ) {
+    val sections = remember(showJm) {
+        if (showJm) Section.entries else Section.entries.filter { it != Section.JM }
+    }
     ModalDrawerSheet(
         drawerShape = RoundedCornerShape(topEnd = 26.dp, bottomEnd = 26.dp),
         modifier = Modifier.width(276.dp),
@@ -437,7 +473,7 @@ private fun SectionDrawer(
         }
         Spacer(Modifier.height(20.dp))
 
-        Section.entries.forEach { s ->
+        sections.forEach { s ->
             val on = s == current
             Row(
                 modifier = Modifier
