@@ -1,7 +1,11 @@
 package com.storm.shijuan.data
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
 import android.content.Context
+import android.os.Build
 import androidx.compose.runtime.getValue
+import androidx.core.app.NotificationCompat
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import kotlinx.coroutines.CoroutineScope
@@ -110,6 +114,75 @@ object ComicDownloader {
     private val jobs = ConcurrentHashMap<String, Job>()
     private val paused = ConcurrentHashMap<String, Boolean>()
     private val cancelled = ConcurrentHashMap<String, Boolean>()
+
+    private const val CHANNEL_ID = "shijuan_comic_cache"
+    private var lastNotifTime = 0L
+
+    private fun ensureChannel(context: Context, nm: NotificationManager) {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            if (nm.getNotificationChannel(CHANNEL_ID) == null) {
+                val ch = NotificationChannel(
+                    CHANNEL_ID,
+                    "漫画离线缓存",
+                    NotificationManager.IMPORTANCE_DEFAULT,
+                ).apply {
+                    description = "显示漫画整本离线缓存实时进度与状态"
+                    setShowBadge(false)
+                }
+                nm.createNotificationChannel(ch)
+            }
+        }
+    }
+
+    private fun notifIdOf(key: String): Int = (key.hashCode() and 0x7FFFFFFF) % 10000 + 2000
+
+    private fun notifyProgress(task: DownloadTask, force: Boolean = false) {
+        val c = ctx ?: return
+        val now = System.currentTimeMillis()
+        if (!force && now - lastNotifTime < 350 && task.doneChapters < task.total) return
+        lastNotifTime = now
+        runCatching {
+            val nm = c.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            ensureChannel(c, nm)
+            val percent = if (task.total > 0) (task.doneChapters * 100 / task.total) else 0
+            val subText = if (task.currentChapter.isNotBlank()) "正在缓存: ${task.currentChapter}" else "已完成 ${task.doneChapters}/${task.total} 话"
+            val n = NotificationCompat.Builder(c, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download)
+                .setContentTitle("正在缓存《${task.comic.name}》 ($percent%)")
+                .setContentText(subText)
+                .setProgress(task.total, task.doneChapters, false)
+                .setOngoing(true)
+                .setOnlyAlertOnce(true)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .build()
+            nm.notify(notifIdOf(task.key), n)
+        }
+    }
+
+    private fun notifyDone(task: DownloadTask) {
+        val c = ctx ?: return
+        runCatching {
+            val nm = c.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            ensureChannel(c, nm)
+            val n = NotificationCompat.Builder(c, CHANNEL_ID)
+                .setSmallIcon(android.R.drawable.stat_sys_download_done)
+                .setContentTitle("《${task.comic.name}》缓存完成")
+                .setContentText("共 ${task.total} 话已全部存入本地，离线可看")
+                .setAutoCancel(true)
+                .setOngoing(false)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
+                .build()
+            nm.notify(notifIdOf(task.key), n)
+        }
+    }
+
+    private fun cancelNotif(key: String) {
+        val c = ctx ?: return
+        runCatching {
+            val nm = c.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            nm.cancel(notifIdOf(key))
+        }
+    }
 
     var tasks by mutableStateOf<List<DownloadTask>>(emptyList())
         private set
@@ -255,12 +328,14 @@ object ComicDownloader {
             createdAt = exist?.createdAt ?: System.currentTimeMillis(),
         )
         upsert(task)
+        notifyProgress(task, force = true)
         launchWorker(task)
     }
 
     fun pause(key: String) {
         paused[key] = true
         update(key) { it.copy(state = STATE_PAUSED) }
+        cancelNotif(key)
     }
 
     fun resume(key: String) {
@@ -276,6 +351,7 @@ object ComicDownloader {
         cancelled[key] = true
         jobs[key]?.cancel()
         jobs.remove(key)
+        cancelNotif(key)
         val t = tasks.firstOrNull { it.key == key }
         if (t != null) runCatching { dirOf(t.comic).deleteRecursively() }
         tasks = tasks.filterNot { it.key == key }
@@ -293,6 +369,7 @@ object ComicDownloader {
             cancelled[k] = true
             jobs[k]?.cancel()
             jobs.remove(k)
+            cancelNotif(k)
         }
         runCatching { rootDir().deleteRecursively() }
         tasks = emptyList()
@@ -319,16 +396,16 @@ object ComicDownloader {
             while (paused[task.key] == true) delay(250)
 
             val ch = task.chapters[i]
-            update(task.key) {
-                it.copy(
-                    state = STATE_RUNNING,
-                    currentChapter = ch.name,
-                    doneChapters = done,
-                    pagesDone = pages,
-                    bytes = bytes,
-                    error = "",
-                )
-            }
+            val curTask = task.copy(
+                state = STATE_RUNNING,
+                currentChapter = ch.name,
+                doneChapters = done,
+                pagesDone = pages,
+                bytes = bytes,
+                error = "",
+            )
+            update(task.key) { curTask }
+            notifyProgress(curTask)
 
             val saved = runCatching { downloadOne(comic, ch, i, task.key) { addBytes, addPages ->
                 bytes += addBytes
@@ -354,17 +431,17 @@ object ComicDownloader {
             dirOf(comic).walkTopDown().filter { it.isFile }.sumOf { it.length() }
         }.getOrDefault(bytes)
 
-        update(task.key) {
-            it.copy(
-                state = STATE_DONE,
-                doneChapters = task.chapters.size,
-                pagesDone = realPages,
-                bytes = realBytes,
-                currentChapter = "",
-            )
-        }
+        val finishedTask = task.copy(
+            state = STATE_DONE,
+            doneChapters = task.chapters.size,
+            pagesDone = realPages,
+            bytes = realBytes,
+            currentChapter = "",
+        )
+        update(task.key) { finishedTask }
         jobs.remove(task.key)
         persist()
+        notifyDone(finishedTask)
     }
 
     /** 下一话，返回拿到的图片数 */

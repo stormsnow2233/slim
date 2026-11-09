@@ -484,6 +484,20 @@ class AuditAndFixVerificationTest {
     }
 
     @Test
+    fun testBuiltinSourceVaultDecryption() {
+        val all = Sources.ALL
+        assertEquals("应包含 7 个内置官方书源", 7, all.size)
+        val ids = all.map { it.id }.toSet()
+        assertTrue(ids.contains("biqugese"))
+        assertTrue(ids.contains("sudugu"))
+        assertTrue(ids.contains("17k"))
+        assertTrue(ids.contains("wenku8"))
+        assertTrue(ids.contains("sfacg"))
+        assertTrue(ids.contains("esjzone"))
+        assertTrue(ids.contains("lnovel"))
+    }
+
+    @Test
     fun testLnovelSourceConfiguration() {
         val src = Sources.byId("lnovel")
         assertNotNull("轻小说百科书源应存在", src)

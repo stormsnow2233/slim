@@ -395,7 +395,7 @@ $spine  </spine>
                 val ch = NotificationChannel(
                     CHANNEL_ID,
                     "下载与导出",
-                    NotificationManager.IMPORTANCE_LOW
+                    NotificationManager.IMPORTANCE_DEFAULT
                 ).apply {
                     description = "显示书籍整本下载与导出实时进度"
                     setShowBadge(false)
@@ -427,7 +427,7 @@ $spine  </spine>
                 .setProgress(total, done, false)
                 .setOngoing(true)
                 .setOnlyAlertOnce(true)
-                .setPriority(NotificationCompat.PRIORITY_LOW)
+                .setPriority(NotificationCompat.PRIORITY_DEFAULT)
                 .build()
             nm.notify(NOTIF_ID, n)
         }
