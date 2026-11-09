@@ -121,37 +121,73 @@ class BaoziComicSource : ComicSource {
             throw IllegalStateException(Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })))
         }
         val s = r.body
-        val list = mutableListOf<ComicChapter>()
+
+        // 关键修复：包子漫画页面顶部有「最新章节」区块（以倒序展示最新20余话），下方才是「章节目录」全部章节。
+        // 若直接全文扫描并在首部去重，会导致最新几话倒插在列表开头（如 500-490-1-30）。
+        // 因此优先从「章节目录」或专属容器开始解析：
+        val catalogStart = listOf(
+            s.indexOf("id=\"chapter-items\""),
+            s.indexOf("章节目录"),
+            s.indexOf("全部章节"),
+            s.indexOf("id=\"chapters_other_list\""),
+        ).filter { it >= 0 }.minOrNull() ?: 0
+
+        val catalogHtml = if (catalogStart > 0) s.substring(catalogStart) else s
 
         // 包子漫画章节有两种形式：
         // 形式 1: <a href="/user/page_direct?comic_id=...&section_slot=...&chapter_slot=..."><span>第1话</span></a>
         // 形式 2: <a href="/comic/chapter/...">第1话</a>
         val regex = Regex("""<a[^>]+href="(/user/page_direct\?[^"]+|/comic/chapter/[^"]+)"[^>]*>([\s\S]*?)</a>""", RegexOption.IGNORE_CASE)
-        var idx = 0
-        regex.findAll(s).forEach { m ->
+        var matches = regex.findAll(catalogHtml).toList()
+        if (matches.isEmpty() && catalogStart > 0) {
+            matches = regex.findAll(s).toList()
+        }
+
+        val rawList = mutableListOf<ComicChapter>()
+        val seen = mutableSetOf<String>()
+
+        for (m in matches) {
             val href = m.groupValues[1]
             val inner = m.groupValues[2]
             var title = stripHtml(inner).trim()
-            if (title.isBlank()) {
-                val slot = Regex("""chapter_slot=(\d+)""").find(href)?.groupValues?.get(1)
-                title = if (slot != null) "第${slot.toInt() + 1}话" else "第${idx + 1}话"
-            }
             val cleanHref = href.replace("&amp;", "&")
             val absUrl = if (cleanHref.startsWith("http")) cleanHref else "$base$cleanHref"
-            list.add(
+            if (!seen.add(absUrl)) continue
+
+            if (title.isBlank()) {
+                val slot = extractSlot(cleanHref, "chapter_slot")
+                title = "第${slot + 1}话"
+            }
+            rawList.add(
                 ComicChapter(
                     name = title,
                     url = absUrl,
-                    index = idx++,
+                    index = 0,
                     sourceId = id,
                 )
             )
         }
 
-        if (list.isEmpty()) {
+        if (rawList.isEmpty()) {
             throw IllegalStateException("包子漫画暂无章节或已下架")
         }
-        return list.distinctBy { it.url }
+
+        // 若链接带有 section_slot 和 chapter_slot 参数，按槽位升序做最终排序校准，保证 100% 正序排列
+        val hasSlot = rawList.any { it.url.contains("chapter_slot=") }
+        val sortedList = if (hasSlot) {
+            rawList.sortedWith(compareBy(
+                { extractSlot(it.url, "section_slot") },
+                { extractSlot(it.url, "chapter_slot") }
+            ))
+        } else {
+            rawList
+        }
+
+        return sortedList.mapIndexed { idx, ch -> ch.copy(index = idx) }
+    }
+
+    private fun extractSlot(url: String, key: String): Int {
+        return Regex("""[?&]$key=(\d+)""").find(url)?.groupValues?.get(1)?.toIntOrNull() ?: 0
     }
 
     override fun pages(comic: Comic, chapter: ComicChapter): ComicPages {

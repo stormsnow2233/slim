@@ -31,6 +31,7 @@ import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Delete
 import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material.icons.rounded.Search
+import androidx.compose.material.icons.rounded.SwapVert
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -672,6 +673,7 @@ fun ComicDetailScreen(
     var offlineNote by remember(comic.url) { mutableStateOf("") }
     var tick by remember { mutableStateOf(0) }
     var shelfTick by remember { mutableStateOf(0) }
+    var orderAscending by remember(comic.url) { mutableStateOf(true) }
     val ctx = LocalContext.current
 
     LaunchedEffect(comic.url, tick) {
@@ -731,6 +733,10 @@ fun ComicDetailScreen(
         // 离线时上次看到的那话要是没存过，就近落到已缓存的话上，别点进去空欢喜
         if (Offline.isOnline(ctx) || cachedSet.isEmpty() || base in cachedSet) base
         else cachedSet.filter { it <= base }.maxOrNull() ?: cachedSet.min()
+    }
+
+    val displayChapters = remember(chapters, orderAscending) {
+        if (orderAscending) chapters else chapters.asReversed()
     }
 
     Box(Modifier.fillMaxSize()) {
@@ -884,7 +890,22 @@ fun ComicDetailScreen(
                     Spacer(Modifier.width(8.dp))
                     Text("${chapters.size}", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     Spacer(Modifier.weight(1f))
-                    if (loading) CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                    if (loading) {
+                        CircularProgressIndicator(Modifier.size(16.dp), strokeWidth = 2.dp)
+                        Spacer(Modifier.width(10.dp))
+                    }
+                    TextButton(
+                        onClick = { orderAscending = !orderAscending },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.SwapVert,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp),
+                        )
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (orderAscending) "正序" else "倒序", fontSize = 12.sp)
+                    }
                 }
             }
             if (offlineNote.isNotBlank()) {
@@ -906,10 +927,10 @@ fun ComicDetailScreen(
                     }
                 }
             }
-            items(chapters.size, key = { idx -> "${chapters[idx].url}_$idx" }) { idx ->
-                val ch = chapters[idx]
-                val cur = idx == startIdx && record != null
-                val saved = idx in cachedSet
+            items(displayChapters.size, key = { idx -> "${displayChapters[idx].url}_${displayChapters[idx].index}" }) { idx ->
+                val ch = displayChapters[idx]
+                val cur = ch.index == startIdx && record != null
+                val saved = ch.index in cachedSet
                 Row(
                     Modifier
                         .fillMaxWidth()
@@ -922,7 +943,7 @@ fun ComicDetailScreen(
                                     android.widget.Toast.LENGTH_SHORT,
                                 ).show()
                             } else {
-                                onRead(full, chapters, idx, if (idx == record?.chapterIndex) record.pageIndex else 0)
+                                onRead(full, chapters, ch.index, if (ch.index == record?.chapterIndex) record.pageIndex else 0)
                             }
                         }
                         .padding(horizontal = 20.dp, vertical = 13.dp),

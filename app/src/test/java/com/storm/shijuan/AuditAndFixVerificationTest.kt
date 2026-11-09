@@ -508,4 +508,39 @@ class AuditAndFixVerificationTest {
             }
         }
     }
+
+    @Test
+    fun testNormalizeChapters() {
+        // 1. 测试长列表整体倒序时的正序翻转
+        val descList = (100 downTo 1).mapIndexed { i, num ->
+            ComicChapter(name = "第${num}话", url = "http://test/$num", index = i, sourceId = "test")
+        }
+        val normalized1 = ComicRepo.normalizeChapters(descList)
+        assertEquals("第1话", normalized1.first().name)
+        assertEquals("第100话", normalized1.last().name)
+
+        // 2. 测试已经是正序的列表保持正序
+        val ascList = (1..100).mapIndexed { i, num ->
+            ComicChapter(name = "第${num}话", url = "http://test/$num", index = i, sourceId = "test")
+        }
+        val normalized2 = ComicRepo.normalizeChapters(ascList)
+        assertEquals("第1话", normalized2.first().name)
+        assertEquals("第100话", normalized2.last().name)
+
+        // 3. 测试短列表倒序翻转
+        val shortDesc = listOf("第3话", "第2话", "第1话").mapIndexed { i, name ->
+            ComicChapter(name = name, url = "http://test/$i", index = i, sourceId = "test")
+        }
+        val normalized3 = ComicRepo.normalizeChapters(shortDesc)
+        assertEquals("第1话", normalized3.first().name)
+        assertEquals("第3话", normalized3.last().name)
+
+        // 4. 测试包含番外、联动且尾部为大章节号的混合正常列表不被错误翻转
+        val mixedAsc = listOf("魔王城×古见联动", "2019大吉", "第01话", "第02话", "第500话").mapIndexed { i, name ->
+            ComicChapter(name = name, url = "http://test/$i", index = i, sourceId = "test")
+        }
+        val normalized4 = ComicRepo.normalizeChapters(mixedAsc)
+        assertEquals("魔王城×古见联动", normalized4.first().name)
+        assertEquals("第500话", normalized4.last().name)
+    }
 }

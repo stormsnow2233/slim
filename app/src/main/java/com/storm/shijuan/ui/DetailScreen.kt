@@ -69,9 +69,11 @@ fun DetailScreen(
     var pendingFormat by remember { mutableStateOf("") }
     var verifyTarget by remember { mutableStateOf<Source?>(null) }
     val export by Exporter.state.collectAsState()
+    var orderAscending by remember(book.url) { mutableStateOf(true) }
 
-    val chapterList = remember(toc, tocQuery) {
-        if (tocQuery.isBlank()) toc else toc.filter { it.name.contains(tocQuery, true) }
+    val chapterList = remember(toc, tocQuery, orderAscending) {
+        val filtered = if (tocQuery.isBlank()) toc else toc.filter { it.name.contains(tocQuery, true) }
+        if (orderAscending) filtered else filtered.asReversed()
     }
 
     val triedSources = remember(book.name) { mutableSetOf(book.sourceId) }
@@ -474,6 +476,14 @@ fun DetailScreen(
                         Spacer(Modifier.width(5.dp))
                         Text("目录")
                     }
+                    TextButton(
+                        onClick = { orderAscending = !orderAscending },
+                        contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
+                    ) {
+                        Icon(Icons.Rounded.SwapVert, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (orderAscending) "正序" else "倒序", fontSize = 12.sp)
+                    }
                     Spacer(Modifier.weight(1f))
                     if (toc.isNotEmpty()) {
                         TextButton(onClick = { read(toc.size - 1) }) {
@@ -519,11 +529,14 @@ fun DetailScreen(
                         },
                     )
                 } else {
+                    val previewToc = remember(toc, orderAscending) {
+                        if (orderAscending) toc.take(12) else toc.takeLast(12).asReversed()
+                    }
                     LazyColumn(
                         contentPadding = PaddingValues(bottom = 24.dp),
                         modifier = Modifier.fillMaxSize(),
                     ) {
-                        items(toc.take(if (showToc) toc.size else 12), key = { it.url + it.index }) { ch ->
+                        items(previewToc, key = { it.url + it.index }) { ch ->
                             Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
@@ -545,7 +558,7 @@ fun DetailScreen(
                                 }
                             }
                         }
-                        if (!showToc && toc.size > 12) {
+                        if (toc.size > 12) {
                             item {
                                 TextButton(
                                     onClick = { showToc = true },
@@ -578,6 +591,15 @@ fun DetailScreen(
                 ) {
                     Text("目录", style = MaterialTheme.typography.titleLarge)
                     Spacer(Modifier.weight(1f))
+                    TextButton(
+                        onClick = { orderAscending = !orderAscending },
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                    ) {
+                        Icon(Icons.Rounded.SwapVert, null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text(if (orderAscending) "正序" else "倒序", fontSize = 12.sp)
+                    }
+                    Spacer(Modifier.width(8.dp))
                     Text(
                         "${toc.size} 章", style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,

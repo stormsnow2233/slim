@@ -1133,8 +1133,51 @@ object ComicRepo {
 
     fun detail(comic: Comic): Comic = source(comic.sourceId).detail(comic)
 
-    fun chapters(comic: Comic): List<ComicChapter> =
-        source(comic.sourceId).chapters(comic).mapIndexed { i, ch -> ch.copy(index = i) }
+    fun chapters(comic: Comic): List<ComicChapter> {
+        val raw = source(comic.sourceId).chapters(comic)
+        val normalized = normalizeChapters(raw)
+        return normalized.mapIndexed { i, ch -> ch.copy(index = i) }
+    }
+
+    /**
+     * 智能章节目录归一化：
+     * 1. 链接排重
+     * 2. 智能检测是否整体倒序（若源站以最新话排在首位，智能纠偏为从第 1 话至最新话的正序排列）
+     */
+    fun normalizeChapters(raw: List<ComicChapter>): List<ComicChapter> {
+        if (raw.size <= 1) return raw
+        val distinct = raw.distinctBy { it.url }
+        if (distinct.size <= 1) return distinct
+
+        val shouldReverse = if (distinct.size <= 5) {
+            val firstNum = distinct.firstNotNullOfOrNull { extractChapterNumber(it.name) }
+            val lastNum = distinct.asReversed().firstNotNullOfOrNull { extractChapterNumber(it.name) }
+            firstNum != null && lastNum != null && firstNum > lastNum
+        } else {
+            val headNums = distinct.take(5).mapNotNull { extractChapterNumber(it.name) }
+            val tailNums = distinct.takeLast(5).mapNotNull { extractChapterNumber(it.name) }
+            if (headNums.isNotEmpty() && tailNums.isNotEmpty()) {
+                val headAvg = headNums.average()
+                val tailAvg = tailNums.average()
+                headAvg > tailAvg && (headAvg - tailAvg) >= 2.0
+            } else {
+                false
+            }
+        }
+
+        return if (shouldReverse) distinct.reversed() else distinct
+    }
+
+    private fun extractChapterNumber(name: String): Double? {
+        Regex("""第\s*(\d+(?:\.\d+)?)\s*[话回章节卷]""").find(name)?.groupValues?.get(1)?.toDoubleOrNull()?.let { return it }
+        Regex("""(\d+(?:\.\d+)?)\s*[话回章节卷]""").find(name)?.groupValues?.get(1)?.toDoubleOrNull()?.let { return it }
+        val m3 = Regex("""^\s*(\d+(?:\.\d+)?)\s*$""").find(name)?.groupValues?.get(1)?.toDoubleOrNull()
+        if (m3 != null) {
+            if (m3 in 1900.0..2100.0) return null
+            return m3
+        }
+        return null
+    }
 
     /** 这一话的图地址列表：留几话在内存里，来回翻话不用重新请求 */
     private val pagesCache = object : LinkedHashMap<String, ComicPages>(8, 0.75f, true) {
