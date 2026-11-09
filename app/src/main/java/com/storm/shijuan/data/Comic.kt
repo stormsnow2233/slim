@@ -438,7 +438,7 @@ class Dm5FamilySource(
     private val BZ_SUB = Regex("""manga-i-list-subtitle"[^>]*>([^<]+)<""")
 
     private val CHAP = Regex(
-        """<a\s+([^>]*?href=["']?(/m\d+/?)["']?[^>]*)>([\s\S]{0,1500}?)</a>""",
+        """<a\s+([^>]*?href=["']?(/[mt]\d+/?)["']?[^>]*)>([\s\S]{0,1500}?)</a>""",
         RegexOption.IGNORE_CASE,
     )
     private val TITLE_ATTR = Regex("""title="([^"]*)"""")

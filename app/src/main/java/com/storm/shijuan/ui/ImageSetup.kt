@@ -89,11 +89,16 @@ object ComicImages {
     fun prefetch(ctx: Context, url: String, headers: Map<String, String>, widthPx: Int, heightPx: Int) {
         if (url.isBlank() || url.startsWith("file://")) return
         runCatching {
+            val isJm = url.contains("/media/photos/") || headers.containsKey("X-JM")
             val req = ImageRequest.Builder(ctx)
                 .data(url)
-                .apply { headers.forEach { (k, v) -> setHeader(k, v) } }
+                .apply {
+                    headers.forEach { (k, v) -> setHeader(k, v) }
+                    if (isJm) {
+                        transformations(com.storm.shijuan.data.JmDescrambleTransformation(url))
+                    }
+                }
                 .size(widthPx.coerceAtLeast(1), heightPx.coerceAtLeast(1))
-                .memoryCacheKey(url)
                 .diskCacheKey(url)
                 .build()
             loader(ctx).enqueue(req)

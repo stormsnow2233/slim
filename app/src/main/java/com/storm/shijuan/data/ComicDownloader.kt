@@ -402,6 +402,9 @@ object ComicDownloader {
             }
             val got = Net.downloadTo(url, f, reqHeaders, referer = referer)
             if (got > 0 && isImageFile(f)) {
+                if (url.contains("/media/photos/") || reqHeaders.containsKey("X-JM")) {
+                    JmImageDescrambler.descrambleFile(f, url)
+                }
                 ok++
                 onProgress(got, 1)
             } else {

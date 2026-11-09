@@ -1488,7 +1488,6 @@ private fun ComicPage(
                     transformations(com.storm.shijuan.data.JmDescrambleTransformation(src))
                 }
             }
-            .memoryCacheKey(src)
             .diskCacheKey(src)
             .setParameter("retry", retryKey, memoryCacheKey = null)
             .build(),

@@ -17,8 +17,9 @@ class BaoziComicSource : ComicSource {
     private val mirrors: List<String> = listOf("https://cn.webmota.com", "https://www.webmota.com")
 
     private fun fetch(path: String): Net.Resp {
+        val cleanPath = path.replace("&amp;", "&")
         for (b in mirrors) {
-            val url = if (path.startsWith("http")) path else "$b$path"
+            val url = if (cleanPath.startsWith("http")) cleanPath else "$b$cleanPath"
             val r = Net.get(url, referer = "$b/", useCache = true)
             if (r.ok) return r
         }
@@ -135,7 +136,8 @@ class BaoziComicSource : ComicSource {
                 val slot = Regex("""chapter_slot=(\d+)""").find(href)?.groupValues?.get(1)
                 title = if (slot != null) "第${slot.toInt() + 1}话" else "第${idx + 1}话"
             }
-            val absUrl = if (href.startsWith("http")) href else "$base$href"
+            val cleanHref = href.replace("&amp;", "&")
+            val absUrl = if (cleanHref.startsWith("http")) cleanHref else "$base$cleanHref"
             list.add(
                 ComicChapter(
                     name = title,
@@ -153,7 +155,8 @@ class BaoziComicSource : ComicSource {
     }
 
     override fun pages(comic: Comic, chapter: ComicChapter): ComicPages {
-        val r = fetch(chapter.url)
+        val cleanUrl = chapter.url.replace("&amp;", "&")
+        val r = fetch(cleanUrl)
         if (!r.ok) {
             throw IllegalStateException(Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })))
         }
@@ -177,7 +180,7 @@ class BaoziComicSource : ComicSource {
         }
         return ComicPages(
             images = cleanImgs,
-            referer = chapter.url,
+            referer = cleanUrl,
         )
     }
 

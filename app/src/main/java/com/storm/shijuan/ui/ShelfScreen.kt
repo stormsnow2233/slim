@@ -639,20 +639,6 @@ fun ShelfScreen(
                                 val fn = det.fileName
                                 pendingDetection = null
                                 pendingUri = null
-                                startImport(u, fn, ImportType.COMIC)
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                        ) {
-                            Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, Modifier.size(18.dp))
-                            Spacer(Modifier.width(8.dp))
-                            Text("导入为漫画")
-                        }
-                        FilledTonalButton(
-                            onClick = {
-                                val u = uri
-                                val fn = det.fileName
-                                pendingDetection = null
-                                pendingUri = null
                                 startImport(u, fn, ImportType.NOVEL)
                             },
                             modifier = Modifier.fillMaxWidth(),
@@ -660,6 +646,20 @@ fun ShelfScreen(
                             Icon(Icons.Rounded.MenuBook, contentDescription = null, Modifier.size(18.dp))
                             Spacer(Modifier.width(8.dp))
                             Text("导入为小说")
+                        }
+                        FilledTonalButton(
+                            onClick = {
+                                val u = uri
+                                val fn = det.fileName
+                                pendingDetection = null
+                                pendingUri = null
+                                startImport(u, fn, ImportType.COMIC)
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                        ) {
+                            Icon(Icons.Rounded.PhotoLibrary, contentDescription = null, Modifier.size(18.dp))
+                            Spacer(Modifier.width(8.dp))
+                            Text("导入为漫画")
                         }
                         TextButton(
                             onClick = {

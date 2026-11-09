@@ -86,6 +86,24 @@ object JmImageDescrambler {
             bmp
         }
     }
+
+    fun descrambleFile(file: java.io.File, src: String) {
+        if (!file.exists() || file.length() <= 0) return
+        val parsed = parseSrc(src) ?: return
+        val num = segNum(parsed.first, parsed.second)
+        if (num < 2) return
+        val bmp = android.graphics.BitmapFactory.decodeFile(file.absolutePath) ?: return
+        val fixed = descramble(bmp, src)
+        if (fixed !== bmp) {
+            runCatching {
+                file.outputStream().use { out ->
+                    fixed.compress(Bitmap.CompressFormat.JPEG, 92, out)
+                }
+            }
+            bmp.recycle()
+            fixed.recycle()
+        }
+    }
 }
 
 /**

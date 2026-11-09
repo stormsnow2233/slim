@@ -21,6 +21,10 @@ class JmComicTest {
         // Below SCRAMBLE_ID should not be scrambled
         val numLow = JmImageDescrambler.segNum(100000, "00001")
         assertEquals(0, numLow)
+
+        // Issue #1: chapter 421926 image 00002.webp
+        val numIssue1 = JmImageDescrambler.segNum(421926, "00002")
+        assertEquals(12, numIssue1)
     }
 
     @Test

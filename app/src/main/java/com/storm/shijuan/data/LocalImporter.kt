@@ -77,14 +77,16 @@ object LocalImporter {
             "epub" -> {
                 val stat = inspectEpub(context, uri)
                 val type = when {
-                    stat.imageCount >= 8 && stat.textChars < 1200 -> ImportType.COMIC
-                    stat.textChars > 4000 && (stat.imageCount == 0 || (stat.textChars / maxOf(1, stat.imageCount) > 200)) -> ImportType.NOVEL
-                    else -> ImportType.UNSURE
+                    stat.textChars >= 1000 -> ImportType.NOVEL
+                    stat.imageCount >= 8 && stat.textChars < 500 -> ImportType.COMIC
+                    stat.textChars > 0 && stat.textChars > stat.imageCount * 80 -> ImportType.NOVEL
+                    stat.imageCount > 0 && stat.textChars < 500 -> ImportType.COMIC
+                    else -> ImportType.NOVEL
                 }
                 val reason = when (type) {
                     ImportType.COMIC -> "EPUB 包含大量图片（${stat.imageCount} 张）且无大段文本，自动识别为漫画"
                     ImportType.NOVEL -> "EPUB 包含丰富章节文本（约 ${stat.textChars} 字），自动识别为小说"
-                    else -> "EPUB 包含图文混合内容，无法完全确定，请选择导入类型"
+                    else -> "EPUB 识别为图文小说"
                 }
                 return DetectionResult(
                     fileName = fileName,
@@ -120,7 +122,7 @@ object LocalImporter {
                     name.endsWith(".webp") || name.endsWith(".gif") || name.endsWith(".bmp")
                 ) {
                     imgCount++
-                } else if ((name.endsWith(".xhtml") || name.endsWith(".html") || name.endsWith(".htm")) && sampledHtmls < 6) {
+                } else if ((name.endsWith(".xhtml") || name.endsWith(".html") || name.endsWith(".htm")) && sampledHtmls < 10) {
                     sampledHtmls++
                     val bytes = zis.readBytes()
                     val text = Jsoup.parse(String(bytes, Charsets.UTF_8)).text()
@@ -326,6 +328,15 @@ object LocalImporter {
             val cFile = File(opfDir, coverRel)
             if (cFile.exists()) coverUrl = "file://" + cFile.absolutePath
         }
+        if (coverUrl.isBlank()) {
+            val coverEntry = manifest.values.firstOrNull { (href, media) ->
+                media.startsWith("image/") && (href.lowercase().contains("cover") || href.lowercase().contains("193698"))
+            } ?: manifest.values.firstOrNull { it.second.startsWith("image/") }
+            if (coverEntry != null) {
+                val cFile = File(opfDir, coverEntry.first)
+                if (cFile.exists()) coverUrl = "file://" + cFile.absolutePath
+            }
+        }
 
         val spineItems = opfDoc.select("spine > itemref").map { it.attr("idref") }
         val chapterList = mutableListOf<Chapter>()
@@ -343,24 +354,81 @@ object LocalImporter {
             val body = doc.body() ?: continue
             val sb = StringBuilder()
 
-            for (node in body.children()) {
-                val tag = node.tagName().lowercase()
-                if (tag == "img" || node.selectFirst("img") != null) {
-                    val imgEl = if (tag == "img") node else node.selectFirst("img")!!
-                    val src = imgEl.attr("src")
-                    if (src.isNotBlank()) {
-                        val imgTarget = File(xhtmlFile.parentFile ?: opfDir, src).normalize()
-                        if (imgTarget.exists()) {
-                            sb.append("\n<!--image-->file://${imgTarget.absolutePath}<!--image-->\n")
+            fun resolveImg(rawSrc: String): File? {
+                val s = rawSrc.trim().replace("\\", "/")
+                if (s.isBlank()) return null
+                val target = File(xhtmlFile.parentFile ?: opfDir, s).normalize()
+                return if (target.exists() && target.isFile) target else null
+            }
+
+            fun extractNode(el: org.jsoup.nodes.Element) {
+                val tag = el.tagName().lowercase()
+                if (tag == "img") {
+                    val src = el.attr("src").ifBlank { el.attr("data-src") }
+                    val f = resolveImg(src)
+                    if (f != null) {
+                        sb.append("\n<!--image-->file://${f.absolutePath}<!--image-->\n\n")
+                    }
+                    return
+                }
+                if (tag == "image") {
+                    val href = el.attr("xlink:href").ifBlank { el.attr("href") }
+                    val f = resolveImg(href)
+                    if (f != null) {
+                        sb.append("\n<!--image-->file://${f.absolutePath}<!--image-->\n\n")
+                    }
+                    return
+                }
+                if (tag in listOf("figure", "svg") || (tag == "div" && (el.hasClass("illust") || el.hasClass("cover")))) {
+                    val imgs = el.select("img, image")
+                    if (imgs.isNotEmpty()) {
+                        imgs.forEach { imgNode ->
+                            val src = if (imgNode.tagName().lowercase() == "image") {
+                                imgNode.attr("xlink:href").ifBlank { imgNode.attr("href") }
+                            } else {
+                                imgNode.attr("src").ifBlank { imgNode.attr("data-src") }
+                            }
+                            val f = resolveImg(src)
+                            if (f != null) {
+                                sb.append("\n<!--image-->file://${f.absolutePath}<!--image-->\n\n")
+                            }
+                        }
+                        return
+                    }
+                }
+                if (tag in listOf("p", "h1", "h2", "h3", "h4", "h5", "h6", "blockquote", "dt", "dd")) {
+                    val embeddedImgs = el.select("img, image")
+                    embeddedImgs.forEach { imgNode ->
+                        val src = if (imgNode.tagName().lowercase() == "image") {
+                            imgNode.attr("xlink:href").ifBlank { imgNode.attr("href") }
+                        } else {
+                            imgNode.attr("src").ifBlank { imgNode.attr("data-src") }
+                        }
+                        val f = resolveImg(src)
+                        if (f != null) {
+                            sb.append("\n<!--image-->file://${f.absolutePath}<!--image-->\n\n")
                         }
                     }
+                    val clone = el.clone()
+                    clone.select("img, image, svg").remove()
+                    val text = clone.text().trim()
+                    if (text.isNotBlank()) {
+                        sb.append(text).append("\n\n")
+                    }
+                    return
+                }
+                val childElements = el.children()
+                if (childElements.isNotEmpty()) {
+                    childElements.forEach { child -> extractNode(child) }
                 } else {
-                    val text = node.text().trim()
+                    val text = el.text().trim()
                     if (text.isNotBlank()) {
                         sb.append(text).append("\n\n")
                     }
                 }
             }
+
+            body.children().forEach { extractNode(it) }
 
             val chContent = sb.toString().trim()
             if (chContent.isNotBlank()) {
