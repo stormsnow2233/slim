@@ -945,6 +945,17 @@ object BookRepo {
     /** 目录（支持单页抓取与基于 nextPage / page 模板的真实多页分页拉取） */
     fun getToc(src: Source, book: Book): Result<Toc> {
         if (src.id == "local") return Result.success(Toc(chapters = emptyList()))
+        // 轻小说文库官方全本直下通道优先：绕过源站 Cloudflare 5秒盾与地区屏蔽
+        if (src.id == "wenku8") {
+            val aid = Wenku8Direct.extractAid(book.url)
+            if (aid != null) {
+                val directRes = Wenku8Direct.fetchAndUnpack(aid)
+                if (directRes.isSuccess && directRes.getOrNull()?.chapters?.isNotEmpty() == true) {
+                    recordTocResult(src.id, ok = true)
+                    return directRes
+                }
+            }
+        }
         val base = getActiveBase(src) ?: src.base
         val t = src.toc
         // 有的站书页和目录页是分开的两页（SF 手机站就是），规则里可以单独给目录页模板
@@ -1165,6 +1176,18 @@ object BookRepo {
             return Result.success(Content(chapter.name, cached, cached))
         }
 
+        // 1.1 轻小说文库官方直解引擎：规避源站 403 与 Cloudflare 5秒盾
+        if (src.id == "wenku8") {
+            val aid = Wenku8Direct.extractAid(chapter.url)
+            if (aid != null) {
+                val directText = Wenku8Direct.getChapterContent(aid, chapter)
+                if (!directText.isNullOrBlank()) {
+                    recordContentResult(src.id, ok = true)
+                    return Result.success(Content(chapter.name, directText, directText))
+                }
+            }
+        }
+
         // 2. 模式检查：若配置为 WEBVIEW 渲染模式，提示在阅读器中触发网页渲染
         if (src.renderMode.equals("WEBVIEW", ignoreCase = true)) {
             val msg = "当前书源已配置为 WebView 渲染模式，请在阅读器中触发网页渲染"
@@ -1199,6 +1222,17 @@ object BookRepo {
             }
         }
         if (!resp.ok) {
+            // 轻小说文库在普通请求失败时做二次直解兜底
+            if (src.id == "wenku8") {
+                val aid = Wenku8Direct.extractAid(chapter.url)
+                if (aid != null) {
+                    val directText = Wenku8Direct.getChapterContent(aid, chapter)
+                    if (!directText.isNullOrBlank()) {
+                        recordContentResult(src.id, ok = true)
+                        return Result.success(Content(chapter.name, directText, directText))
+                    }
+                }
+            }
             val err = resp.error
             val msg = when {
                 err.contains("超时") -> "正文请求超时（源站排队过慢，建议稍后刷新重试）"

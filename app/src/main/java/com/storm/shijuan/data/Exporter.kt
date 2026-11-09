@@ -201,9 +201,8 @@ object Exporter {
     /** 轻小说文库的整本 TXT 直链（dl.wenku8.com 官方打包，支持全部作品号） */
     private fun directTxtUrl(book: Book): String? {
         if (book.sourceId != "wenku8") return null
-        val aid = Regex("(?:/book/|/novel/\\d+/|id=)(\\d+)").find(book.url)?.groupValues?.get(1)?.toIntOrNull()
-            ?: return null
-        return "https://dl.wenku8.com/down.php?type=utf8&node=1&id=$aid"
+        val aid = Wenku8Direct.extractAid(book.url) ?: return null
+        return Wenku8Direct.directUrl(aid)
     }
 
     // ───────────── 文件生成 ─────────────
