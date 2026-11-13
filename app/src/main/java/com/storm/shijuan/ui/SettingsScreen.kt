@@ -3,7 +3,9 @@ package com.storm.shijuan.ui
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -90,6 +92,18 @@ fun SettingsScreen(
                 subtitle = "已启用 $enabledCount 个书源 · 包含轻小说文库、笔趣阁等 18+ 源与自定义源",
                 icon = Icons.Rounded.Layers,
                 onClick = onOpenSources,
+            )
+
+            Spacer(Modifier.height(24.dp))
+
+            // ── 外观与主题 ──
+            SettingsGroupHeader("外观与主题")
+
+            ThemeSettingsCard(
+                currentStyle = store.currentThemeStyle,
+                onStyleChange = { store.setAppThemeStyle(it) },
+                currentMode = store.currentThemeMode,
+                onModeChange = { store.setAppThemeMode(it) }
             )
 
             Spacer(Modifier.height(24.dp))
@@ -719,3 +733,185 @@ private fun CleanSlider(
         }
     )
 }
+
+@Composable
+private fun ThemeSettingsCard(
+    currentStyle: Int,
+    onStyleChange: (Int) -> Unit,
+    currentMode: Int,
+    onModeChange: (Int) -> Unit,
+) {
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(16.dp))
+            .background(MaterialTheme.colorScheme.surface)
+            .padding(16.dp)
+    ) {
+        Text(
+            text = "主题风格",
+            style = MaterialTheme.typography.titleMedium,
+            fontWeight = FontWeight.SemiBold
+        )
+        Text(
+            text = "选择心仪的应用配色方案与组件视觉质感",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant
+        )
+        Spacer(Modifier.height(14.dp))
+
+        // 主题风格卡片（经典书卷 VS MiuiX极简）
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
+        ) {
+            ThemeStyleCard(
+                modifier = Modifier.weight(1f),
+                title = "经典书卷",
+                subtitle = "国风暖玉 · 赭石沉香",
+                paletteColors = listOf(Color(0xFFF8F3EA), Color(0xFF9C4A2F), Color(0xFF5C7A5A)),
+                selected = currentStyle == AppThemeStyle.Classic.id,
+                onClick = { onStyleChange(AppThemeStyle.Classic.id) }
+            )
+            ThemeStyleCard(
+                modifier = Modifier.weight(1f),
+                title = "MiuiX 极简",
+                subtitle = "澎湃蔚蓝 · 现代纯粹",
+                paletteColors = listOf(Color(0xFFF7F7F7), Color(0xFF3482FF), Color(0xFF00C4B4)),
+                selected = currentStyle == AppThemeStyle.MiuiX.id,
+                onClick = { onStyleChange(AppThemeStyle.MiuiX.id) }
+            )
+        }
+
+        Spacer(Modifier.height(20.dp))
+        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+        Spacer(Modifier.height(16.dp))
+
+        // 深色模式选择器
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "深色模式偏好",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium
+                )
+                Text(
+                    text = when (currentMode) {
+                        1 -> "始终使用浅色视觉"
+                        2 -> "始终使用深色视觉"
+                        else -> "跟随系统设置自动切换"
+                    },
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            Row(
+                modifier = Modifier
+                    .clip(RoundedCornerShape(22.dp))
+                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
+                    .padding(3.dp)
+            ) {
+                val modes = listOf(
+                    AppThemeMode.System.id to "系统",
+                    AppThemeMode.Light.id to "浅色",
+                    AppThemeMode.Dark.id to "深色"
+                )
+                modes.forEach { (mode, label) ->
+                    val isSelected = currentMode == mode
+                    Box(
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(18.dp))
+                            .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
+                            .clickable {
+                                if (currentMode != mode) {
+                                    onModeChange(mode)
+                                }
+                            }
+                            .padding(horizontal = 12.dp, vertical = 6.dp)
+                    ) {
+                        Text(
+                            text = label,
+                            fontSize = 13.sp,
+                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
+                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ThemeStyleCard(
+    modifier: Modifier = Modifier,
+    title: String,
+    subtitle: String,
+    paletteColors: List<Color>,
+    selected: Boolean,
+    onClick: () -> Unit,
+) {
+    val borderColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+    val containerBg = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(if (selected) 2.dp else 1.dp, borderColor),
+        color = containerBg
+    ) {
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+            // 色彩胶囊展示
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    paletteColors.forEach { c ->
+                        Box(
+                            modifier = Modifier
+                                .size(14.dp)
+                                .clip(CircleShape)
+                                .background(c)
+                                .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), CircleShape)
+                        )
+                    }
+                }
+                if (selected) {
+                    Icon(
+                        Icons.Rounded.CheckCircle,
+                        contentDescription = "已选中",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 15.sp
+            )
+        }
+    }
+}
+

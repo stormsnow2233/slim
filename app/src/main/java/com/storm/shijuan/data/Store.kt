@@ -581,6 +581,24 @@ class Store(context: Context) {
         sp.edit().putString("wenku8_proxy_url", url.trim()).apply()
     }
 
+    // ── 主题风格与深色模式偏好 ──
+    var currentThemeStyle by mutableIntStateOf(sp.getInt("app_theme_style", 0))
+        private set
+    var currentThemeMode by mutableIntStateOf(sp.getInt("app_theme_mode", 0))
+        private set
+
+    fun appThemeStyle(): Int = currentThemeStyle
+    fun setAppThemeStyle(style: Int) {
+        currentThemeStyle = style
+        sp.edit().putInt("app_theme_style", style).apply()
+    }
+
+    fun appThemeMode(): Int = currentThemeMode
+    fun setAppThemeMode(mode: Int) {
+        currentThemeMode = mode
+        sp.edit().putInt("app_theme_mode", mode).apply()
+    }
+
     fun clearAll() {
         sp.edit().clear().apply()
     }

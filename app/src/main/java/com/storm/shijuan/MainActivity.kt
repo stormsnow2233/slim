@@ -17,6 +17,7 @@ import androidx.compose.animation.slideOutVertically
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -47,10 +48,18 @@ class MainActivity : ComponentActivity() {
                 requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 101)
             }
         }
+        val store = Store(this)
         setContent {
-            ShijuanTheme {
+            val style = store.currentThemeStyle
+            val mode = store.currentThemeMode
+            val dark = when (mode) {
+                1 -> false
+                2 -> true
+                else -> isSystemInDarkTheme()
+            }
+            ShijuanTheme(style = style, dark = dark) {
                 Surface(color = MaterialTheme.colorScheme.background) {
-                    ShijuanApp()
+                    ShijuanApp(store)
                 }
             }
         }
@@ -86,9 +95,8 @@ sealed class Route {
 }
 
 @Composable
-fun ShijuanApp() {
+fun ShijuanApp(store: Store) {
     val ctx = LocalContext.current
-    val store = remember { Store(ctx) }
     remember { ComicDownloader.init(ctx.applicationContext, store); 0 }
     remember { Offline.init(ctx.applicationContext) }
     // 自定义书源：启动时从本地读出来注册，跟内置源一起参与搜索
