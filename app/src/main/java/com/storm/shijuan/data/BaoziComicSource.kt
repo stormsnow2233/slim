@@ -13,17 +13,33 @@ class BaoziComicSource : ComicSource {
     override val id: String = "baozimh"
     override val name: String = "包子漫画"
 
-    private val base: String = "https://cn.webmota.com"
-    private val mirrors: List<String> = listOf("https://cn.webmota.com", "https://www.webmota.com")
+    private val mirrors: List<String> = listOf(
+        "https://cn.webmota.com",
+        "https://www.webmota.com",
+        "https://www.baozimh.com",
+        "https://cn.baozimh.com",
+        "https://baozimh.org",
+    )
+
+    @Volatile
+    private var liveBase: String = mirrors.first()
+    private val base: String get() = liveBase
 
     private fun fetch(path: String): Net.Resp {
         val cleanPath = path.replace("&amp;", "&")
-        for (b in mirrors) {
+        val order = listOf(liveBase) + mirrors.filter { it != liveBase }
+        for (b in order) {
             val url = if (cleanPath.startsWith("http")) cleanPath else "$b$cleanPath"
             val r = Net.get(url, referer = "$b/", useCache = true)
-            if (r.ok) return r
+            if (r.ok) {
+                if (r.body.contains("Just a moment...") || r.body.contains("cf-browser-verification") || r.body.contains("gk-gatekeeper")) {
+                    continue
+                }
+                liveBase = b
+                return r
+            }
         }
-        return Net.Resp(false, 0, "", "包子漫画网络不通")
+        return Net.Resp(false, 0, "", "包子漫画网络不通或触发防火墙验证")
     }
 
     override fun home(): List<Comic> {

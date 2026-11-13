@@ -42,6 +42,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
     var pass by remember { mutableStateOf(cfg.pass) }
     var saved by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
+    var wenku8Proxy by remember { mutableStateOf(store.wenku8ProxyUrl()) }
     var checks by remember { mutableStateOf<List<Triple<String, Boolean, String>>>(emptyList()) }
     val scope = rememberCoroutineScope()
 
@@ -67,9 +68,10 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
         checks = emptyList()
         scope.launch {
             val targets = listOf(
+                "轻小说文库" to "https://dl.wenku8.com/down.php?type=utf8&node=1&id=1",
+                "漫画柜" to "https://m.manhuagui.com/",
                 "笔趣书阁" to "https://www.biqugese.com/",
                 "无限轻小说" to "https://www.8novel.com/",
-                "17K小说网" to "https://www.17k.com/",
                 "SF轻小说" to "https://m.sfacg.com/",
             )
             val acc = ArrayList<Triple<String, Boolean, String>>()
@@ -212,6 +214,30 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // ── 轻小说文库加速 / CDN 反代 ──
+            Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("轻小说文库加速 (Cloudflare / Worker)", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "轻小说文库整本下载若时快时慢，可配置自己的反代 Worker 加速（如 Cloudflare Worker），留空则自动走官方多节点容灾与本地解包缓存",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    ProxyField("反代 URL（留空为官方多节点）", wenku8Proxy, "https://wenku8-proxy.storm-snow.workers.dev") {
+                        wenku8Proxy = it.trim()
+                        store.setWenku8ProxyUrl(it.trim())
+                    }
+                    if (wenku8Proxy.isNotBlank()) {
+                        Spacer(Modifier.height(6.dp))
+                        Text("已设置自定义加速反代，请求将优先经由此节点拉取", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                     }
                 }
             }

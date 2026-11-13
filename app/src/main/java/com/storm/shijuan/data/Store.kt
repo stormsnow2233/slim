@@ -17,6 +17,7 @@ class Store(context: Context) {
     init {
         NovelContentCache.init(context)
         Wenku8LocalIndex.init(context)
+        Wenku8Direct.init(context, this)
     }
 
     // ── 书架 ──
@@ -560,6 +561,13 @@ class Store(context: Context) {
     }
 
     fun loadSourceMetrics(): String? = sp.getString("source_health_metrics_v2", null)
+
+    // ── 轻小说文库自定义反代 / Worker / CDN ──
+    fun wenku8ProxyUrl(): String = sp.getString("wenku8_proxy_url", "")?.trim().orEmpty()
+
+    fun setWenku8ProxyUrl(url: String) {
+        sp.edit().putString("wenku8_proxy_url", url.trim()).apply()
+    }
 
     fun clearAll() {
         sp.edit().clear().apply()

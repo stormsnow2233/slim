@@ -338,14 +338,20 @@ object ComicDownloader {
         cancelNotif(key)
     }
 
+    fun pause(comic: Comic) = pause(keyOf(comic))
+
     fun resume(key: String) {
         val t = tasks.firstOrNull { it.key == key } ?: return
         if (t.state == STATE_DONE) return
         paused[key] = false
         cancelled[key] = false
-        update(key) { it.copy(state = STATE_RUNNING, error = "") }
-        launchWorker(t.copy(state = STATE_RUNNING))
+        val runningTask = t.copy(state = STATE_RUNNING, error = "")
+        update(key) { runningTask }
+        notifyProgress(runningTask, force = true)
+        launchWorker(runningTask)
     }
+
+    fun resume(comic: Comic) = resume(keyOf(comic))
 
     fun remove(key: String) {
         cancelled[key] = true

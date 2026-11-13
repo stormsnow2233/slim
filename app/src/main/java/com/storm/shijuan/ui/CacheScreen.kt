@@ -23,6 +23,7 @@ import com.storm.shijuan.data.ComicCacheEntry
 import com.storm.shijuan.data.ComicDownloader
 import com.storm.shijuan.data.NovelCacheEntry
 import com.storm.shijuan.data.STATE_DONE
+import com.storm.shijuan.data.STATE_PAUSED
 import com.storm.shijuan.data.STATE_RUNNING
 import com.storm.shijuan.data.Store
 import kotlinx.coroutines.Dispatchers
@@ -141,6 +142,14 @@ fun CacheScreen(
                                 CacheManager.deleteComic(e)
                                 tick++
                             },
+                            onPause = {
+                                ComicDownloader.pause(e.key)
+                                tick++
+                            },
+                            onResume = {
+                                ComicDownloader.resume(e.key)
+                                tick++
+                            },
                         )
                     }
                 }
@@ -203,9 +212,12 @@ private fun ComicCacheCard(
     onOpen: () -> Unit,
     onRepair: () -> Unit,
     onDelete: () -> Unit,
+    onPause: () -> Unit = {},
+    onResume: () -> Unit = {},
 ) {
     val task = ComicDownloader.tasks.firstOrNull { it.key == entry.key }
     val running = task?.state == STATE_RUNNING
+    val isPaused = task?.state == STATE_PAUSED
     Card(shape = RoundedCornerShape(14.dp)) {
         Column(Modifier.padding(12.dp)) {
             Row(verticalAlignment = Alignment.CenterVertically) {
@@ -253,26 +265,42 @@ private fun ComicCacheCard(
                 }
             }
 
-            if (running && task != null) {
+            if (task != null && (running || isPaused)) {
                 Spacer(Modifier.height(8.dp))
                 LinearProgressIndicator(
                     progress = { task.percent },
                     modifier = Modifier.fillMaxWidth().height(5.dp),
+                    color = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                 )
                 Spacer(Modifier.height(3.dp))
                 Text(
-                    "下载中 ${task.doneChapters}/${task.total} 话 · ${task.currentChapter.take(14)}",
+                    if (running) "下载中 ${task.doneChapters}/${task.total} 话 · ${task.currentChapter.take(14)}"
+                    else "已暂停 ${task.doneChapters}/${task.total} 话 · 点击继续下载",
                     fontSize = 10.sp,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    color = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
                 )
             }
 
             Spacer(Modifier.height(6.dp))
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp), verticalAlignment = Alignment.CenterVertically) {
                 TextButton(onClick = onOpen) { Text("去看", fontSize = 12.sp) }
-                if (!entry.ok && entry.chapters.isNotEmpty() && !running) {
+                if (running) {
+                    OutlinedButton(
+                        onClick = onPause,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    ) {
+                        Text("暂停", fontSize = 12.sp)
+                    }
+                } else if (isPaused) {
+                    Button(
+                        onClick = onResume,
+                        contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                    ) {
+                        Text("继续下载", fontSize = 12.sp)
+                    }
+                } else if (!entry.ok && entry.chapters.isNotEmpty()) {
                     TextButton(onClick = onRepair) {
                         Text(if (task?.state == STATE_DONE) "补齐缺的" else "重新检查补齐", fontSize = 12.sp)
                     }

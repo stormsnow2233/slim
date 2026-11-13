@@ -16,8 +16,8 @@ android {
         applicationId = "com.storm.shijuan"
         minSdk = 24
         targetSdk = 35
-        versionCode = 61
-        versionName = "2.39"
+        versionCode = 62
+        versionName = "2.40"
         resourceConfigurations += listOf("zh", "zh-rCN")
     }
 

@@ -997,6 +997,7 @@ object ComicRepo {
     val jmSource: JmComicSource = JmComicSource()
 
     val sources: List<ComicSource> = listOf(
+        ManhuaguiComicSource(),
         BaoziComicSource(),
         Dm5FamilySource(
             id = "dm5",
@@ -1013,6 +1014,14 @@ object ComicRepo {
             searchPath = "/search/?keywords={kw}",
             homePath = "/manhua-new/",
             altBases = listOf("https://m.manhuaren.com"),
+        ),
+        Dm5FamilySource(
+            id = "1kkk",
+            name = "极速漫画",
+            base = "https://m.1kkk.com",
+            searchPath = "/search?title={kw}",
+            homePath = "/manhua-list/",
+            altBases = listOf("https://www.1kkk.com"),
         ),
     )
 
@@ -1134,7 +1143,13 @@ object ComicRepo {
     fun detail(comic: Comic): Comic = source(comic.sourceId).detail(comic)
 
     fun chapters(comic: Comic): List<ComicChapter> {
-        val raw = source(comic.sourceId).chapters(comic)
+        val raw = try {
+            source(comic.sourceId).chapters(comic)
+        } catch (t: Throwable) {
+            val friendly = Net.friendlyError(t)
+            val msg = if (friendly.isNotBlank() && friendly != t.message) friendly else (t.message.orEmpty().ifBlank { "获取漫画章节失败，请尝试切换漫画源" })
+            throw IllegalStateException(msg, t)
+        }
         val normalized = normalizeChapters(raw)
         return normalized.mapIndexed { i, ch -> ch.copy(index = i) }
     }
@@ -1204,7 +1219,11 @@ object ComicRepo {
                 }
             }
         }
-        throw lastErr ?: IllegalStateException("漫画章节加载失败")
+        val msg = lastErr?.let {
+            val f = Net.friendlyError(it)
+            if (f.isNotBlank() && f != it.message) f else it.message
+        }?.ifBlank { null } ?: "漫画章节加载失败，请检查网络或切换漫画源"
+        throw IllegalStateException(msg, lastErr)
     }
 
     /** 后台把下一话的图地址先拿回来，翻页时就少等一次往返 */

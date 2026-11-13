@@ -1154,7 +1154,12 @@ fun ComicReaderScreen(
                     attempt++
                     return@LaunchedEffect
                 } else {
-                    error = it.message ?: "这一话加载失败"
+                    val raw = it.message.orEmpty().trim()
+                    error = if (raw.isBlank() || raw == "IllegalStateException" || raw.contains("java.lang.")) {
+                        "这一话加载失败，请检查网络或切换漫画源"
+                    } else {
+                        raw
+                    }
                 }
             }
         loading = false
