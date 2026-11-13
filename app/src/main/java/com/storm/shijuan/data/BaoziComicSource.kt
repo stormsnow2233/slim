@@ -35,9 +35,22 @@ class BaoziComicSource : ComicSource {
         return if (s.startsWith("/")) s else "/$s"
     }
 
+    private fun normalizeChapterPath(urlOrPath: String): String {
+        val path = extractPath(urlOrPath).replace("&amp;", "&")
+        if (path.contains("/user/page_direct")) {
+            val comicId = Regex("""[?&]comic_id=([^&]+)""").find(path)?.groupValues?.get(1).orEmpty()
+            val sectionSlot = Regex("""[?&]section_slot=(\d+)""").find(path)?.groupValues?.get(1) ?: "0"
+            val chapterSlot = Regex("""[?&]chapter_slot=(\d+)""").find(path)?.groupValues?.get(1) ?: "0"
+            if (comicId.isNotBlank()) {
+                return "/comic/chapter/$comicId/${sectionSlot}_${chapterSlot}.html"
+            }
+        }
+        return path
+    }
+
     private fun fetch(path: String, fast: Boolean = false): Net.Resp {
         val cleanPath = path.replace("&amp;", "&")
-        val relPath = extractPath(cleanPath)
+        val relPath = normalizeChapterPath(cleanPath)
         val order = listOf(liveBase) + mirrors.filter { it != liveBase }
         var lastErr = ""
         for (b in order) {
@@ -182,7 +195,8 @@ class BaoziComicSource : ComicSource {
             val inner = m.groupValues[2]
             var title = stripHtml(inner).trim()
             val cleanHref = href.replace("&amp;", "&")
-            val absUrl = if (cleanHref.startsWith("http")) cleanHref else "$base$cleanHref"
+            val normalizedHref = normalizeChapterPath(cleanHref)
+            val absUrl = if (normalizedHref.startsWith("http")) normalizedHref else "$base$normalizedHref"
             if (!seen.add(absUrl)) continue
 
             if (title.isBlank()) {
@@ -203,8 +217,8 @@ class BaoziComicSource : ComicSource {
             throw IllegalStateException("包子漫画暂无章节或已下架")
         }
 
-        // 若链接带有 section_slot 和 chapter_slot 参数，按槽位升序做最终排序校准，保证 100% 正序排列
-        val hasSlot = rawList.any { it.url.contains("chapter_slot=") }
+        // 若链接带有 section_slot 和 chapter_slot 参数或 /section_slot.html，按槽位升序做最终排序校准，保证 100% 正序排列
+        val hasSlot = rawList.any { it.url.contains("chapter_slot=") || Regex("""/\d+_\d+\.html""").containsMatchIn(it.url) }
         val sortedList = if (hasSlot) {
             rawList.sortedWith(compareBy(
                 { extractSlot(it.url, "section_slot") },
@@ -218,11 +232,21 @@ class BaoziComicSource : ComicSource {
     }
 
     private fun extractSlot(url: String, key: String): Int {
-        return Regex("""[?&]$key=(\d+)""").find(url)?.groupValues?.get(1)?.toIntOrNull() ?: 0
+        val querySlot = Regex("""[?&]$key=(\d+)""").find(url)?.groupValues?.get(1)?.toIntOrNull()
+        if (querySlot != null) return querySlot
+        val pathMatch = Regex("""/(\d+)_(\d+)\.html""").find(url)
+        if (pathMatch != null) {
+            return if (key == "section_slot") {
+                pathMatch.groupValues[1].toIntOrNull() ?: 0
+            } else {
+                pathMatch.groupValues[2].toIntOrNull() ?: 0
+            }
+        }
+        return 0
     }
 
     override fun pages(comic: Comic, chapter: ComicChapter): ComicPages {
-        val cleanUrl = chapter.url.replace("&amp;", "&")
+        val cleanUrl = normalizeChapterPath(chapter.url)
         val r = fetch(cleanUrl)
         if (!r.ok) {
             throw IllegalStateException(Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })))

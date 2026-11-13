@@ -598,4 +598,30 @@ class AuditAndFixVerificationTest {
         val timeoutErr = java.net.SocketTimeoutException("timeout connecting to host")
         assertEquals("连接超时", Net.friendlyError(timeoutErr))
     }
+
+    @Test
+    fun testBaoziPageLoadingReal() {
+        val src = BaoziComicSource()
+        val comic = Comic(name = "航海王", url = "https://cn.webmota.com/comic/hanghaiwang-weitianrongyilang", sourceId = "baozimh", sourceName = "包子漫画")
+        val chapters = src.chapters(comic)
+        assertTrue(chapters.isNotEmpty())
+        for (i in 0 until minOf(5, chapters.size)) {
+            val ch = chapters[i]
+            println("Chapter $i: ${ch.name} -> ${ch.url}")
+        }
+        val firstCh = chapters.first()
+        val pages = src.pages(comic, firstCh)
+        assertTrue("航海王第一话应有图片", pages.images.isNotEmpty())
+        println("Pages success: count=${pages.images.size}, referer=${pages.referer}")
+
+        // 测试古见同学
+        val komiComic = Comic(name = "古见同学是沟通鲁蛇。", url = "https://cn.webmota.com/comic/gujiantongxueshigoutonglushe-odatomohito", sourceId = "baozimh", sourceName = "包子漫画")
+        val komiChapters = src.chapters(komiComic)
+        assertTrue(komiChapters.isNotEmpty())
+        val komiCh26 = komiChapters.firstOrNull { it.name.contains("魔王城") || it.index == 25 } ?: komiChapters.first()
+        println("Komi target chapter: ${komiCh26.name} -> ${komiCh26.url}")
+        val komiPages = src.pages(komiComic, komiCh26)
+        assertTrue("古见同学章节应有图片", komiPages.images.isNotEmpty())
+        println("Komi pages success: count=${komiPages.images.size}, referer=${komiPages.referer}")
+    }
 }
