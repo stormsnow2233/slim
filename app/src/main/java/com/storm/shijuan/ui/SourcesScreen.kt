@@ -531,7 +531,7 @@ private fun SourceCard(
                     contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
                 ) { Text("编辑", fontSize = 12.sp) }
             }
-            Switch(checked = on, onCheckedChange = onToggle)
+            AdaptiveSwitch(checked = on, onCheckedChange = onToggle)
         }
     }
 }

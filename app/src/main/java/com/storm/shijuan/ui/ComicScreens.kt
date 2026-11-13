@@ -1506,7 +1506,7 @@ fun ComicReaderScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(
+                        AdaptiveSwitch(
                             checked = zoomable,
                             onCheckedChange = { zoomable = it; store.setComicZoom(it) },
                         )

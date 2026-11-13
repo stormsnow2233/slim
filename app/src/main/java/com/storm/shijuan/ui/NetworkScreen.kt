@@ -130,7 +130,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
-                        Switch(
+                        AdaptiveSwitch(
                             checked = cfg.enabled,
                             onCheckedChange = {
                                 cfg = cfg.copy(enabled = it)

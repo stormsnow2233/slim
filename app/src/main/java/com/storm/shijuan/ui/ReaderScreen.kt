@@ -660,7 +660,7 @@ fun ReaderScreen(
                                 color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f),
                             )
                         }
-                        Switch(
+                        AdaptiveSwitch(
                             checked = prefs.convertSimplified,
                             onCheckedChange = {
                                 prefs = prefs.copy(convertSimplified = it)

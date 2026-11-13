@@ -21,9 +21,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -83,22 +81,8 @@ fun SettingsScreen(
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp, vertical = 8.dp)
         ) {
-            // ── 书源管理 ──
-            SettingsGroupHeader("书源与内容")
-
-            val enabledCount = remember { store.enabledSources().size }
-            SettingsNavigationItem(
-                title = "书源管理",
-                subtitle = "已启用 $enabledCount 个书源 · 包含轻小说文库、笔趣阁等 18+ 源与自定义源",
-                icon = Icons.Rounded.Layers,
-                onClick = onOpenSources,
-            )
-
-            Spacer(Modifier.height(24.dp))
-
             // ── 外观与主题 ──
-            SettingsGroupHeader("外观与主题")
-
+            MiuixSectionHeader("外观与主题")
             ThemeSettingsCard(
                 currentStyle = store.currentThemeStyle,
                 onStyleChange = { store.setAppThemeStyle(it) },
@@ -106,52 +90,93 @@ fun SettingsScreen(
                 onModeChange = { store.setAppThemeMode(it) }
             )
 
-            Spacer(Modifier.height(24.dp))
+            // ── 书源管理 ──
+            MiuixSectionHeader("书源与内容")
+            val enabledCount = remember { store.enabledSources().size }
+            MiuixCardGroup {
+                MiuixPreferenceItem(
+                    title = "书源管理",
+                    subtitle = "已启用 $enabledCount 个书源 · 包含轻小说文库、漫画柜、笔趣阁等 20+ 源与自定义源",
+                    icon = Icons.Rounded.Layers,
+                    onClick = onOpenSources,
+                )
+            }
 
             // ── 小说阅读偏好 ──
-            SettingsGroupHeader("小说阅读偏好")
+            MiuixSectionHeader("小说阅读偏好")
+            MiuixCardGroup {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp)
+                ) {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "正文字号",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            "${prefs.fontSize.toInt()} sp",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    MiuixSlider(
+                        value = prefs.fontSize,
+                        onValueChange = {
+                            val rounded = it.roundToInt().toFloat()
+                            if (rounded != prefs.fontSize) {
+                                prefs = prefs.copy(fontSize = rounded)
+                                store.saveReaderPrefs(prefs)
+                            }
+                        },
+                        valueRange = 14f..30f,
+                    )
+                    Spacer(Modifier.height(14.dp))
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween,
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text(
+                            "正文行距",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.Medium,
+                        )
+                        Text(
+                            "${String.format(java.util.Locale.US, "%.2f", prefs.lineHeight)} 倍",
+                            style = MaterialTheme.typography.bodyMedium,
+                            color = MaterialTheme.colorScheme.primary,
+                            fontWeight = FontWeight.Bold
+                        )
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    MiuixSlider(
+                        value = prefs.lineHeight,
+                        onValueChange = {
+                            val rounded = ((it * 20).roundToInt() / 20f)
+                            if (rounded != prefs.lineHeight) {
+                                prefs = prefs.copy(lineHeight = rounded)
+                                store.saveReaderPrefs(prefs)
+                            }
+                        },
+                        valueRange = 1.2f..2.4f,
+                    )
+                }
 
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = 4.dp, vertical = 4.dp)
-            ) {
-                Text(
-                    "正文字号 ${prefs.fontSize.toInt()} sp",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-                CleanSlider(
-                    value = prefs.fontSize,
-                    onValueChange = {
-                        val rounded = it.roundToInt().toFloat()
-                        if (rounded != prefs.fontSize) {
-                            prefs = prefs.copy(fontSize = rounded)
-                            store.saveReaderPrefs(prefs)
-                        }
-                    },
-                    valueRange = 14f..30f,
-                )
-                Spacer(Modifier.height(14.dp))
-                Text(
-                    "正文行距 ${String.format(java.util.Locale.US, "%.2f", prefs.lineHeight)} 倍",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium,
-                )
-                CleanSlider(
-                    value = prefs.lineHeight,
-                    onValueChange = {
-                        val rounded = ((it * 20).roundToInt() / 20f)
-                        if (rounded != prefs.lineHeight) {
-                            prefs = prefs.copy(lineHeight = rounded)
-                            store.saveReaderPrefs(prefs)
-                        }
-                    },
-                    valueRange = 1.2f..2.4f,
-                )
-                Spacer(Modifier.height(14.dp))
+                MiuixDivider(hasIcon = false)
+
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = 16.dp, vertical = 14.dp),
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Column(Modifier.weight(1f)) {
@@ -166,66 +191,115 @@ fun SettingsScreen(
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
                     }
-                    Row(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(22.dp))
-                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
-                            .padding(3.dp)
-                    ) {
-                        val modes = listOf(0 to "上下滚动", 1 to "左右翻页")
-                        modes.forEach { (mode, label) ->
-                            val isSelected = prefs.pageMode == mode
-                            Box(
-                                modifier = Modifier
-                                    .clip(RoundedCornerShape(18.dp))
-                                    .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                                    .clickable {
-                                        if (prefs.pageMode != mode) {
-                                            prefs = prefs.copy(pageMode = mode)
-                                            store.saveReaderPrefs(prefs)
-                                        }
-                                    }
-                                    .padding(horizontal = 14.dp, vertical = 6.dp)
-                            ) {
-                                Text(
-                                    text = label,
-                                    fontSize = 13.sp,
-                                    fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                                    color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                    MiuixSegmentedPicker(
+                        items = listOf(0 to "上下滚动", 1 to "左右翻页"),
+                        selectedItem = prefs.pageMode,
+                        onSelect = { mode ->
+                            if (prefs.pageMode != mode) {
+                                prefs = prefs.copy(pageMode = mode)
+                                store.saveReaderPrefs(prefs)
                             }
                         }
-                    }
+                    )
                 }
             }
 
-            Spacer(Modifier.height(24.dp))
+            // ── 漫画阅读偏好 ──
+            MiuixSectionHeader("漫画阅读偏好")
+            MiuixCardGroup {
+                MiuixSwitchPreference(
+                    title = "上下滚动浏览",
+                    subtitle = if (comicMode == "scroll") "当前为上下瀑布流连续滚动" else "当前为左右章内翻页",
+                    icon = Icons.Rounded.SwapVert,
+                    checked = comicMode == "scroll",
+                    onCheckedChange = { isScroll ->
+                        val newMode = if (isScroll) "scroll" else "page"
+                        comicMode = newMode
+                        store.setComicMode(newMode)
+                    }
+                )
+                MiuixDivider(hasIcon = true)
+                MiuixSwitchPreference(
+                    title = "手势缩放支持",
+                    subtitle = "阅读漫画与轻小说插图时允许双指捏合缩放与双击放大",
+                    icon = Icons.Rounded.ZoomIn,
+                    checked = comicZoom,
+                    onCheckedChange = { zoom ->
+                        comicZoom = zoom
+                        store.setComicZoom(zoom)
+                    }
+                )
+                if (jmEnabled) {
+                    MiuixDivider(hasIcon = true)
+                    MiuixSwitchPreference(
+                        title = "JM入口",
+                        subtitle = "侧边栏显示 JM 源漫画频道，关闭后此项将重新隐藏",
+                        icon = Icons.Rounded.AutoAwesome,
+                        checked = true,
+                        onCheckedChange = { checked ->
+                            if (!checked) {
+                                store.setJmEnabled(false)
+                                jmEnabled = false
+                                onJmEnabledChanged(false)
+                                Toast.makeText(ctx, "JM入口已关闭", Toast.LENGTH_SHORT).show()
+                            }
+                        }
+                    )
+                }
+            }
+
+            // ── 网络与存储 ──
+            MiuixSectionHeader("网络与存储")
+            MiuixCardGroup {
+                MiuixPreferenceItem(
+                    title = "网络代理设置",
+                    subtitle = if (Net.proxy().usable) "代理已启用 · ${Net.proxy().host}:${Net.proxy().port}" else "直连网络 · 支持配置 HTTP/SOCKS 代理与网络超时",
+                    icon = Icons.Rounded.Wifi,
+                    onClick = onOpenNetwork
+                )
+                MiuixDivider(hasIcon = true)
+                MiuixPreferenceItem(
+                    title = "缓存管理",
+                    subtitle = "管理已离线的小说正文与漫画本地缓存，一键清理释放存储空间",
+                    icon = Icons.Rounded.CleaningServices,
+                    onClick = onOpenCache
+                )
+                MiuixDivider(hasIcon = true)
+                MiuixPreferenceItem(
+                    title = "清空搜索历史",
+                    subtitle = "一键清除小说和漫画搜索框的历史关键词记录",
+                    icon = Icons.Rounded.History,
+                    onClick = {
+                        store.clearHistory()
+                        Toast.makeText(ctx, "搜索历史已清空", Toast.LENGTH_SHORT).show()
+                    }
+                )
+            }
 
             // ── 软件更新 ──
-            SettingsGroupHeader("版本与更新")
-
-            // 自动检查更新开关
-            SettingsSwitchItem(
-                title = "自动获取更新",
-                subtitle = "App 启动时在后台静默检查 GitHub 最新发布版本并提醒",
-                icon = Icons.Rounded.Sync,
-                checked = autoCheck,
-                onCheckedChange = { checked ->
-                    autoCheck = checked
-                    store.setAutoCheckUpdate(checked)
-                }
-            )
-
-            SettingsDivider()
-
-            // 检查更新按钮
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable {
-                        if (checking) return@clickable
+            MiuixSectionHeader("版本与更新")
+            MiuixCardGroup {
+                MiuixSwitchPreference(
+                    title = "自动获取更新",
+                    subtitle = "App 启动时在后台静默检查 GitHub 最新发布版本并提醒",
+                    icon = Icons.Rounded.Sync,
+                    checked = autoCheck,
+                    onCheckedChange = { checked ->
+                        autoCheck = checked
+                        store.setAutoCheckUpdate(checked)
+                    }
+                )
+                MiuixDivider(hasIcon = true)
+                MiuixPreferenceItem(
+                    title = "检查更新",
+                    subtitle = when {
+                        checking -> "正在连接 GitHub 最新 Release…"
+                        checkStatusText.isNotBlank() -> checkStatusText
+                        else -> "当前版本 v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})"
+                    },
+                    icon = Icons.Rounded.Update,
+                    onClick = {
+                        if (checking) return@MiuixPreferenceItem
                         checking = true
                         checkStatusText = "正在检查更新…"
                         scope.launch {
@@ -247,142 +321,15 @@ fun SettingsScreen(
                                 }
                             )
                         }
-                    }
-                    .padding(vertical = 12.dp, horizontal = 4.dp)
-            ) {
-                Icon(
-                    Icons.Rounded.Update,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp)
-                )
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("检查更新", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
-                    Spacer(Modifier.height(2.dp))
-                    Text(
-                        text = when {
-                            checking -> "正在连接 GitHub 最新 Release…"
-                            checkStatusText.isNotBlank() -> checkStatusText
-                            else -> "当前版本 v${BuildConfig.VERSION_NAME} (Build ${BuildConfig.VERSION_CODE})"
-                        },
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                if (checking) {
-                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
-                } else {
-                    Icon(
-                        Icons.Rounded.ChevronRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-                    )
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            // ── 网络与存储 ──
-            SettingsGroupHeader("网络与存储")
-
-            SettingsNavigationItem(
-                title = "网络代理设置",
-                subtitle = if (Net.proxy().usable) "代理已启用 · ${Net.proxy().host}:${Net.proxy().port}" else "直连网络 · 支持配置 HTTP/SOCKS 代理与网络超时",
-                icon = Icons.Rounded.Wifi,
-                onClick = onOpenNetwork
-            )
-
-            SettingsDivider()
-
-            SettingsNavigationItem(
-                title = "缓存管理",
-                subtitle = "管理已离线的小说正文与漫画本地缓存，一键清理释放存储空间",
-                icon = Icons.Rounded.CleaningServices,
-                onClick = onOpenCache
-            )
-
-            SettingsDivider()
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable {
-                        store.clearHistory()
-                        Toast.makeText(ctx, "搜索历史已清空", Toast.LENGTH_SHORT).show()
-                    }
-                    .padding(vertical = 12.dp, horizontal = 4.dp)
-            ) {
-                Icon(
-                    Icons.Rounded.History,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp),
-                )
-                Spacer(Modifier.width(14.dp))
-                Column(Modifier.weight(1f)) {
-                    Text("清空搜索历史", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
-                    Spacer(Modifier.height(2.dp))
-                    Text("一键清除小说和漫画搜索框的历史关键词记录", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-            }
-
-            Spacer(Modifier.height(24.dp))
-
-            // ── 漫画阅读偏好 ──
-            SettingsGroupHeader("漫画阅读偏好")
-
-            SettingsSwitchItem(
-                title = "上下滚动浏览",
-                subtitle = if (comicMode == "scroll") "当前为上下瀑布流滚动，类似条漫" else "当前为左右章内翻页",
-                icon = Icons.Rounded.SwapVert,
-                checked = comicMode == "scroll",
-                onCheckedChange = { isScroll ->
-                    val newMode = if (isScroll) "scroll" else "page"
-                    comicMode = newMode
-                    store.setComicMode(newMode)
-                }
-            )
-
-            SettingsDivider()
-
-            SettingsSwitchItem(
-                title = "手势缩放支持",
-                subtitle = "阅读漫画与轻小说插图时允许双指捏合缩放与双击放大",
-                icon = Icons.Rounded.ZoomIn,
-                checked = comicZoom,
-                onCheckedChange = { zoom ->
-                    comicZoom = zoom
-                    store.setComicZoom(zoom)
-                }
-            )
-
-            if (jmEnabled) {
-                SettingsDivider()
-
-                SettingsSwitchItem(
-                    title = "JM入口",
-                    subtitle = "侧边栏显示 JM 源漫画频道，关闭后此项将重新隐藏",
-                    icon = Icons.Rounded.AutoAwesome,
-                    checked = true,
-                    onCheckedChange = { checked ->
-                        if (!checked) {
-                            store.setJmEnabled(false)
-                            jmEnabled = false
-                            onJmEnabledChanged(false)
-                            Toast.makeText(ctx, "JM入口已关闭", Toast.LENGTH_SHORT).show()
-                        }
-                    }
+                    },
+                    endAction = if (checking) {
+                        { CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp) }
+                    } else null
                 )
             }
-
-            Spacer(Modifier.height(24.dp))
 
             // ── 关于 ──
-            SettingsGroupHeader("关于")
-
+            MiuixSectionHeader("关于")
             val onClickShijuanTitle = {
                 val now = System.currentTimeMillis()
                 if (now - jmLastClickTime < 2500) {
@@ -404,140 +351,183 @@ fun SettingsScreen(
                 }
             }
 
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .clip(RoundedCornerShape(8.dp))
-                    .clickable(onClick = onClickShijuanTitle)
-                    .padding(vertical = 10.dp, horizontal = 4.dp)
-            ) {
-                Icon(
-                    Icons.Rounded.AutoStories,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.primary,
-                    modifier = Modifier.size(24.dp)
+            MiuixCardGroup {
+                MiuixPreferenceItem(
+                    title = "拾卷 Shijuan",
+                    subtitle = "纯原生轻小说与漫画阅读器，找书快，排版舒服，完全开源无广告。",
+                    icon = Icons.Rounded.AutoStories,
+                    onClick = onClickShijuanTitle
                 )
-                Spacer(Modifier.width(14.dp))
+                MiuixDivider(hasIcon = true)
+                MiuixPreferenceItem(
+                    title = "查看 GitHub 开源仓库",
+                    subtitle = "获取最新源码、提交 Issue 反馈与参与共建",
+                    icon = Icons.Rounded.Code,
+                    onClick = {
+                        val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/stormsnow2233/slim"))
+                        ctx.startActivity(intent)
+                    }
+                )
+            }
+
+            Spacer(Modifier.height(32.dp))
+        }
+    }
+}
+
+@Composable
+private fun ThemeSettingsCard(
+    currentStyle: Int,
+    onStyleChange: (Int) -> Unit,
+    currentMode: Int,
+    onModeChange: (Int) -> Unit,
+) {
+    MiuixCardGroup {
+        Column(modifier = Modifier.padding(16.dp)) {
+            Text(
+                text = "主题风格",
+                style = MaterialTheme.typography.titleMedium,
+                fontWeight = FontWeight.SemiBold
+            )
+            Text(
+                text = "选择心仪的应用配色方案与组件视觉质感",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(14.dp))
+
+            // 主题风格卡片（经典书卷 VS MiuiX极简）
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                ThemeStyleCard(
+                    modifier = Modifier.weight(1f),
+                    title = "经典书卷",
+                    subtitle = "国风暖玉 · 赭石沉香",
+                    paletteColors = listOf(Color(0xFFF8F3EA), Color(0xFF9C4A2F), Color(0xFF5C7A5A)),
+                    selected = currentStyle == AppThemeStyle.Classic.id,
+                    onClick = { onStyleChange(AppThemeStyle.Classic.id) }
+                )
+                ThemeStyleCard(
+                    modifier = Modifier.weight(1f),
+                    title = "MiuiX 极简",
+                    subtitle = "澎湃蔚蓝 · 现代纯粹",
+                    paletteColors = listOf(Color(0xFFF7F7F7), Color(0xFF3482FF), Color(0xFF00C4B4)),
+                    selected = currentStyle == AppThemeStyle.MiuiX.id,
+                    onClick = { onStyleChange(AppThemeStyle.MiuiX.id) }
+                )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            Spacer(Modifier.height(14.dp))
+
+            // 深色模式偏好
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
                 Column(Modifier.weight(1f)) {
-                    Text("拾卷 Shijuan", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                    Spacer(Modifier.height(2.dp))
                     Text(
-                        "纯原生轻小说与漫画阅读器，找书快，排版舒服，完全开源无广告。",
-                        fontSize = 12.sp,
+                        text = "深色模式偏好",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = when (currentMode) {
+                            1 -> "始终浅色视觉"
+                            2 -> "始终暗夜视觉"
+                            else -> "跟随系统自动切换"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
+                MiuixSegmentedPicker(
+                    items = listOf(
+                        AppThemeMode.System.id to "系统",
+                        AppThemeMode.Light.id to "浅色",
+                        AppThemeMode.Dark.id to "深色"
+                    ),
+                    selectedItem = currentMode,
+                    onSelect = onModeChange
+                )
             }
-
-            Spacer(Modifier.height(8.dp))
-
-            FilledTonalButton(
-                onClick = {
-                    val intent = Intent(Intent.ACTION_VIEW, Uri.parse("https://github.com/stormsnow2233/slim"))
-                    ctx.startActivity(intent)
-                },
-                shape = RoundedCornerShape(12.dp),
-                modifier = Modifier.padding(start = 4.dp)
-            ) {
-                Icon(Icons.Rounded.Code, contentDescription = null, modifier = Modifier.size(16.dp))
-                Spacer(Modifier.width(8.dp))
-                Text("查看 GitHub 开源仓库")
-            }
-
-            Spacer(Modifier.height(24.dp))
         }
     }
 }
 
 @Composable
-private fun SettingsDivider() {
-    HorizontalDivider(
-        color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f),
-        modifier = Modifier.padding(start = 38.dp, end = 4.dp, top = 2.dp, bottom = 2.dp)
-    )
-}
-
-@Composable
-private fun SettingsGroupHeader(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.labelLarge,
-        color = MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(start = 4.dp, bottom = 6.dp)
-    )
-}
-
-@Composable
-private fun SettingsSwitchItem(
+private fun ThemeStyleCard(
+    modifier: Modifier = Modifier,
     title: String,
     subtitle: String,
-    icon: ImageVector,
-    checked: Boolean,
-    onCheckedChange: (Boolean) -> Unit,
-) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .clickable { onCheckedChange(!checked) }
-            .padding(vertical = 10.dp, horizontal = 4.dp)
-    ) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
-            if (subtitle.isNotBlank()) {
-                Spacer(Modifier.height(2.dp))
-                Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            }
-        }
-        Spacer(Modifier.width(8.dp))
-        Switch(
-            checked = checked,
-            onCheckedChange = onCheckedChange,
-        )
-    }
-}
-
-@Composable
-private fun SettingsNavigationItem(
-    title: String,
-    subtitle: String,
-    icon: ImageVector,
+    paletteColors: List<Color>,
+    selected: Boolean,
     onClick: () -> Unit,
 ) {
-    Row(
-        verticalAlignment = Alignment.CenterVertically,
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .clickable(onClick = onClick)
-            .padding(vertical = 12.dp, horizontal = 4.dp)
+    val borderColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
+    val containerBg = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+
+    Surface(
+        modifier = modifier
+            .clip(RoundedCornerShape(14.dp))
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(14.dp),
+        border = BorderStroke(if (selected) 2.dp else 1.dp, borderColor),
+        color = containerBg
     ) {
-        Icon(icon, contentDescription = null, tint = MaterialTheme.colorScheme.primary, modifier = Modifier.size(24.dp))
-        Spacer(Modifier.width(14.dp))
-        Column(Modifier.weight(1f)) {
-            Text(title, style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Medium)
-            if (subtitle.isNotBlank()) {
-                Spacer(Modifier.height(2.dp))
-                Text(subtitle, fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Column(
+            modifier = Modifier.padding(12.dp)
+        ) {
+            // 色彩胶囊展示
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.SpaceBetween,
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                Row(
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    paletteColors.forEach { c ->
+                        Box(
+                            modifier = Modifier
+                                .size(14.dp)
+                                .clip(CircleShape)
+                                .background(c)
+                                .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), CircleShape)
+                        )
+                    }
+                }
+                if (selected) {
+                    Icon(
+                        Icons.Rounded.CheckCircle,
+                        contentDescription = "已选中",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
             }
+            Spacer(Modifier.height(10.dp))
+            Text(
+                text = title,
+                style = MaterialTheme.typography.titleSmall,
+                fontWeight = FontWeight.Bold,
+                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
+            )
+            Spacer(Modifier.height(2.dp))
+            Text(
+                text = subtitle,
+                fontSize = 11.sp,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                lineHeight = 15.sp
+            )
         }
-        Icon(
-            Icons.Rounded.ChevronRight,
-            contentDescription = null,
-            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
-        )
     }
 }
 
-/**
- * 全局统一更新弹窗：启动自动检查与设置中手动检查完全复用同一个弹窗。
- * 完整 Markdown 格式化更新日志，支持上下滑动与富文本展示。
- */
 @Composable
 fun UpdateDialog(
     info: ReleaseInfo,
@@ -591,7 +581,6 @@ fun UpdateDialog(
                 )
                 Spacer(Modifier.height(6.dp))
 
-                // 完整 Markdown 格式化更新日志，支持上下滑动与富文本展示
                 Surface(
                     shape = RoundedCornerShape(14.dp),
                     color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
@@ -696,222 +685,3 @@ fun UpdateDialog(
         }
     )
 }
-
-@OptIn(ExperimentalMaterial3Api::class)
-@Composable
-private fun CleanSlider(
-    value: Float,
-    onValueChange: (Float) -> Unit,
-    valueRange: ClosedFloatingPointRange<Float>,
-    modifier: Modifier = Modifier,
-) {
-    Slider(
-        value = value,
-        onValueChange = onValueChange,
-        valueRange = valueRange,
-        modifier = modifier.fillMaxWidth(),
-        colors = SliderDefaults.colors(
-            thumbColor = MaterialTheme.colorScheme.primary,
-            activeTrackColor = MaterialTheme.colorScheme.primary,
-            inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
-        ),
-        thumb = {
-            Surface(
-                shape = CircleShape,
-                color = MaterialTheme.colorScheme.primary,
-                shadowElevation = 2.dp,
-                modifier = Modifier.size(20.dp)
-            ) {}
-        },
-        track = { sliderState ->
-            SliderDefaults.Track(
-                sliderState = sliderState,
-                modifier = Modifier.height(4.dp),
-                thumbTrackGapSize = 0.dp,
-                drawStopIndicator = null
-            )
-        }
-    )
-}
-
-@Composable
-private fun ThemeSettingsCard(
-    currentStyle: Int,
-    onStyleChange: (Int) -> Unit,
-    currentMode: Int,
-    onModeChange: (Int) -> Unit,
-) {
-    Column(
-        modifier = Modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp))
-            .background(MaterialTheme.colorScheme.surface)
-            .padding(16.dp)
-    ) {
-        Text(
-            text = "主题风格",
-            style = MaterialTheme.typography.titleMedium,
-            fontWeight = FontWeight.SemiBold
-        )
-        Text(
-            text = "选择心仪的应用配色方案与组件视觉质感",
-            style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant
-        )
-        Spacer(Modifier.height(14.dp))
-
-        // 主题风格卡片（经典书卷 VS MiuiX极简）
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            ThemeStyleCard(
-                modifier = Modifier.weight(1f),
-                title = "经典书卷",
-                subtitle = "国风暖玉 · 赭石沉香",
-                paletteColors = listOf(Color(0xFFF8F3EA), Color(0xFF9C4A2F), Color(0xFF5C7A5A)),
-                selected = currentStyle == AppThemeStyle.Classic.id,
-                onClick = { onStyleChange(AppThemeStyle.Classic.id) }
-            )
-            ThemeStyleCard(
-                modifier = Modifier.weight(1f),
-                title = "MiuiX 极简",
-                subtitle = "澎湃蔚蓝 · 现代纯粹",
-                paletteColors = listOf(Color(0xFFF7F7F7), Color(0xFF3482FF), Color(0xFF00C4B4)),
-                selected = currentStyle == AppThemeStyle.MiuiX.id,
-                onClick = { onStyleChange(AppThemeStyle.MiuiX.id) }
-            )
-        }
-
-        Spacer(Modifier.height(20.dp))
-        HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
-        Spacer(Modifier.height(16.dp))
-
-        // 深色模式选择器
-        Row(
-            modifier = Modifier.fillMaxWidth(),
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Column(Modifier.weight(1f)) {
-                Text(
-                    text = "深色模式偏好",
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Medium
-                )
-                Text(
-                    text = when (currentMode) {
-                        1 -> "始终使用浅色视觉"
-                        2 -> "始终使用深色视觉"
-                        else -> "跟随系统设置自动切换"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
-            }
-            Row(
-                modifier = Modifier
-                    .clip(RoundedCornerShape(22.dp))
-                    .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.07f))
-                    .padding(3.dp)
-            ) {
-                val modes = listOf(
-                    AppThemeMode.System.id to "系统",
-                    AppThemeMode.Light.id to "浅色",
-                    AppThemeMode.Dark.id to "深色"
-                )
-                modes.forEach { (mode, label) ->
-                    val isSelected = currentMode == mode
-                    Box(
-                        modifier = Modifier
-                            .clip(RoundedCornerShape(18.dp))
-                            .background(if (isSelected) MaterialTheme.colorScheme.primary else Color.Transparent)
-                            .clickable {
-                                if (currentMode != mode) {
-                                    onModeChange(mode)
-                                }
-                            }
-                            .padding(horizontal = 12.dp, vertical = 6.dp)
-                    ) {
-                        Text(
-                            text = label,
-                            fontSize = 13.sp,
-                            fontWeight = if (isSelected) FontWeight.Bold else FontWeight.Normal,
-                            color = if (isSelected) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun ThemeStyleCard(
-    modifier: Modifier = Modifier,
-    title: String,
-    subtitle: String,
-    paletteColors: List<Color>,
-    selected: Boolean,
-    onClick: () -> Unit,
-) {
-    val borderColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-    val containerBg = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-
-    Surface(
-        modifier = modifier
-            .clip(RoundedCornerShape(14.dp))
-            .clickable(onClick = onClick),
-        shape = RoundedCornerShape(14.dp),
-        border = BorderStroke(if (selected) 2.dp else 1.dp, borderColor),
-        color = containerBg
-    ) {
-        Column(
-            modifier = Modifier.padding(12.dp)
-        ) {
-            // 色彩胶囊展示
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween,
-                modifier = Modifier.fillMaxWidth()
-            ) {
-                Row(
-                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    paletteColors.forEach { c ->
-                        Box(
-                            modifier = Modifier
-                                .size(14.dp)
-                                .clip(CircleShape)
-                                .background(c)
-                                .border(0.5.dp, MaterialTheme.colorScheme.outline.copy(alpha = 0.4f), CircleShape)
-                        )
-                    }
-                }
-                if (selected) {
-                    Icon(
-                        Icons.Rounded.CheckCircle,
-                        contentDescription = "已选中",
-                        tint = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                }
-            }
-            Spacer(Modifier.height(10.dp))
-            Text(
-                text = title,
-                style = MaterialTheme.typography.titleSmall,
-                fontWeight = FontWeight.Bold,
-                color = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface
-            )
-            Spacer(Modifier.height(2.dp))
-            Text(
-                text = subtitle,
-                fontSize = 11.sp,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                lineHeight = 15.sp
-            )
-        }
-    }
-}
-
