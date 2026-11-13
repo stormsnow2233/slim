@@ -178,7 +178,7 @@ class Dm5FamilySource(
     override fun search(keyword: String): List<Comic> {
         val kw = URLEncoder.encode(keyword, "UTF-8")
         if (jsonSearchPath.isNotBlank()) {
-            val r = fetch("$jsonSearchPath?t=$kw&language=1&isremovehtml=1")
+            val r = fetch("$jsonSearchPath?t=$kw&language=1&isremovehtml=1", fast = true)
             // 接口本身都打不开：直接报错，别再去抓搜索页重复等一轮超时
             if (!r.ok) {
                 throw IllegalStateException(
@@ -205,7 +205,7 @@ class Dm5FamilySource(
             }
         }
         // 接口没这个关键词（或这个站没接口），退回抓搜索页
-        val r = fetch(searchPath.replace("{kw}", kw))
+        val r = fetch(searchPath.replace("{kw}", kw), fast = true)
         if (!r.ok) {
             throw IllegalStateException(
                 Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })),
@@ -1039,7 +1039,7 @@ object ComicRepo {
         else -> sources.firstOrNull { it.id == id }
     }
 
-    val pool = Executors.newFixedThreadPool(4)
+    val pool = Executors.newFixedThreadPool(8)
     private val failedUntil = java.util.concurrent.ConcurrentHashMap<String, Long>()
 
     fun markFailed(sourceId: String, durationMs: Long = 60 * 1000L) {
@@ -1063,29 +1063,31 @@ object ComicRepo {
      * 支持别名自动扩充（如 "古见同学有社交障碍" 自动扩展并检索 "古见同学有交流障碍症" / "古见同学"），
      * 并按相关度智能排序，单个源超时/失败不影响其它源。
      */
-    fun searchAll(keyword: String, ids: List<String>): List<ComicHit> {
+    fun searchAll(
+        keyword: String,
+        ids: List<String> = emptyList(),
+        onHit: ((ComicHit) -> Unit)? = null,
+    ): List<ComicHit> {
         val targetIds = ids.ifEmpty { sources.map { it.id } }
         val picked = sources.filter { it.id in targetIds && !isBlacklisted(it.id) }
         if (picked.isEmpty()) return emptyList()
-        val deadline = System.currentTimeMillis() + 8000L
+        val deadline = System.currentTimeMillis() + 6000L
         val candidates = NovelAliasHelper.expandQueries(keyword)
 
+        val results = java.util.Collections.synchronizedList(ArrayList<ComicHit>())
         val jobs = picked.map { src ->
             val t0 = System.currentTimeMillis()
             pool.submit(Callable {
-                runCatching {
+                val hit = runCatching {
                     var list = src.search(keyword)
-                    // 如果原词命中较少且有别名扩展词，自动用前 2 个别名增量补充（例如补搜古见同学/古见同学有交流障碍症）
-                    if (list.size <= 2 && candidates.size > 1) {
-                        for (alt in candidates.drop(1).take(2)) {
-                            val more = runCatching { src.search(alt) }.getOrDefault(emptyList())
-                            if (more.isNotEmpty()) {
-                                list = (list + more).distinctBy { it.url }
-                            }
-                            if (list.size >= 8) break
+                    // 仅当原词搜空且有别名时才轻量尝试 1 个别名，绝不串行多轮拖慢整体速度
+                    if (list.isEmpty() && candidates.size > 1) {
+                        val alt = candidates[1]
+                        val more = runCatching { src.search(alt) }.getOrDefault(emptyList())
+                        if (more.isNotEmpty()) {
+                            list = more
                         }
                     }
-                    // 按与用户输入 keyword 的相关度打分智能降序排列
                     list.sortedByDescending { NovelAliasHelper.matchScore(it.name, it.author, keyword) }
                 }.fold(
                     onSuccess = { ComicHit(src.id, src.name, it, true, System.currentTimeMillis() - t0) },
@@ -1101,23 +1103,22 @@ object ComicRepo {
                         )
                     },
                 )
+                results.add(hit)
+                onHit?.invoke(hit)
+                hit
             })
         }
-        val results = ArrayList<ComicHit>()
         for (i in jobs.indices) {
             val f = jobs[i]
-            val src = picked[i]
             val remainingMs = (deadline - System.currentTimeMillis()).coerceAtLeast(1L)
-            val hit = runCatching {
+            runCatching {
                 f.get(remainingMs, TimeUnit.MILLISECONDS)
-            }.getOrElse {
+            }.onFailure {
                 f.cancel(true)
-                ComicHit(src.id, src.name, emptyList(), false, 8000, "超时 (8s)")
             }
-            results.add(hit)
         }
         jobs.forEach { if (!it.isDone) runCatching { it.cancel(true) } }
-        return results.sortedByDescending { it.list.size }
+        return results.toList().sortedByDescending { it.list.size }
     }
 
     /** 把多个源的结果合并去重（综合书名、作者与路径），并根据搜索词相关度智能置顶 */

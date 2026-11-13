@@ -14,23 +14,23 @@ class BaoziComicSource : ComicSource {
     override val name: String = "包子漫画"
 
     private val mirrors: List<String> = listOf(
-        "https://cn.webmota.com",
-        "https://www.webmota.com",
         "https://www.baozimh.com",
         "https://cn.baozimh.com",
         "https://baozimh.org",
+        "https://cn.webmota.com",
+        "https://www.webmota.com",
     )
 
     @Volatile
     private var liveBase: String = mirrors.first()
     private val base: String get() = liveBase
 
-    private fun fetch(path: String): Net.Resp {
+    private fun fetch(path: String, fast: Boolean = false): Net.Resp {
         val cleanPath = path.replace("&amp;", "&")
         val order = listOf(liveBase) + mirrors.filter { it != liveBase }
         for (b in order) {
             val url = if (cleanPath.startsWith("http")) cleanPath else "$b$cleanPath"
-            val r = Net.get(url, referer = "$b/", useCache = true)
+            val r = Net.get(url, referer = "$b/", useCache = true, fast = fast)
             if (r.ok) {
                 if (r.body.contains("Just a moment...") || r.body.contains("cf-browser-verification") || r.body.contains("gk-gatekeeper")) {
                     continue
@@ -43,14 +43,14 @@ class BaoziComicSource : ComicSource {
     }
 
     override fun home(): List<Comic> {
-        val r = fetch("/classify")
+        val r = fetch("/classify", fast = true)
         if (!r.ok) return emptyList()
         return parseComics(r.body)
     }
 
     override fun search(keyword: String): List<Comic> {
         val kw = URLEncoder.encode(keyword, "UTF-8")
-        val r = fetch("/search?q=$kw")
+        val r = fetch("/search?q=$kw", fast = true)
         if (!r.ok) {
             throw IllegalStateException(Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })))
         }

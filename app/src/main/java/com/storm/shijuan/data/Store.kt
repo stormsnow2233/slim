@@ -20,11 +20,24 @@ class Store(context: Context) {
         Wenku8Direct.init(context, this)
     }
 
+    /** 全局书架/阅读记忆版本号：任何变更自动自增，驱动 UI 毫秒级响应 */
+    var shelfTick by mutableIntStateOf(0)
+        private set
+    /** 漫画记忆的版本号：改动后让界面自动刷新 */
+    var comicTick by mutableIntStateOf(0)
+        private set
+
+    fun notifyShelfChanged() {
+        shelfTick++
+        comicTick++
+    }
+
     // ── 书架 ──
     fun shelf(): List<ShelfItem> = ShelfItem.listFrom(sp.getString("shelf", null))
 
     fun saveShelf(items: List<ShelfItem>) {
         sp.edit().putString("shelf", ShelfItem.listToJson(items)).apply()
+        notifyShelfChanged()
     }
 
     fun inShelf(book: Book): Boolean =
@@ -94,6 +107,7 @@ class Store(context: Context) {
         if (idx >= 0) list[idx] = rec else list.add(0, rec)
         val sorted = list.sortedByDescending { it.lastReadAt }.take(60)
         sp.edit().putString("records", ReadingRecord.listToJson(sorted)).apply()
+        notifyShelfChanged()
     }
 
     fun saveBookPage(bookUrl: String, chapterIndex: Int, page: Int) {
@@ -115,11 +129,8 @@ class Store(context: Context) {
     fun removeRecord(book: Book) {
         val list = records().filterNot { it.book.url == book.url && it.book.sourceId == book.sourceId }
         sp.edit().putString("records", ReadingRecord.listToJson(list)).apply()
+        notifyShelfChanged()
     }
-
-    /** 漫画记忆的版本号：改动后让界面自动刷新 */
-    var comicTick by mutableIntStateOf(0)
-        private set
 
     // ── 漫画书架 ──
     fun comicShelf(): List<Comic> {
@@ -134,6 +145,7 @@ class Store(context: Context) {
         val arr = JSONArray()
         items.filter { it.sourceId != "jm" }.forEach { arr.put(it.toJson()) }
         sp.edit().putString("comic_shelf_v1", arr.toString()).apply()
+        notifyShelfChanged()
     }
 
     fun inComicShelf(comic: Comic): Boolean =
@@ -232,7 +244,7 @@ class Store(context: Context) {
         if (idx >= 0) list[idx] = rec else list.add(0, rec)
         val sorted = list.sortedByDescending { it.lastReadAt }.take(40)
         sp.edit().putString("comic_records", ComicRecord.listToJson(sorted)).apply()
-        comicTick++
+        notifyShelfChanged()
     }
 
     // ── 章节目录缓存（避免每次进详情都重新抓） ──

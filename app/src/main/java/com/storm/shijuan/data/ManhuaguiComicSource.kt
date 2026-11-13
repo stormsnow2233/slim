@@ -15,7 +15,7 @@ class ManhuaguiComicSource : ComicSource {
     private val base: String = "https://m.manhuagui.com"
     private val imageServers = listOf("https://i.hamreus.com", "https://cf.hamreus.com")
 
-    private fun fetch(url: String, referer: String = "$base/"): Net.Resp {
+    private fun fetch(url: String, referer: String = "$base/", fast: Boolean = false): Net.Resp {
         val fullUrl = if (url.startsWith("http")) url else "$base$url"
         return Net.get(
             fullUrl,
@@ -25,18 +25,19 @@ class ManhuaguiComicSource : ComicSource {
                 "Accept-Language" to "zh-CN,zh;q=0.9,en;q=0.8",
             ),
             useCache = true,
+            fast = fast,
         )
     }
 
     override fun home(): List<Comic> {
-        val r = fetch("/update/")
+        val r = fetch("/update/", fast = true)
         if (!r.ok) return emptyList()
         return parseComics(r.body)
     }
 
     override fun search(keyword: String): List<Comic> {
         val kw = URLEncoder.encode(keyword, "UTF-8")
-        val r = fetch("/s/$kw.html")
+        val r = fetch("/s/$kw.html", fast = true)
         if (!r.ok) {
             throw IllegalStateException(Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })))
         }

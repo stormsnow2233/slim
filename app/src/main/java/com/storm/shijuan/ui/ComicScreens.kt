@@ -105,6 +105,7 @@ fun ComicScreen(
     var error by state::error
     var tick by state::tick
     var loading by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     val records = remember(tick, store.comicTick, offline) {
         val all = store.comicRecords().filter { it.comic.sourceId != "jm" }
@@ -177,20 +178,36 @@ fun ComicScreen(
         loading = false
     }
 
-    // 搜索触发：用 searchToken 驱动
+    // 搜索触发：用 searchToken 驱动（支持毫秒级流式响应，谁快谁先上）
     LaunchedEffect(searchToken) {
         val kw = query.trim()
         if (searchToken == 0) return@LaunchedEffect
         if (kw.isEmpty()) return@LaunchedEffect
         loading = true
         error = ""
-        hits = withContext(Dispatchers.IO) { ComicRepo.searchAll(kw, ComicRepo.sources.map { it.id }) }
-        list = ComicRepo.merge(hits, kw)
+        hits = emptyList()
+        list = emptyList()
         fromRank = false
+        val allSources = ComicRepo.sources.map { it.id }
+        withContext(Dispatchers.IO) {
+            ComicRepo.searchAll(kw, allSources) { hit ->
+                // 增量流式渲染：任一源出结果立刻呈现在屏幕上，无需等待其它慢源
+                scope.launch(Dispatchers.Main) {
+                    val updatedHits = hits.filterNot { it.sourceId == hit.sourceId } + hit
+                    hits = updatedHits
+                    val merged = ComicRepo.merge(updatedHits, kw)
+                    list = merged
+                    if (merged.isNotEmpty()) {
+                        loading = false
+                        coverToken++
+                    }
+                }
+            }
+        }
+        loading = false
         if (list.isEmpty()) {
             error = if (hits.all { !it.ok }) "几个源都连不上，检查一下网络" else "没搜到「$kw」，换个关键词"
         }
-        loading = false
         coverToken++
     }
 

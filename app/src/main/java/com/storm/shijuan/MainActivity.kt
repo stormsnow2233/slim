@@ -140,6 +140,22 @@ fun ShijuanApp() {
     val uiScope = rememberCoroutineScope()
     var section by remember { mutableStateOf(Section.Shelf) }
 
+    // 状态流驱动：任何书架增删、进度更新、切页路由均触发毫秒级实时刷新
+    LaunchedEffect(store.shelfTick, store.comicTick, route, section) {
+        refreshShelf()
+    }
+
+    val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
+    DisposableEffect(lifecycleOwner) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                refreshShelf()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
     LaunchedEffect(drawerState.isOpen) {
         if (drawerState.isOpen) {
             isJmEnabled = store.isJmEnabled()
