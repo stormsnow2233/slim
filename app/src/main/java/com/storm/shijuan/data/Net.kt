@@ -652,7 +652,11 @@ object Net {
             msg.contains("reset") -> "连接被重置"
             msg.contains("econnaborted") || msg.contains("closed") -> "连接被中断"
             proxyCfg.usable -> "连代理失败（检查代理地址和端口）"
-            else -> name
+            else -> {
+                val m = e.message?.takeIf { it.isNotBlank() && it != name && !it.startsWith("java.lang.") }
+                    ?: e.cause?.message?.takeIf { it.isNotBlank() && !it.startsWith("java.lang.") }
+                m ?: name
+            }
         }
     }
 

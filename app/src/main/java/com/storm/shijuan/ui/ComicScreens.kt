@@ -682,6 +682,7 @@ fun ComicDetailScreen(
     onBack: () -> Unit,
     onRead: (Comic, List<ComicChapter>, Int, Int) -> Unit = { _, _, _, _ -> },
     onShelfChanged: () -> Unit = {},
+    onSearchSimilar: ((String) -> Unit)? = null,
 ) {
     var full by remember(comic.url) { mutableStateOf(comic) }
     var chapters by remember(comic.url) { mutableStateOf<List<ComicChapter>>(emptyList()) }
@@ -939,8 +940,15 @@ fun ComicDetailScreen(
                 item {
                     Column(Modifier.fillMaxWidth().padding(20.dp), horizontalAlignment = Alignment.CenterHorizontally) {
                         Text(error, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        Spacer(Modifier.height(8.dp))
-                        OutlinedButton(onClick = { tick++ }) { Text("重试") }
+                        Spacer(Modifier.height(10.dp))
+                        Row(horizontalArrangement = Arrangement.spacedBy(10.dp)) {
+                            OutlinedButton(onClick = { tick++ }) { Text("重试") }
+                            if (onSearchSimilar != null) {
+                                Button(onClick = { onSearchSimilar(comic.name) }) {
+                                    Text("在其他源搜索")
+                                }
+                            }
+                        }
                     }
                 }
             }

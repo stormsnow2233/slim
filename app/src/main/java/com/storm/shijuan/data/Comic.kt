@@ -257,10 +257,14 @@ class Dm5FamilySource(
         // 关键防护：限定在真正的章节目录容器内解析，坚决不扫页面底部的「相关推荐/热门排行/猜你喜欢」
         // 避免其它推荐漫画的「最新第X话」被误当成当前漫画的话数混入
         val container = Regex(
-            """<div[^>]*class="[^"]*detail-list-2[^"]*"[^>]*>([\s\S]*?)</div>\s*(?:<div class="detail-list-comment"|<div id="comment|<footer)""",
+            """<(?:div|ul)[^>]+(?:class|id)="[^"]*detail-list-select[^"]*"[^>]*>([\s\S]*?)(?:<div class="detail-list-comment"|<div class="detail-fix-bottom"|<div id="comment|<footer)""",
             RegexOption.IGNORE_CASE,
         ).find(body)?.groupValues?.get(1)
-            ?: Regex("""<ul[^>]*id="detail-list-select"[^>]*>([\s\S]*?)</ul>""", RegexOption.IGNORE_CASE)
+            ?: Regex(
+                """<div[^>]*class="[^"]*detail-list-2[^"]*"[^>]*>([\s\S]*?)</div>\s*(?:<div class="detail-list-comment"|<div id="comment|<footer)""",
+                RegexOption.IGNORE_CASE,
+            ).find(body)?.groupValues?.get(1)
+            ?: Regex("""<(?:div|ul)[^>]+(?:id|class)="[^"]*detail-list-select"[^>]*>([\s\S]*?)</(?:div|ul)>""", RegexOption.IGNORE_CASE)
                 .find(body)?.groupValues?.get(1)
             ?: Regex("""<div[^>]*class="[^"]*(?:detail-list-1|detail-list-item)[^"]*"[^>]*>([\s\S]*?)</div>\s*<footer""", RegexOption.IGNORE_CASE)
                 .find(body)?.groupValues?.get(1)

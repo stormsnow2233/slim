@@ -420,6 +420,14 @@ fun ShijuanApp() {
                             onBack = { route = Route.Main },
                             onRead = { c, chs, idx, initPage -> route = Route.ComicRead(c, chs, idx, initPage) },
                             onShelfChanged = { refreshShelf() },
+                            onSearchSimilar = { kw ->
+                                comicSearchState.query = kw
+                                comicSearchState.fromRank = false
+                                comicSearchState.searchToken++
+                                comicSearchState.tab = 0
+                                section = Section.Comic
+                                route = Route.Main
+                            },
                         )
 
                         is Route.ComicRead -> ComicReaderScreen(

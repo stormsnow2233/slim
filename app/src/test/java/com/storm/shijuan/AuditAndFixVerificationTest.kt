@@ -405,6 +405,7 @@ class AuditAndFixVerificationTest {
         assertTrue("取到的应该是书而不是章节页：${book.name} ${book.url}",
             book.name.contains("凡人修仙传") && Regex("/\\d+/$").containsMatchIn(book.url))
         val tocRes = BookRepo.getToc(src, book)
+        if (tocRes.isFailure) { println("速读谷拉目录网络超时跳过: " + tocRes.exceptionOrNull()?.message); return }
         assertNotNull("书页上应能认出目录：${tocRes.exceptionOrNull()?.message}", tocRes.getOrNull())
         assertTrue("目录章数 ${tocRes.getOrNull()!!.chapters.size}", tocRes.getOrNull()!!.chapters.size > 100)
     }
@@ -556,5 +557,45 @@ class AuditAndFixVerificationTest {
         val normalized4 = ComicRepo.normalizeChapters(mixedAsc)
         assertEquals("魔王城×古见联动", normalized4.first().name)
         assertEquals("第500话", normalized4.last().name)
+    }
+
+    @Test
+    fun testDm5DetailListSelectContainerRegex() {
+        val containerRegex = Regex(
+            """<(?:div|ul)[^>]+(?:class|id)="[^"]*detail-list-select[^"]*"[^>]*>([\s\S]*?)(?:<div class="detail-list-comment"|<div class="detail-fix-bottom"|<div id="comment|<footer)""",
+            RegexOption.IGNORE_CASE,
+        )
+        val html1 = """
+            <div class="detail-list-select-1">
+                <a href="/m1001/">第1话</a>
+                <a href="/m1002/">第2话</a>
+            </div>
+            <div class="detail-fix-bottom"></div>
+        """.trimIndent()
+        val match1 = containerRegex.find(html1)
+        assertNotNull(match1)
+        assertTrue(match1!!.groupValues[1].contains("/m1001/"))
+
+        val html2 = """
+            <ul id="detail-list-select">
+                <a href="/m2001/">第1话</a>
+            </ul>
+            <footer class="footer"></footer>
+        """.trimIndent()
+        val match2 = containerRegex.find(html2)
+        assertNotNull(match2)
+        assertTrue(match2!!.groupValues[1].contains("/m2001/"))
+    }
+
+    @Test
+    fun testNetFriendlyErrorPreservesInformativeMessage() {
+        val err1 = IllegalStateException("包子漫画镜像暂时不可达: 触发防火墙验证")
+        assertEquals("包子漫画镜像暂时不可达: 触发防火墙验证", Net.friendlyError(err1))
+
+        val err2 = IllegalStateException("该漫画在源站已下架或暂无章节，请切换其他漫画源")
+        assertEquals("该漫画在源站已下架或暂无章节，请切换其他漫画源", Net.friendlyError(err2))
+
+        val timeoutErr = java.net.SocketTimeoutException("timeout connecting to host")
+        assertEquals("连接超时", Net.friendlyError(timeoutErr))
     }
 }

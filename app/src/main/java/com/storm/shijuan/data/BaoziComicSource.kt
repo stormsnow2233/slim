@@ -14,32 +14,47 @@ class BaoziComicSource : ComicSource {
     override val name: String = "包子漫画"
 
     private val mirrors: List<String> = listOf(
-        "https://www.baozimh.com",
-        "https://cn.baozimh.com",
-        "https://baozimh.org",
         "https://cn.webmota.com",
         "https://www.webmota.com",
+        "https://baozimh.org",
+        "https://cn.baozimh.com",
+        "https://www.baozimh.com",
     )
 
     @Volatile
     private var liveBase: String = mirrors.first()
     private val base: String get() = liveBase
 
+    private fun extractPath(urlOrPath: String): String {
+        val s = urlOrPath.trim()
+        if (s.startsWith("http://") || s.startsWith("https://")) {
+            val schemeEnd = s.indexOf("://")
+            val pathStart = s.indexOf('/', schemeEnd + 3)
+            return if (pathStart >= 0) s.substring(pathStart) else "/"
+        }
+        return if (s.startsWith("/")) s else "/$s"
+    }
+
     private fun fetch(path: String, fast: Boolean = false): Net.Resp {
         val cleanPath = path.replace("&amp;", "&")
+        val relPath = extractPath(cleanPath)
         val order = listOf(liveBase) + mirrors.filter { it != liveBase }
+        var lastErr = ""
         for (b in order) {
-            val url = if (cleanPath.startsWith("http")) cleanPath else "$b$cleanPath"
+            val url = "$b$relPath"
             val r = Net.get(url, referer = "$b/", useCache = true, fast = fast)
             if (r.ok) {
                 if (r.body.contains("Just a moment...") || r.body.contains("cf-browser-verification") || r.body.contains("gk-gatekeeper")) {
+                    lastErr = "触发防火墙验证"
                     continue
                 }
                 liveBase = b
                 return r
+            } else {
+                lastErr = r.error.ifBlank { "HTTP ${r.code}" }
             }
         }
-        return Net.Resp(false, 0, "", "包子漫画网络不通或触发防火墙验证")
+        return Net.Resp(false, 0, "", "包子漫画镜像暂时不可达: ${lastErr.ifBlank { "网络不通或触发验证" }}")
     }
 
     override fun home(): List<Comic> {
@@ -232,7 +247,7 @@ class BaoziComicSource : ComicSource {
         }
         return ComicPages(
             images = cleanImgs,
-            referer = cleanUrl,
+            referer = "$liveBase/",
         )
     }
 
