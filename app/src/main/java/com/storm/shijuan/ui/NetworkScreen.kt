@@ -29,7 +29,7 @@ import kotlinx.coroutines.withContext
 private val OK_GREEN = Color(0xFF4C7A54)
 
 /**
- * 网络设置：官方代理与自定义代理二选一互斥，分流开关，以及站点连通性体检。
+ * 网络设置：官方代理与自定义代理二选一，分流开关，以及站点连通性测试。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -111,7 +111,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("网络", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text(
-                    "官方代理与自定义代理二选一，或全关保持裸连",
+                    "漫画封面或图片打不开时可以开代理，平时看书直连就行",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -157,7 +157,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                             }
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                "内置官方云端高速优选节点（已加密保护 · 智能分流：海外漫画/图片/JM加速，国内小说直连）",
+                                "自带海外节点，漫画图片打不开时开它（国内小说会自动直连）",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -208,13 +208,13 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                         val isVpn = store.isVpnActive()
                         if (isVpn && vpnSplitOn) {
                             Text(
-                                "🟡 检测到本地 VPN 开启 · 智能分流中（自带代理已让路）",
+                                "🟡 检测到手机开了梯子/VPN，自带代理已暂停让路",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.primary,
                             )
                         } else {
                             Text(
-                                "🟢 官方云端优选节点运行中 · 智能分流已生效（海外漫画CDN加速，国内源直连）",
+                                "🟢 自带代理生效中 · 漫画走加速，小说走直连",
                                 fontSize = 11.sp,
                                 color = OK_GREEN,
                             )
@@ -251,7 +251,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                             Spacer(Modifier.height(2.dp))
                             Text(
                                 if (cfg.usable && cfg.enabled) "已开启 · ${if (cfg.socks) "SOCKS5" else "HTTP"}://${cfg.host}:${cfg.port}"
-                                else "支持配置自定义 HTTP / SOCKS5 代理（与官方代理二选一）",
+                                else "平时自己有开 Clash 或梯子可以填这里",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -331,12 +331,12 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                     ) {
-                        Text(if (saved) "已保存，立即生效" else "保存自定义代理配置")
+                        Text(if (saved) "已保存，立即生效" else "保存配置")
                     }
                     if (saved) {
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "改完不用重启，下一次网络请求就走新设置",
+                            "保存后直接生效，不用重启 App",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -361,9 +361,9 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                         Text("⚡", fontSize = 18.sp)
                         Spacer(Modifier.width(10.dp))
                         Column {
-                            Text("当前处于裸连模式（直连无代理）", fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                            Text("当前是直连模式（没走任何代理）", fontWeight = FontWeight.Medium, fontSize = 13.sp)
                             Text(
-                                "两项代理均已关闭，网络请求将全部直连源站。若部分漫画或书源加载缓慢，可随时开启官方代理或配置自己的代理。",
+                                "国内看小说直连最快。如果漫画封面或部分源刷不出来，再打开上面的代理即可。",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                                 lineHeight = 15.sp
@@ -375,52 +375,52 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
 
             Spacer(Modifier.height(12.dp))
 
-            // ── 轻小说文库加速 / CDN 反代 ──
+            // ── 轻小说文库反代 ──
             Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("轻小说文库加速 (Cloudflare / 边缘 CDN)", style = MaterialTheme.typography.titleSmall)
+                    Text("轻小说文库反代", style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "已开箱内置全球边缘 CDN 高速中转节点与全卷持久化缓存。如需覆盖使用自己的私有反代节点，可在此填入自定义 URL。",
+                        "默认走内置加速节点。如果你自己搭了文库反代 Workers，可以填在这里覆盖。",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.height(10.dp))
-                    ProxyField("自定义反代 URL（留空默认走内置节点）", wenku8Proxy, "留空默认启用内置边缘 CDN 加速") {
+                    ProxyField("自定义反代 URL（留空走内置）", wenku8Proxy, "留空默认走内置加速节点") {
                         wenku8Proxy = it.trim()
                         store.setWenku8ProxyUrl(it.trim())
                     }
                     Spacer(Modifier.height(6.dp))
                     if (wenku8Proxy.isNotBlank()) {
-                        Text("已设置自定义加速反代，请求将优先经由此节点拉取", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                        Text("已切换为你填写的私有反代", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                     } else {
-                        Text("🟢 内置边缘 CDN 高速节点已自动启用 · 毫秒级加速", fontSize = 11.sp, color = OK_GREEN)
+                        Text("🟢 默认内置加速生效中", fontSize = 11.sp, color = OK_GREEN)
                     }
                 }
             }
 
             Spacer(Modifier.height(12.dp))
 
-            // ── JMcomic 加速 / CDN 反代 ──
+            // ── JMcomic 反代设置 ──
             Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("JMcomic 加速 (Pages / Worker / 边缘反代)", style = MaterialTheme.typography.titleSmall)
+                    Text("JMcomic 反代设置", style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "已内置高速边缘反代与官方 API 线路自动容灾。如在 Cloudflare Pages / Workers 搭建了专属反代节点，可在此填入自定义 URL。",
+                        "默认走内置线路。如果你在 Cloudflare 搭建了专属反代，填在这里即可。",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.height(10.dp))
-                    ProxyField("自定义反代 URL（留空走内置线路）", jmProxy, "留空默认启用内置高速反代") {
+                    ProxyField("自定义反代 URL（留空走内置）", jmProxy, "留空默认走内置线路") {
                         jmProxy = it.trim()
                         store.setJmProxyUrl(it.trim())
                     }
                     Spacer(Modifier.height(6.dp))
                     if (jmProxy.isNotBlank()) {
-                        Text("已设置自定义加速反代，请求将优先经由此节点拉取", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                        Text("已切换为你填写的专属反代", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                     } else {
-                        Text("🟢 内置边缘反代节点已自动启用 · 毫秒级加速", fontSize = 11.sp, color = OK_GREEN)
+                        Text("🟢 默认内置线路生效中", fontSize = 11.sp, color = OK_GREEN)
                     }
                 }
             }
@@ -434,7 +434,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text("连通性体检", style = MaterialTheme.typography.titleSmall)
                             Text(
-                                "打几个代表站，检测当前网络模式下的站点连通性与时延",
+                                "测一下几个常用站，看看当前网络通不通",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -458,7 +458,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                                         .background(if (ok) OK_GREEN else MaterialTheme.colorScheme.error)
                                 )
                                 Spacer(Modifier.width(8.dp))
-                                Text(name, fontSize = 12.sp, modifier = Modifier.width(88.dp))
+                                Text(name, fontSize = 12.sp, modifier = Modifier.width(96.dp))
                                 Text(
                                     info,
                                     fontSize = 12.sp,
@@ -471,7 +471,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                         if (!testing && checks.any { !it.second }) {
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                "测不通的多半是站点临时网络波动或拦截，不是书源规则坏了。换个源还能用就先用。",
+                                "提示：测不通多半是站点偶尔抽风，只要换别的源能看就不用管。",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -482,7 +482,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
 
             Spacer(Modifier.height(14.dp))
             Text(
-                "提示：官方代理与自定义代理二选一，开启任意一个将自动切换生效；全部关闭则为裸连直连模式。",
+                "提示：官方代理和自己填代理二选一，开了一个会自动关另一个；都关掉就是纯直连。",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

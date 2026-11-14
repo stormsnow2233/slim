@@ -252,8 +252,8 @@ fun SettingsScreen(
             MiuixSectionHeader("网络与存储")
             MiuixCardGroup {
                 MiuixPreferenceItem(
-                    title = "网络代理设置",
-                    subtitle = if (Net.proxy().usable) "代理已启用 · ${Net.proxy().host}:${Net.proxy().port}" else "直连网络 · 支持配置 HTTP/SOCKS 代理与网络超时",
+                    title = "网络设置",
+                    subtitle = if (Net.isOfficialProxyActive()) "官方代理开启中 · 漫画加速，小说直连" else if (Net.proxy().usable) "已设置自定义代理 · ${Net.proxy().host}:${Net.proxy().port}" else "直连模式 · 支持配置官方加速或自定义代理",
                     icon = Icons.Rounded.Wifi,
                     onClick = onOpenNetwork
                 )
