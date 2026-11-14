@@ -9,7 +9,7 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 /** 本地存储：书架、进度、设置、搜索历史、书源开关 */
-class Store(context: Context) {
+class Store(val context: Context) {
 
     private val sp: SharedPreferences =
         context.getSharedPreferences("shijuan", Context.MODE_PRIVATE)
@@ -19,6 +19,7 @@ class Store(context: Context) {
         Wenku8LocalIndex.init(context)
         Wenku8Direct.init(context, this)
         ComicRepo.jmSource.init(this)
+        applyEffectiveProxy()
     }
 
     /** 全局书架/阅读记忆版本号：任何变更自动自增，驱动 UI 毫秒级响应 */
@@ -456,7 +457,76 @@ class Store(context: Context) {
         return cur
     }
 
-    // ── 网络代理 ──
+    // ── 网络代理与分流 ──
+    fun officialProxyEnabled(): Boolean = sp.getBoolean("official_proxy_enabled", false)
+
+    fun setOfficialProxyEnabled(enabled: Boolean) {
+        sp.edit().putBoolean("official_proxy_enabled", enabled).apply()
+        if (enabled) {
+            // 二选一互斥：开启官方代理时，关闭自定义代理
+            val cur = proxy()
+            if (cur.enabled) {
+                sp.edit().putBoolean("proxy_on", false).apply()
+            }
+        }
+        applyEffectiveProxy()
+    }
+
+    fun vpnSplitEnabled(): Boolean = sp.getBoolean("vpn_split_enabled", true)
+
+    fun setVpnSplitEnabled(enabled: Boolean) {
+        sp.edit().putBoolean("vpn_split_enabled", enabled).apply()
+        applyEffectiveProxy()
+    }
+
+    fun isVpnActive(): Boolean = runCatching {
+        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return@runCatching false
+        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
+            val net = cm.activeNetwork ?: return@runCatching false
+            val caps = cm.getNetworkCapabilities(net) ?: return@runCatching false
+            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)
+        } else {
+            @Suppress("DEPRECATION")
+            cm.allNetworks.any { n ->
+                cm.getNetworkCapabilities(n)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true
+            }
+        }
+    }.getOrDefault(false)
+
+    fun applyEffectiveProxy() {
+        val official = officialProxyEnabled()
+        val custom = proxy()
+        val split = vpnSplitEnabled()
+        val vpnActive = isVpnActive()
+
+        when {
+            official -> {
+                if (split && vpnActive) {
+                    // 分流开启且检测到本地 VPN：智能分流，自带代理不生效，由系统梯子代理
+                    Net.setOfficialProxyActive(false)
+                    OfficialVlessProxyServer.stop()
+                    Net.setProxy(Net.ProxyCfg(enabled = false))
+                } else {
+                    // 分流关闭（强制走自带）或未检测到 VPN：生效官方自带优选代理
+                    Net.setOfficialProxyActive(true)
+                    val port = OfficialVlessProxyServer.ensureStarted()
+                    Net.setProxy(Net.ProxyCfg(enabled = true, socks = true, host = "127.0.0.1", port = port))
+                }
+            }
+            custom.enabled -> {
+                Net.setOfficialProxyActive(false)
+                OfficialVlessProxyServer.stop()
+                Net.setProxy(custom)
+            }
+            else -> {
+                // 两个都关：裸连
+                Net.setOfficialProxyActive(false)
+                OfficialVlessProxyServer.stop()
+                Net.setProxy(Net.ProxyCfg(enabled = false))
+            }
+        }
+    }
+
     fun proxy(): Net.ProxyCfg = Net.ProxyCfg(
         enabled = sp.getBoolean("proxy_on", false),
         socks = sp.getBoolean("proxy_socks", false),
@@ -475,7 +545,11 @@ class Store(context: Context) {
             .putString("proxy_user", cfg.user)
             .putString("proxy_pass", cfg.pass)
             .apply()
-        Net.setProxy(cfg.copy(host = cfg.host.trim()))
+        if (cfg.enabled) {
+            // 二选一互斥：开启自己填代理时，关闭官方代理
+            sp.edit().putBoolean("official_proxy_enabled", false).apply()
+        }
+        applyEffectiveProxy()
     }
 
     // ── 阅读设置 ──

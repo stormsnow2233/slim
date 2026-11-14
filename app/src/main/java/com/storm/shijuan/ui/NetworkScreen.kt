@@ -16,8 +16,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
-import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.storm.shijuan.data.Net
@@ -29,12 +29,13 @@ import kotlinx.coroutines.withContext
 private val OK_GREEN = Color(0xFF4C7A54)
 
 /**
- * 网络设置：直连还是走代理，以及一个「现在到底能不能连上」的体检。
- * 国内直连时很多站在 Cloudflare 后面会直接 403，走自己的代理最省事。
+ * 网络设置：官方代理与自定义代理二选一互斥，分流开关，以及站点连通性体检。
  */
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun NetworkScreen(store: Store, onBack: () -> Unit) {
+    var officialProxyOn by remember { mutableStateOf(store.officialProxyEnabled()) }
+    var vpnSplitOn by remember { mutableStateOf(store.vpnSplitEnabled()) }
     var cfg by remember { mutableStateOf(store.proxy()) }
     var host by remember { mutableStateOf(cfg.host) }
     var port by remember { mutableStateOf(if (cfg.port > 0) cfg.port.toString() else "") }
@@ -58,13 +59,17 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
         val c = current()
         store.saveProxy(c)
         cfg = c
+        if (c.enabled) {
+            officialProxyOn = false
+        }
         saved = true
     }
 
     fun runTest() {
         if (testing) return
-        // 先落地当前填的代理，不然测的还是旧配置
-        save()
+        if (cfg.enabled) {
+            save()
+        }
         testing = true
         checks = emptyList()
         scope.launch {
@@ -104,7 +109,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
             Column(Modifier.weight(1f)) {
                 Text("网络", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.Bold)
                 Text(
-                    "国内直连很多站会 403，走自己的代理最省事",
+                    "官方代理与自定义代理二选一，或全关保持裸连",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
@@ -118,37 +123,154 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                 .padding(horizontal = 16.dp)
         ) {
 
-            // ── 代理开关 ──
-            Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+            // ── 官方代理卡片 ──
+            Card(
+                shape = RoundedCornerShape(18.dp),
+                modifier = Modifier.fillMaxWidth(),
+                colors = CardDefaults.cardColors(
+                    containerColor = if (officialProxyOn) MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+                    else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)
+                )
+            ) {
                 Column(Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
-                            Text("走代理", style = MaterialTheme.typography.titleMedium)
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("官方代理", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                if (officialProxyOn) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = OK_GREEN.copy(alpha = 0.15f),
+                                    ) {
+                                        Text(
+                                            "已开启",
+                                            fontSize = 11.sp,
+                                            color = OK_GREEN,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(2.dp))
                             Text(
-                                if (cfg.usable) "已开启 · ${cfg.host}:${cfg.port}"
-                                else "关闭时全部直连",
+                                "内置官方云端高速优选节点（已加密保护，开箱即用）",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
                         }
                         AdaptiveSwitch(
-                            checked = cfg.enabled,
-                            onCheckedChange = {
-                                cfg = cfg.copy(enabled = it)
-                                saved = false
+                            checked = officialProxyOn,
+                            onCheckedChange = { on ->
+                                officialProxyOn = on
+                                store.setOfficialProxyEnabled(on)
+                                if (on) {
+                                    cfg = store.proxy()
+                                }
                             },
                         )
+                    }
+
+                    Spacer(Modifier.height(14.dp))
+                    HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
+                    Spacer(Modifier.height(12.dp))
+
+                    // ── 分流开关 ──
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Column(Modifier.weight(1f)) {
+                            Text("分流开关", style = MaterialTheme.typography.titleSmall, fontWeight = FontWeight.SemiBold)
+                            Spacer(Modifier.height(3.dp))
+                            Text(
+                                "检测到本地VPN开启的话就不使用自带代理，开了的话生效，不开的话就算手机挂着梯子也强制走（管他呢）",
+                                fontSize = 11.sp,
+                                lineHeight = 16.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        Spacer(Modifier.width(12.dp))
+                        AdaptiveSwitch(
+                            checked = vpnSplitOn,
+                            onCheckedChange = { on ->
+                                vpnSplitOn = on
+                                store.setVpnSplitEnabled(on)
+                            },
+                        )
+                    }
+
+                    if (officialProxyOn) {
+                        Spacer(Modifier.height(10.dp))
+                        val isVpn = store.isVpnActive()
+                        if (isVpn && vpnSplitOn) {
+                            Text(
+                                "🟡 检测到本地 VPN 开启 · 智能分流中（自带代理已让路）",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.primary,
+                            )
+                        } else {
+                            Text(
+                                "🟢 官方云端优选节点运行中 · 毫秒级加速已生效",
+                                fontSize = 11.sp,
+                                color = OK_GREEN,
+                            )
+                        }
                     }
                 }
             }
 
             Spacer(Modifier.height(12.dp))
 
-            // ── 代理参数 ──
+            // ── 自己填代理卡片 ──
             Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("代理地址", style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.height(10.dp))
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Column(Modifier.weight(1f)) {
+                            Row(verticalAlignment = Alignment.CenterVertically) {
+                                Text("自己填代理", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                if (cfg.enabled) {
+                                    Spacer(Modifier.width(6.dp))
+                                    Surface(
+                                        shape = RoundedCornerShape(6.dp),
+                                        color = MaterialTheme.colorScheme.primary.copy(alpha = 0.15f),
+                                    ) {
+                                        Text(
+                                            "已开启",
+                                            fontSize = 11.sp,
+                                            color = MaterialTheme.colorScheme.primary,
+                                            modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
+                                            fontWeight = FontWeight.Medium
+                                        )
+                                    }
+                                }
+                            }
+                            Spacer(Modifier.height(2.dp))
+                            Text(
+                                if (cfg.usable && cfg.enabled) "已开启 · ${if (cfg.socks) "SOCKS5" else "HTTP"}://${cfg.host}:${cfg.port}"
+                                else "支持配置自定义 HTTP / SOCKS5 代理（与官方代理二选一）",
+                                fontSize = 12.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        AdaptiveSwitch(
+                            checked = cfg.enabled,
+                            onCheckedChange = { on ->
+                                val newCfg = current().copy(enabled = on)
+                                store.saveProxy(newCfg)
+                                cfg = newCfg
+                                if (on) {
+                                    officialProxyOn = false
+                                }
+                                saved = true
+                            },
+                        )
+                    }
+
+                    Spacer(Modifier.height(12.dp))
+                    Text("代理协议与参数", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(8.dp))
 
                     Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         listOf(false to "HTTP", true to "SOCKS5").forEach { (socks, label) ->
@@ -195,6 +317,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                             onClick = {
                                 cfg = Net.ProxyCfg(enabled = false)
                                 host = ""; port = ""; user = ""; pass = ""; saved = false
+                                store.saveProxy(cfg)
                             },
                             label = { Text("清空", fontSize = 12.sp) },
                         )
@@ -206,15 +329,44 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                         modifier = Modifier.fillMaxWidth(),
                         shape = RoundedCornerShape(12.dp),
                     ) {
-                        Text(if (saved) "已保存，立即生效" else "保存")
+                        Text(if (saved) "已保存，立即生效" else "保存自定义代理配置")
                     }
                     if (saved) {
                         Spacer(Modifier.height(6.dp))
                         Text(
-                            "改完不用重启，下一次搜索就走新设置",
+                            "改完不用重启，下一次网络请求就走新设置",
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
+                    }
+                }
+            }
+
+            // ── 裸连模式提示 ──
+            if (!officialProxyOn && !cfg.enabled) {
+                Spacer(Modifier.height(12.dp))
+                Card(
+                    shape = RoundedCornerShape(16.dp),
+                    modifier = Modifier.fillMaxWidth(),
+                    colors = CardDefaults.cardColors(
+                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+                    )
+                ) {
+                    Row(
+                        modifier = Modifier.padding(14.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Text("⚡", fontSize = 18.sp)
+                        Spacer(Modifier.width(10.dp))
+                        Column {
+                            Text("当前处于裸连模式（直连无代理）", fontWeight = FontWeight.Medium, fontSize = 13.sp)
+                            Text(
+                                "两项代理均已关闭，网络请求将全部直连源站。若部分漫画或书源加载缓慢，可随时开启官方代理或配置自己的代理。",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                lineHeight = 15.sp
+                            )
+                        }
                     }
                 }
             }
@@ -280,7 +432,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                         Column(Modifier.weight(1f)) {
                             Text("连通性体检", style = MaterialTheme.typography.titleSmall)
                             Text(
-                                "打几个代表站，看是网络问题还是书源问题",
+                                "打几个代表站，检测当前网络模式下的站点连通性与时延",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -317,7 +469,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                         if (!testing && checks.any { !it.second }) {
                             Spacer(Modifier.height(8.dp))
                             Text(
-                                "测不通的多半是网络或站点拦截，不是书源规则坏了。换个源还能用就先用。",
+                                "测不通的多半是站点临时网络波动或拦截，不是书源规则坏了。换个源还能用就先用。",
                                 fontSize = 11.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -328,7 +480,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
 
             Spacer(Modifier.height(14.dp))
             Text(
-                "提示：分流代理里把「国内站」也走代理，比直连稳。只代理国外的话，国内这些站照样吃 403。",
+                "提示：官方代理与自定义代理二选一，开启任意一个将自动切换生效；全部关闭则为裸连直连模式。",
                 fontSize = 11.sp,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

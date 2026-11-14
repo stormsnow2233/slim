@@ -162,6 +162,18 @@ object Net {
     @Volatile private var fastClient: OkHttpClient = buildFastClient(ProxyCfg())
     @Volatile private var slowClient: OkHttpClient = buildSlowClient(ProxyCfg())
 
+    @Volatile private var isOfficialProxyActive: Boolean = false
+
+    fun isOfficialProxyActive(): Boolean = isOfficialProxyActive
+
+    fun setOfficialProxyActive(active: Boolean) {
+        if (isOfficialProxyActive == active) return
+        isOfficialProxyActive = active
+        pageCache.clear()
+        bestBase.clear()
+        com.storm.shijuan.ui.ComicImages.invalidate()
+    }
+
     /** 改了代理立刻换新连接，不用重启 App */
     fun setProxy(cfg: ProxyCfg) {
         if (cfg == proxyCfg) return
