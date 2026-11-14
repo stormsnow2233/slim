@@ -21,6 +21,23 @@ class BaoziComicSource : ComicSource {
         "https://www.baozimh.com",
     )
 
+    private val appHosts: List<String> = listOf(
+        "appgb-vdkr.baozimh.com",
+        "appgb1-vdkr.baozimh.com",
+        "appgb2-vdkr.baozimh.com",
+        "app1-vdkr.baozimh.com",
+        "app2-vdkr.baozimh.com",
+    )
+
+    private val appHeaders: Map<String, String> = mapOf(
+        "User-Agent" to "baozimh_android/1.0.31/gb/adset",
+        "Referer" to "https://app.baozimh.com/",
+        "app-id" to "cn.sts.xiaoyun.ordermeals",
+        "app-version" to "1.0.31",
+        "device-code" to "2c712c6ba4e95a9f4157f94e1794a86c",
+        "device-id" to "BE2A.250530.026.F3",
+    )
+
     @Volatile
     private var liveBase: String = mirrors.first()
     private val base: String get() = liveBase
@@ -246,36 +263,164 @@ class BaoziComicSource : ComicSource {
     }
 
     override fun pages(comic: Comic, chapter: ComicChapter): ComicPages {
-        val cleanUrl = normalizeChapterPath(chapter.url)
-        val r = fetch(cleanUrl)
-        if (!r.ok) {
-            throw IllegalStateException(Net.friendlyError(IllegalStateException(r.error.ifBlank { "HTTP ${r.code}" })))
-        }
-        val s = r.body
+        val cleanPath = normalizeChapterPath(chapter.url)
+        val comicSlug = Regex("""/comic/chapter/([^/]+)/""").find(cleanPath)?.groupValues?.get(1)
+            ?: Regex("""/comic/([^/?#]+)""").find(comic.url)?.groupValues?.get(1).orEmpty()
+
         val imgs = mutableListOf<String>()
 
-        // 提取 amp-img 或 img src，滤掉静态图标
-        val imgRegex = Regex("""<(?:amp-img|img)[^>]+(?:src|data-src)="([^"]+)"[^>]*>""", RegexOption.IGNORE_CASE)
-        imgRegex.findAll(s).forEach { m ->
-            val src = m.groupValues[1]
-            if ((src.contains("scomic") || src.contains("comic") || src.contains(".bzcdn.net")) &&
-                !src.contains("favicon") && !src.contains("apple-icon") && !src.contains("logo")
-            ) {
-                imgs.add(src)
+        // 策略 1: 走 Baozi 官方 App bypass 接口（最新章及单话漫画必备，突破防爬与 1x1 假图）
+        for (host in appHosts) {
+            val appUrl = "https://$host/baozimhapp$cleanPath"
+            val r = Net.get(appUrl, referer = "https://app.baozimh.com/", headers = appHeaders, useCache = true, fast = true)
+            if (r.ok && !r.body.contains("cf-browser-verification")) {
+                val pageImgs = parseAppImages(r.body, comicSlug)
+                if (pageImgs.isNotEmpty()) {
+                    imgs.addAll(pageImgs)
+                    // 检查是否有后续分页（如“点击进入下一页”）
+                    var nextHref = extractNextSubpage(r.body)
+                    var subLoops = 0
+                    while (!nextHref.isNullOrBlank() && subLoops < 15) {
+                        subLoops++
+                        val nextClean = normalizeChapterPath(nextHref)
+                        val nextUrl = "https://$host/baozimhapp$nextClean"
+                        val nextResp = Net.get(nextUrl, referer = "https://app.baozimh.com/", headers = appHeaders, useCache = true, fast = true)
+                        if (nextResp.ok) {
+                            val subImgs = parseAppImages(nextResp.body, comicSlug)
+                            if (subImgs.isNotEmpty()) {
+                                imgs.addAll(subImgs)
+                            }
+                            nextHref = extractNextSubpage(nextResp.body)
+                        } else {
+                            break
+                        }
+                    }
+                    if (imgs.isNotEmpty()) break
+                }
+            }
+        }
+
+        // 策略 2: 降级回退至网页镜像抓取
+        if (imgs.isEmpty()) {
+            val r = fetch(cleanPath)
+            if (r.ok) {
+                imgs.addAll(parseWebImages(r.body, comicSlug))
+                var nextHref = extractNextSubpage(r.body)
+                var subLoops = 0
+                while (!nextHref.isNullOrBlank() && subLoops < 15) {
+                    subLoops++
+                    val nextClean = normalizeChapterPath(nextHref)
+                    val nextResp = fetch(nextClean)
+                    if (nextResp.ok) {
+                        imgs.addAll(parseWebImages(nextResp.body, comicSlug))
+                        nextHref = extractNextSubpage(nextResp.body)
+                    } else {
+                        break
+                    }
+                }
             }
         }
 
         val cleanImgs = imgs.distinct()
         if (cleanImgs.isEmpty()) {
-            throw IllegalStateException("该章节暂无可用图片")
+            throw IllegalStateException("该章节暂无可用图片或已被下架")
         }
         return ComicPages(
             images = cleanImgs,
-            referer = "$liveBase/",
+            headers = headers(),
+            referer = "https://www.baozimh.com/",
         )
     }
 
-    override fun headers(): Map<String, String> = mapOf("Referer" to "$base/")
+    private fun parseAppImages(html: String, comicSlug: String): List<String> {
+        val list = mutableListOf<String>()
+        val regex = Regex("""data-src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+        regex.findAll(html).forEach { m ->
+            val src = m.groupValues[1]
+            if (isValidComicImage(src, comicSlug)) {
+                list.add(normalizeImageUrl(src))
+            }
+        }
+        if (list.isEmpty()) {
+            val srcRegex = Regex("""<img[^>]+src=["']([^"']+)["']""", RegexOption.IGNORE_CASE)
+            srcRegex.findAll(html).forEach { m ->
+                val src = m.groupValues[1]
+                if (isValidComicImage(src, comicSlug)) {
+                    list.add(normalizeImageUrl(src))
+                }
+            }
+        }
+        return list.distinct()
+    }
+
+    private fun parseWebImages(html: String, comicSlug: String): List<String> {
+        val list = mutableListOf<String>()
+        // 1. amp-state json 数据块
+        val ampStateRegex = Regex("""<amp-state[^>]*id="chapter[^"]*Src"[^>]*>[\s\S]*?<script[^>]*type="application/json"[^>]*>([\s\S]*?)</script>[\s\S]*?</amp-state>""", RegexOption.IGNORE_CASE)
+        ampStateRegex.findAll(html).forEach { m ->
+            val jsonStr = m.groupValues[1].trim()
+            runCatching {
+                val json = JSONObject(jsonStr)
+                val url = json.optString("url")
+                if (isValidComicImage(url, comicSlug)) {
+                    list.add(normalizeImageUrl(url))
+                }
+            }
+        }
+        // 2. amp-img 或 img src/data-src
+        val imgRegex = Regex("""<(?:amp-img|img)[^>]+(?:src|data-src)="([^"]+)"[^>]*>""", RegexOption.IGNORE_CASE)
+        imgRegex.findAll(html).forEach { m ->
+            val tag = m.value
+            if (tag.contains("""width="1"""") && tag.contains("""height="1"""")) return@forEach
+            val src = m.groupValues[1]
+            if (isValidComicImage(src, comicSlug)) {
+                list.add(normalizeImageUrl(src))
+            }
+        }
+        return list.distinct()
+    }
+
+    private fun isValidComicImage(src: String, comicSlug: String): Boolean {
+        if (src.isBlank()) return false
+        val lower = src.lowercase()
+        if (lower.contains("favicon") || lower.contains("apple-icon") || lower.contains("logo") ||
+            lower.contains("/cover/") || lower.contains("pixel.gif") || lower.contains("loading.gif") ||
+            lower.contains("default_cover")
+        ) return false
+
+        val isMangaPath = lower.contains("/scomic/") || lower.contains("/comic/") ||
+                lower.contains(".baozicdn.com") || lower.contains(".bzcdn.net")
+        if (!isMangaPath) return false
+
+        // 防爬钓鱼假图过滤：包子漫画对被锁章节会注入其它作品的 1.jpg（例如 meishaonianbangjiashijian）
+        if (comicSlug.isNotBlank() && lower.contains("meishaonianbangjiashijian") && !comicSlug.contains("meishaonian")) {
+            return false
+        }
+        return true
+    }
+
+    private fun normalizeImageUrl(url: String): String {
+        var clean = url.trim().replace("&amp;", "&")
+        if (clean.startsWith("//")) clean = "https:$clean"
+        if (clean.contains(".bzcdn.net")) {
+            clean = clean.replace(".bzcdn.net", ".baozicdn.com")
+        }
+        return clean
+    }
+
+    private fun extractNextSubpage(html: String): String? {
+        val nextRegex = Regex("""<a[^>]+href=["']([^"']+)["'][^>]*>(?:[\s\S]*?)(?:点击进入下一页|點擊進入下一頁)""", RegexOption.IGNORE_CASE)
+        return nextRegex.find(html)?.groupValues?.get(1)
+    }
+
+    override fun headers(): Map<String, String> = mapOf(
+        "User-Agent" to "baozimh_android/1.0.31/gb/adset",
+        "Referer" to "https://www.baozimh.com/",
+        "app-id" to "cn.sts.xiaoyun.ordermeals",
+        "app-version" to "1.0.31",
+        "device-code" to "2c712c6ba4e95a9f4157f94e1794a86c",
+        "device-id" to "BE2A.250530.026.F3",
+    )
 
     private fun stripHtml(s: String): String =
         s.replace(Regex("""<[^>]+>"""), "").replace("&nbsp;", " ")

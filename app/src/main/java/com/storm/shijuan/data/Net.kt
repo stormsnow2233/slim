@@ -572,7 +572,12 @@ object Net {
             }
 
             call.execute().use { r ->
-                val bytes = r.body?.bytes() ?: ByteArray(0)
+                val rawBytes = r.body?.bytes() ?: ByteArray(0)
+                val bytes = if (rawBytes.size >= 2 && rawBytes[0] == 0x1f.toByte() && rawBytes[1] == 0x8b.toByte()) {
+                    runCatching {
+                        java.util.zip.GZIPInputStream(java.io.ByteArrayInputStream(rawBytes)).use { it.readBytes() }
+                    }.getOrDefault(rawBytes)
+                } else rawBytes
                 val text = decode(bytes, charset, r.header("Content-Type"))
                 val finalUrl = r.request.url.toString()
                 if (!r.isSuccessful) {

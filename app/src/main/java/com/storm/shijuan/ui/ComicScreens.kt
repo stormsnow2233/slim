@@ -1280,23 +1280,6 @@ fun ComicReaderScreen(
                         headers = activeHeaders,
                     )
                 }
-                // 页码
-                if (chrome && images.isNotEmpty()) {
-                    Box(
-                        Modifier
-                            .align(Alignment.BottomCenter)
-                            .navigationBarsPadding()
-                            .padding(bottom = 92.dp)
-                            .background(Color(0x99000000), RoundedCornerShape(20.dp))
-                            .padding(horizontal = 12.dp, vertical = 4.dp)
-                    ) {
-                        Text(
-                            "${pagerState.currentPage + 1} / ${images.size}",
-                            fontSize = 11.sp,
-                            color = Color.White,
-                        )
-                    }
-                }
             }
 
             else -> LazyColumn(
@@ -1322,15 +1305,15 @@ fun ComicReaderScreen(
             }
         }
 
-        // 沉浸式阅读底部常驻进度指示（页码与细进度条，无控制条时也一眼可知阅读进度）
-        if (images.isNotEmpty() && !loading) {
+        // 沉浸式阅读底部常驻进度指示（页码与细进度条，无控制条时也一眼可知阅读进度；唤出控制条时隐藏，避免与底栏滑块叠影）
+        if (!chrome && images.isNotEmpty() && !loading) {
             val curPage = if (mode == "page") pagerState.currentPage else listState.firstVisibleItemIndex
             val progress = ((curPage + 1).toFloat() / images.size.toFloat()).coerceIn(0f, 1f)
             Box(
                 Modifier
                     .align(Alignment.BottomCenter)
                     .navigationBarsPadding()
-                    .padding(bottom = if (chrome) 124.dp else 14.dp)
+                    .padding(bottom = 14.dp)
                     .background(Color(0xB3000000), RoundedCornerShape(16.dp))
                     .padding(horizontal = 12.dp, vertical = 4.dp),
                 contentAlignment = Alignment.Center,

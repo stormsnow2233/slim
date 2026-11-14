@@ -100,4 +100,30 @@ class ComicCacheAndWenku8Test {
         val doneTask = task.copy(state = STATE_DONE, doneChapters = 2)
         assertEquals(1.0f, doneTask.percent, 0.01f)
     }
+
+    @Test
+    fun testBaoziComicPagesParseAndFilter() {
+        val baozi = ComicRepo.byIdOrNull("baozimh") as? com.storm.shijuan.data.BaoziComicSource
+        assertNotNull("BaoziComicSource 应存在", baozi)
+
+        val headers = baozi!!.headers()
+        assertTrue("Headers 应包含 app-id", headers.containsKey("app-id"))
+        assertEquals("baozimh_android/1.0.31/gb/adset", headers["User-Agent"])
+
+        val testComic = Comic(
+            name = "由里到外被欺负了个遍",
+            url = "https://cn.webmota.com/comic/youlidaowaibeiqifuliaogebian-xiaolongkotatu",
+            sourceId = "baozimh",
+        )
+        val chapter = ComicChapter(
+            name = "第01话",
+            url = "https://cn.webmota.com/comic/chapter/youlidaowaibeiqifuliaogebian-xiaolongkotatu/0_0.html",
+            index = 0,
+            sourceId = "baozimh",
+        )
+        val result = baozi.pages(testComic, chapter)
+        assertTrue("章节图片数应大于 1", result.images.size >= 2)
+        assertTrue("图片域名应为 baozicdn.com", result.images.all { it.contains("baozicdn.com") })
+        assertTrue("不应包含被钓鱼替换的他作封面", result.images.none { it.contains("meishaonianbangjiashijian") })
+    }
 }
