@@ -1,7 +1,11 @@
 package com.storm.shijuan.ui
 
+import androidx.activity.compose.BackHandler
+import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.combinedClickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.foundation.layout.*
@@ -11,6 +15,9 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Add
+import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.Delete
+import androidx.compose.material.icons.rounded.Edit
 import android.widget.Toast
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
@@ -24,7 +31,10 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -63,6 +73,10 @@ fun SourcesScreen(
     var showUrlDialog by remember { mutableStateOf(false) }
     var urlText by remember { mutableStateOf("") }
 
+    var isSelectionMode by remember { mutableStateOf(false) }
+    var selectedIds by remember { mutableStateOf<Set<String>>(emptySet()) }
+    var showDeleteConfirmDialog by remember { mutableStateOf(false) }
+
     val fileLauncher = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.OpenDocument()
     ) { uri ->
@@ -80,6 +94,40 @@ fun SourcesScreen(
     val customVersion = Sources.customVersion
     val allSources = remember(customVersion) { Sources.all }
     val customCount = remember(customVersion) { Sources.custom.size }
+    val allCustomIds = remember(customVersion) { Sources.custom.map { it.id }.toSet() }
+
+    BackHandler(enabled = isSelectionMode) {
+        isSelectionMode = false
+        selectedIds = emptySet()
+    }
+
+    if (showDeleteConfirmDialog) {
+        AlertDialog(
+            onDismissRequest = { showDeleteConfirmDialog = false },
+            title = { Text("批量删除自定义书源") },
+            text = { Text("确定要删除选中的 ${selectedIds.size} 个自定义书源吗？删除后无法恢复。") },
+            confirmButton = {
+                Button(
+                    onClick = {
+                        val count = selectedIds.size
+                        CustomSources.removeAll(selectedIds)
+                        showDeleteConfirmDialog = false
+                        isSelectionMode = false
+                        selectedIds = emptySet()
+                        Toast.makeText(context, "已删除 $count 个自定义书源", Toast.LENGTH_SHORT).show()
+                    },
+                    colors = ButtonDefaults.buttonColors(containerColor = MaterialTheme.colorScheme.error)
+                ) {
+                    Text("确认删除", color = MaterialTheme.colorScheme.onError)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { showDeleteConfirmDialog = false }) {
+                    Text("取消")
+                }
+            }
+        )
+    }
 
     val groups = remember(customVersion) {
         val builtin = Sources.ALL.groupBy { it.group }
@@ -108,74 +156,116 @@ fun SourcesScreen(
     }
 
     Column(Modifier.fillMaxSize().statusBarsPadding()) {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (onBack != null) {
-                IconButton(onClick = onBack) {
-                    Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
-                }
-            } else {
-                DrawerButton(onClick = onOpenDrawer)
-            }
-            Spacer(Modifier.width(10.dp))
-            Column(Modifier.weight(1f)) {
-                Text("书源", style = MaterialTheme.typography.headlineLarge)
-                Text(
-                    "已启用 ${enabled.size} / ${allSources.size}",
-                    style = MaterialTheme.typography.bodyMedium,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
-            }
-            FilledTonalButton(
-                onClick = { showImportSheet = true },
+        if (isSelectionMode) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 12.dp, end = 12.dp, top = 14.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
             ) {
-                Icon(Icons.Rounded.FileDownload, null, Modifier.size(16.dp))
-                Spacer(Modifier.width(4.dp))
-                Text("导入")
-            }
-            Spacer(Modifier.width(4.dp))
-            IconButton(onClick = onAddSource) {
-                Icon(
-                    Icons.Rounded.Add,
-                    contentDescription = "添加书源",
-                    tint = MaterialTheme.colorScheme.primary,
-                )
-            }
-            Spacer(Modifier.width(4.dp))
-            FilledTonalButton(
-                onClick = {
-                    if (checking) return@FilledTonalButton
-                    checking = true
-                    scope.launch {
-                        val targets = allSources.filter { it.apiKind != "zlib" }
-                        val got = withContext(Dispatchers.IO) {
-                            coroutineScope {
-                                targets.map { s ->
-                                    async {
-                                        val rep = runCatching { BookRepo.healthDeep(s) }
-                                            .getOrElse { com.storm.shijuan.data.DeepHealthResult(false, "检测异常：${it.message}", com.storm.shijuan.data.SourceStatus.SITE_ERROR) }
-                                        s.id to SourceResult(s.id, s.name, rep.ok, emptyList(), rep.detail, status = rep.status, httpCode = rep.httpCode)
-                                    }
-                                }.awaitAll()
-                            }
+                IconButton(onClick = {
+                    isSelectionMode = false
+                    selectedIds = emptySet()
+                }) {
+                    Icon(Icons.Rounded.Close, contentDescription = "取消选择")
+                }
+                Spacer(Modifier.width(8.dp))
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = if (selectedIds.isEmpty()) "选择要删除的书源" else "已选中 ${selectedIds.size} 项",
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold,
+                    )
+                    Text(
+                        text = "长按或点击勾选自定义书源进行批量删除",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                val isAllSelected = allCustomIds.isNotEmpty() && selectedIds.size == allCustomIds.size
+                TextButton(onClick = {
+                    selectedIds = if (isAllSelected) emptySet() else allCustomIds
+                }) {
+                    Text(if (isAllSelected) "全不选" else "全选")
+                }
+                IconButton(
+                    onClick = {
+                        if (selectedIds.isNotEmpty()) {
+                            showDeleteConfirmDialog = true
                         }
-                        checks = got.toMap()
-                        checking = false
-                    }
-                },
-                enabled = !checking,
-            ) {
-                if (checking) {
-                    CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
-                } else {
-                    Icon(Icons.Rounded.NetworkCheck, null, Modifier.size(17.dp))
+                    },
+                    enabled = selectedIds.isNotEmpty()
+                ) {
+                    Icon(
+                        Icons.Rounded.Delete,
+                        contentDescription = "批量删除",
+                        tint = if (selectedIds.isNotEmpty()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f),
+                    )
                 }
-                Spacer(Modifier.width(6.dp))
-                Text(if (checking) "检测中" else "全部体检")
+            }
+        } else {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(start = 20.dp, end = 20.dp, top = 14.dp, bottom = 8.dp),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                if (onBack != null) {
+                    IconButton(onClick = onBack) {
+                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                    }
+                } else {
+                    DrawerButton(onClick = onOpenDrawer)
+                }
+                Spacer(Modifier.width(10.dp))
+                Column(Modifier.weight(1f)) {
+                    Text("书源", style = MaterialTheme.typography.headlineLarge)
+                    Text(
+                        "已启用 ${enabled.size} / ${allSources.size}",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+                IconButton(onClick = { showImportSheet = true }) {
+                    Icon(
+                        Icons.Rounded.Add,
+                        contentDescription = "添加或导入书源",
+                        tint = MaterialTheme.colorScheme.primary,
+                        modifier = Modifier.size(28.dp),
+                    )
+                }
+                Spacer(Modifier.width(4.dp))
+                FilledTonalButton(
+                    onClick = {
+                        if (checking) return@FilledTonalButton
+                        checking = true
+                        scope.launch {
+                            val targets = allSources.filter { it.apiKind != "zlib" }
+                            val got = withContext(Dispatchers.IO) {
+                                coroutineScope {
+                                    targets.map { s ->
+                                        async {
+                                            val rep = runCatching { BookRepo.healthDeep(s) }
+                                                .getOrElse { com.storm.shijuan.data.DeepHealthResult(false, "检测异常：${it.message}", com.storm.shijuan.data.SourceStatus.SITE_ERROR) }
+                                            s.id to SourceResult(s.id, s.name, rep.ok, emptyList(), rep.detail, status = rep.status, httpCode = rep.httpCode)
+                                        }
+                                    }.awaitAll()
+                                }
+                            }
+                            checks = got.toMap()
+                            checking = false
+                        }
+                    },
+                    enabled = !checking,
+                ) {
+                    if (checking) {
+                        CircularProgressIndicator(Modifier.size(14.dp), strokeWidth = 2.dp)
+                    } else {
+                        Icon(Icons.Rounded.NetworkCheck, null, Modifier.size(17.dp))
+                    }
+                    Spacer(Modifier.width(6.dp))
+                    Text(if (checking) "检测中" else "全部体检")
+                }
             }
         }
 
@@ -196,13 +286,23 @@ fun SourcesScreen(
                     )
                 }
                 items(list, key = { it.id }) { src ->
+                    val isCustom = src.status == "custom"
                     SourceCard(
                         src = src,
                         on = src.id in enabled,
                         check = checks[src.id],
                         onToggle = { onToggle(src.id, it) },
-                        onEdit = if (src.status == "custom") ({ onEditSource(src) }) else null,
+                        onEdit = if (isCustom && !isSelectionMode) ({ onEditSource(src) }) else null,
                         onVerify = { verifyTarget = src },
+                        isSelectionMode = isSelectionMode,
+                        isSelected = src.id in selectedIds,
+                        onSelectToggle = if (isCustom) ({
+                            selectedIds = if (src.id in selectedIds) selectedIds - src.id else selectedIds + src.id
+                        }) else null,
+                        onStartSelection = if (isCustom) ({
+                            isSelectionMode = true
+                            selectedIds = setOf(src.id)
+                        }) else null,
                     )
                 }
             }
@@ -211,7 +311,7 @@ fun SourcesScreen(
                 Text(
                     "提示：标「已实测」的源在当前网络下验证过可用；标「国内直连」的源只对中国大陆网络开放，" +
                         "海外网络会打不开。点「全部体检」可以自己测一遍，哪张卡转圈失败就换别的源。\n" +
-                        "右上角「+」可以自己加源：只填名称和网址也行，认不出来会自动按通用结构识别。",
+                        "右上角「+」支持自制书源与一键导入（本地 JSON、剪贴板及在线订阅）；长按任意自定义书源即可触发多选批量删除。",
                     style = MaterialTheme.typography.labelMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     lineHeight = 18.sp,
@@ -229,14 +329,38 @@ fun SourcesScreen(
                     .padding(horizontal = 24.dp)
                     .padding(bottom = 36.dp)
             ) {
-                Text("导入书源", style = MaterialTheme.typography.titleLarge)
+                Text("添加与导入书源", style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(6.dp))
                 Text(
-                    "支持阅读 3.0、大合集、RSS 订阅及自定义 JSON 书源",
+                    "支持手动自制、阅读 3.0 / JSON 合集文件、剪贴板及在线链接",
                     fontSize = 12.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
                 Spacer(Modifier.height(18.dp))
+
+                Surface(
+                    shape = RoundedCornerShape(12.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.5f),
+                    onClick = {
+                        showImportSheet = false
+                        onAddSource()
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(16.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(Icons.Rounded.Edit, null, tint = MaterialTheme.colorScheme.primary)
+                        Spacer(Modifier.width(14.dp))
+                        Column {
+                            Text("手动新建书源", style = MaterialTheme.typography.titleMedium)
+                            Text("从零自制单本书源，只填名称和网址即可智能识别", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+
+                Spacer(Modifier.height(10.dp))
 
                 Surface(
                     shape = RoundedCornerShape(12.dp),
@@ -251,7 +375,7 @@ fun SourcesScreen(
                         modifier = Modifier.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Rounded.Description, null, tint = MaterialTheme.colorScheme.primary)
+                        Icon(Icons.Rounded.Description, null, tint = MaterialTheme.colorScheme.secondary)
                         Spacer(Modifier.width(14.dp))
                         Column {
                             Text("本地 JSON 文件导入", style = MaterialTheme.typography.titleMedium)
@@ -276,7 +400,7 @@ fun SourcesScreen(
                         modifier = Modifier.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Rounded.ContentPaste, null, tint = MaterialTheme.colorScheme.secondary)
+                        Icon(Icons.Rounded.ContentPaste, null, tint = MaterialTheme.colorScheme.tertiary)
                         Spacer(Modifier.width(14.dp))
                         Column {
                             Text("粘贴 JSON 文本导入", style = MaterialTheme.typography.titleMedium)
@@ -301,11 +425,37 @@ fun SourcesScreen(
                         modifier = Modifier.padding(16.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        Icon(Icons.Rounded.Link, null, tint = MaterialTheme.colorScheme.tertiary)
+                        Icon(Icons.Rounded.Link, null, tint = MaterialTheme.colorScheme.primary)
                         Spacer(Modifier.width(14.dp))
                         Column {
                             Text("网络链接订阅导入", style = MaterialTheme.typography.titleMedium)
                             Text("输入 http:// 或 https:// 网络书源地址在线拉取", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+
+                if (customCount > 0) {
+                    Spacer(Modifier.height(10.dp))
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = MaterialTheme.colorScheme.errorContainer.copy(alpha = 0.25f),
+                        onClick = {
+                            showImportSheet = false
+                            isSelectionMode = true
+                            selectedIds = emptySet()
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(16.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(Icons.Rounded.Delete, null, tint = MaterialTheme.colorScheme.error)
+                            Spacer(Modifier.width(14.dp))
+                            Column {
+                                Text("批量管理自定义书源", style = MaterialTheme.typography.titleMedium, color = MaterialTheme.colorScheme.error)
+                                Text("多选并批量删除已导入的自定义书源（长按书源卡片亦可直接触发）", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                            }
                         }
                     }
                 }
@@ -402,6 +552,7 @@ fun SourcesScreen(
     }
 }
 
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 private fun SourceCard(
     src: Source,
@@ -410,7 +561,14 @@ private fun SourceCard(
     onToggle: (Boolean) -> Unit,
     onEdit: (() -> Unit)? = null,
     onVerify: (() -> Unit)? = null,
+    isSelectionMode: Boolean = false,
+    isSelected: Boolean = false,
+    onSelectToggle: (() -> Unit)? = null,
+    onStartSelection: (() -> Unit)? = null,
 ) {
+    val isCustom = src.status == "custom"
+    val haptic = LocalHapticFeedback.current
+
     val needsVerify = src.id == "wenku8" ||
         check?.status == com.storm.shijuan.data.SourceStatus.ACCESS_RESTRICTED ||
         check?.status == com.storm.shijuan.data.SourceStatus.NEEDS_LOGIN ||
@@ -418,16 +576,62 @@ private fun SourceCard(
         check?.error?.contains("安全质询") == true ||
         check?.error?.contains("登录") == true
 
+    val cardModifier = if (isSelectionMode) {
+        if (isCustom) {
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .clickable { onSelectToggle?.invoke() }
+        } else {
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+        }
+    } else {
+        if (isCustom) {
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+                .combinedClickable(
+                    onClick = { /* 正常点击保持卡片内控件响应 */ },
+                    onLongClick = {
+                        haptic.performHapticFeedback(HapticFeedbackType.LongPress)
+                        onStartSelection?.invoke()
+                    }
+                )
+        } else {
+            Modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(14.dp))
+        }
+    }
+
+    val cardBg = when {
+        isSelectionMode && isCustom && isSelected -> MaterialTheme.colorScheme.primaryContainer.copy(alpha = 0.35f)
+        isSelectionMode && !isCustom -> MaterialTheme.colorScheme.surface.copy(alpha = 0.5f)
+        else -> MaterialTheme.colorScheme.surface
+    }
+
+    val border = if (isSelectionMode && isCustom && isSelected) {
+        BorderStroke(1.5.dp, MaterialTheme.colorScheme.primary)
+    } else null
+
     Surface(
         shape = RoundedCornerShape(14.dp),
-        color = MaterialTheme.colorScheme.surface,
+        color = cardBg,
+        border = border,
         tonalElevation = 0.dp,
+        modifier = cardModifier,
     ) {
         Row(
             modifier = Modifier.fillMaxWidth().padding(start = 14.dp, end = 8.dp, top = 12.dp, bottom = 12.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Column(Modifier.weight(1f)) {
+            Column(
+                Modifier.weight(1f).then(
+                    if (isSelectionMode && !isCustom) Modifier.alpha(0.38f) else Modifier
+                )
+            ) {
                 Row(verticalAlignment = Alignment.CenterVertically) {
                     Text(src.name, style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.width(8.dp))
@@ -513,25 +717,37 @@ private fun SourceCard(
                     }
                 }
             }
-            if (needsVerify && onVerify != null) {
-                val isLogin = check?.status == com.storm.shijuan.data.SourceStatus.NEEDS_LOGIN || check?.error?.contains("登录") == true
-                OutlinedButton(
-                    onClick = onVerify,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                    modifier = Modifier.height(32.dp),
-                    shape = RoundedCornerShape(8.dp),
-                ) {
-                    Text(if (isLogin) "网页登录" else "网页验证", fontSize = 11.sp)
+            if (isSelectionMode) {
+                if (isCustom) {
+                    Checkbox(
+                        checked = isSelected,
+                        onCheckedChange = { onSelectToggle?.invoke() },
+                        colors = CheckboxDefaults.colors(
+                            checkedColor = MaterialTheme.colorScheme.primary
+                        )
+                    )
                 }
-                Spacer(Modifier.width(6.dp))
+            } else {
+                if (needsVerify && onVerify != null) {
+                    val isLogin = check?.status == com.storm.shijuan.data.SourceStatus.NEEDS_LOGIN || check?.error?.contains("登录") == true
+                    OutlinedButton(
+                        onClick = onVerify,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                        modifier = Modifier.height(32.dp),
+                        shape = RoundedCornerShape(8.dp),
+                    ) {
+                        Text(if (isLogin) "网页登录" else "网页验证", fontSize = 11.sp)
+                    }
+                    Spacer(Modifier.width(6.dp))
+                }
+                if (onEdit != null) {
+                    TextButton(
+                        onClick = onEdit,
+                        contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
+                    ) { Text("编辑", fontSize = 12.sp) }
+                }
+                AdaptiveSwitch(checked = on, onCheckedChange = onToggle)
             }
-            if (onEdit != null) {
-                TextButton(
-                    onClick = onEdit,
-                    contentPadding = PaddingValues(horizontal = 8.dp, vertical = 0.dp),
-                ) { Text("编辑", fontSize = 12.sp) }
-            }
-            AdaptiveSwitch(checked = on, onCheckedChange = onToggle)
         }
     }
 }

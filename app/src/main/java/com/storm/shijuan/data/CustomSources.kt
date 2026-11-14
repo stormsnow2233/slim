@@ -68,6 +68,14 @@ object CustomSources {
         return list
     }
 
+    fun removeAll(ids: Set<String>): List<Source> {
+        if (ids.isEmpty()) return all()
+        val list = all().filterNot { it.id in ids }
+        save(list)
+        ids.forEach { storeRef?.setSourceEnabled(it, false) }
+        return list
+    }
+
     fun newId(base: String): String {
         val host = runCatching { java.net.URI(base).host.orEmpty() }.getOrDefault("")
         val slug = host.ifBlank { base }.replace(Regex("[^a-zA-Z0-9]"), "").take(14)

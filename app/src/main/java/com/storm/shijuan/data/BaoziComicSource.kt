@@ -300,22 +300,34 @@ class BaoziComicSource : ComicSource {
             }
         }
 
-        // 策略 2: 降级回退至网页镜像抓取
+        // 策略 2: 降级回退至网页镜像抓取（轮询所有镜像，避免单一镜像被注入防爬假图或 403）
         if (imgs.isEmpty()) {
-            val r = fetch(cleanPath)
-            if (r.ok) {
-                imgs.addAll(parseWebImages(r.body, comicSlug))
-                var nextHref = extractNextSubpage(r.body)
-                var subLoops = 0
-                while (!nextHref.isNullOrBlank() && subLoops < 15) {
-                    subLoops++
-                    val nextClean = normalizeChapterPath(nextHref)
-                    val nextResp = fetch(nextClean)
-                    if (nextResp.ok) {
-                        imgs.addAll(parseWebImages(nextResp.body, comicSlug))
-                        nextHref = extractNextSubpage(nextResp.body)
-                    } else {
-                        break
+            val order = listOf(liveBase) + mirrors.filter { it != liveBase }
+            for (b in order) {
+                val url = "$b$cleanPath"
+                val r = Net.get(url, referer = "$b/", useCache = true, fast = true)
+                if (r.ok && !r.body.contains("cf-browser-verification") && !r.body.contains("Just a moment...")) {
+                    val pageImgs = parseWebImages(r.body, comicSlug)
+                    if (pageImgs.isNotEmpty()) {
+                        imgs.addAll(pageImgs)
+                        liveBase = b
+                        var nextHref = extractNextSubpage(r.body)
+                        var subLoops = 0
+                        while (!nextHref.isNullOrBlank() && subLoops < 15) {
+                            subLoops++
+                            val nextClean = normalizeChapterPath(nextHref)
+                            val nextResp = Net.get("$b$nextClean", referer = "$b/", useCache = true, fast = true)
+                            if (nextResp.ok) {
+                                val subImgs = parseWebImages(nextResp.body, comicSlug)
+                                if (subImgs.isNotEmpty()) {
+                                    imgs.addAll(subImgs)
+                                }
+                                nextHref = extractNextSubpage(nextResp.body)
+                            } else {
+                                break
+                            }
+                        }
+                        if (imgs.isNotEmpty()) break
                     }
                 }
             }
