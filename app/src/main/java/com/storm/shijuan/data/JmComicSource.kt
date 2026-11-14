@@ -132,6 +132,23 @@ class JmComicSource : ComicSource {
     @Volatile
     private var liveHost = hosts.first()
 
+    private var store: Store? = null
+
+    fun init(st: Store) {
+        store = st
+    }
+
+    private fun candidateHosts(): List<String> {
+        val list = mutableListOf<String>()
+        val custom = store?.jmProxyUrl().orEmpty()
+        if (custom.isNotBlank()) {
+            list.add(custom.trimEnd('/'))
+        }
+        list.add(liveHost)
+        list.addAll(hosts)
+        return list.distinct()
+    }
+
     private val key = "880c64833265ad47a928afcf1b1220f5".toByteArray(Charsets.UTF_8)
     private val token = "1c6fa345eea2e10d5a30880ec2a7e0b3"
     private val tokenParam = "1700000000,2.0.20"
@@ -191,10 +208,17 @@ class JmComicSource : ComicSource {
     }
 
     private fun getApi(path: String): String {
-        val order = listOf(liveHost) + hosts.filter { it != liveHost }
-        for (h in order) {
+        val candidates = candidateHosts()
+        for (h in candidates) {
             val url = if (path.startsWith("http")) path else "$h$path"
-            val resp = Net.get(url, headers = headers(), referer = "$h/", useCache = false, fast = true)
+            val reqHeaders = mapOf(
+                "token" to token,
+                "tokenparam" to tokenParam,
+                "User-Agent" to userAgent,
+                "Referer" to "$h/",
+                "X-JM" to "1",
+            )
+            val resp = Net.get(url, headers = reqHeaders, referer = "$h/", useCache = false, fast = true)
             if (resp.ok && resp.body.isNotBlank()) {
                 val unwrapped = unwrap(resp.body)
                 if (unwrapped.isNotBlank()) {

@@ -96,38 +96,60 @@ object Wenku8Direct {
             urls.add(directUrl(aid, node))
         }
 
-        var lastError: Exception? = null
-        for (url in urls) {
-            Log.i(TAG, "Fetching direct wenku8 package for aid=$aid from $url")
-            val bytes = Net.getBytes(url, referer = "https://www.wenku8.net/")
-            if (bytes == null || bytes.size < 1000) {
-                lastError = Exception("请求失败或返回内容过短: $url")
-                continue
-            }
-
-            val text = Exporter.decodeNovelBytes(bytes)
-            if (text.length < 500 || text.contains("<html", ignoreCase = true) || text.contains("<title>Just a moment", ignoreCase = true)) {
-                lastError = Exception("文库直连未返回合法小说文本: $url")
-                continue
-            }
-
-            val pairs = parseTxt(aid, text)
-            if (pairs.isEmpty()) {
-                lastError = Exception("未能从文库文本中解析出章节列表: $url")
-                continue
-            }
-
-            // 持久化到本地磁盘缓存
-            runCatching {
-                localFile.writeText(text, Charsets.UTF_8)
-            }
-
-            fillCache(aid, pairs)
-            val chapters = pairs.map { it.first }
-            Log.i(TAG, "Successfully unpacked aid=$aid from $url, total chapters: ${chapters.size}")
-            return Result.success(Toc(chapters = chapters))
+        val distinctUrls = urls.distinct()
+        val pool = java.util.concurrent.Executors.newFixedThreadPool(distinctUrls.size.coerceAtMost(6))
+        val ecs = java.util.concurrent.ExecutorCompletionService<Pair<String, ByteArray>?>(pool)
+        val futures = distinctUrls.map { u ->
+            ecs.submit(java.util.concurrent.Callable {
+                Log.i(TAG, "Fetching direct wenku8 package for aid=$aid from $u")
+                val bytes = Net.getBytes(u, referer = "https://www.wenku8.net/")
+                if (bytes != null && bytes.size >= 1000) {
+                    u to bytes
+                } else null
+            })
         }
 
+        var successToc: Toc? = null
+        var lastError: Exception? = null
+
+        try {
+            var completed = 0
+            while (completed < distinctUrls.size) {
+                val future = ecs.take()
+                completed++
+                val res = runCatching { future.get() }.getOrNull()
+                if (res != null) {
+                    val (u, bytes) = res
+                    val text = Exporter.decodeNovelBytes(bytes)
+                    if (text.length >= 500 && !text.contains("<html", ignoreCase = true) && !text.contains("<title>Just a moment", ignoreCase = true)) {
+                        val pairs = parseTxt(aid, text)
+                        if (pairs.isNotEmpty()) {
+                            // 持久化到本地磁盘缓存
+                            runCatching {
+                                localFile.writeText(text, Charsets.UTF_8)
+                            }
+                            fillCache(aid, pairs)
+                            val chapters = pairs.map { it.first }
+                            Log.i(TAG, "Successfully unpacked aid=$aid from $u, total chapters: ${chapters.size}")
+                            successToc = Toc(chapters = chapters)
+                            // 竞速成功，立即中断其他较慢的线程
+                            for (f in futures) runCatching { f.cancel(true) }
+                            break
+                        } else {
+                            lastError = Exception("未能从文库文本中解析出章节列表: $u")
+                        }
+                    } else {
+                        lastError = Exception("文库直连未返回合法小说文本: $u")
+                    }
+                }
+            }
+        } finally {
+            pool.shutdownNow()
+        }
+
+        if (successToc != null) {
+            return Result.success(successToc)
+        }
         return Result.failure(lastError ?: Exception("轻小说文库所有下载节点均不可用"))
     }
 

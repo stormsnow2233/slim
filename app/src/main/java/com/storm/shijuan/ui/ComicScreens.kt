@@ -125,6 +125,8 @@ fun ComicScreen(
     val cachedHits = remember { store.cachedComicHits() }
     if (hits.isEmpty() && cachedHits.isNotEmpty()) {
         hits = cachedHits
+        list = ComicRepo.merge(cachedHits)
+        fromRank = true
     }
     // 封面补全的触发器：列表先出来，封面随后一批批填上
     var coverToken by remember { mutableStateOf(0) }
@@ -134,17 +136,15 @@ fun ComicScreen(
         if (query.isNotBlank()) return@LaunchedEffect
         if (hits.isEmpty()) loading = true
         error = ""
-        val activeSources = ComicRepo.sources.filterNot { ComicRepo.isBlacklisted(it.id) }
-            .ifEmpty { ComicRepo.sources }
+        val activeSources = ComicRepo.sources
         coroutineScope {
             activeSources.forEach { src ->
                 launch(Dispatchers.IO) {
                     val t0 = System.currentTimeMillis()
                     val hit = runCatching {
                         val future = ComicRepo.pool.submit(java.util.concurrent.Callable { src.home() })
-                        runCatching { future.get(5, java.util.concurrent.TimeUnit.SECONDS) }.getOrElse {
+                        runCatching { future.get(15, java.util.concurrent.TimeUnit.SECONDS) }.getOrElse {
                             future.cancel(true)
-                            ComicRepo.markFailed(src.id)
                             emptyList()
                         }
                     }.fold(
@@ -156,7 +156,6 @@ fun ComicScreen(
                             }
                         },
                         onFailure = {
-                            ComicRepo.markFailed(src.id)
                             ComicHit(src.id, src.name, emptyList(), false, System.currentTimeMillis() - t0, it.message ?: "失败")
                         },
                     )

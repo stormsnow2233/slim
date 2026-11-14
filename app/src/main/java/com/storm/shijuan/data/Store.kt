@@ -18,6 +18,7 @@ class Store(context: Context) {
         NovelContentCache.init(context)
         Wenku8LocalIndex.init(context)
         Wenku8Direct.init(context, this)
+        ComicRepo.jmSource.init(this)
     }
 
     /** 全局书架/阅读记忆版本号：任何变更自动自增，驱动 UI 毫秒级响应 */
@@ -579,6 +580,13 @@ class Store(context: Context) {
 
     fun setWenku8ProxyUrl(url: String) {
         sp.edit().putString("wenku8_proxy_url", url.trim()).apply()
+    }
+
+    // ── JMcomic 自定义反代 / Pages / Worker / CDN ──
+    fun jmProxyUrl(): String = sp.getString("jm_proxy_url", "")?.trim().orEmpty()
+
+    fun setJmProxyUrl(url: String) {
+        sp.edit().putString("jm_proxy_url", url.trim()).apply()
     }
 
     // ── 主题风格与深色模式偏好 ──

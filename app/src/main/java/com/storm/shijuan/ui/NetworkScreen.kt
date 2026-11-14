@@ -43,6 +43,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
     var saved by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
     var wenku8Proxy by remember { mutableStateOf(store.wenku8ProxyUrl()) }
+    var jmProxy by remember { mutableStateOf(store.jmProxyUrl()) }
     var checks by remember { mutableStateOf<List<Triple<String, Boolean, String>>>(emptyList()) }
     val scope = rememberCoroutineScope()
 
@@ -240,6 +241,32 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                         Text("已设置自定义加速反代，请求将优先经由此节点拉取", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                     } else {
                         Text("🟢 内置边缘 CDN 高速节点已自动启用 · 毫秒级加速", fontSize = 11.sp, color = OK_GREEN)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // ── JMcomic 加速 / CDN 反代 ──
+            Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("JMcomic 加速 (Pages / Worker / 边缘反代)", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "已内置高速边缘反代与官方 API 线路自动容灾。如在 Cloudflare Pages / Workers 搭建了专属反代节点，可在此填入自定义 URL。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    ProxyField("自定义反代 URL（留空走内置线路）", jmProxy, "留空默认启用内置高速反代") {
+                        jmProxy = it.trim()
+                        store.setJmProxyUrl(it.trim())
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    if (jmProxy.isNotBlank()) {
+                        Text("已设置自定义加速反代，请求将优先经由此节点拉取", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                    } else {
+                        Text("🟢 内置边缘反代节点已自动启用 · 毫秒级加速", fontSize = 11.sp, color = OK_GREEN)
                     }
                 }
             }
