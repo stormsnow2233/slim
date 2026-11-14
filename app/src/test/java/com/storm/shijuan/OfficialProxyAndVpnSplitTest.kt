@@ -66,4 +66,26 @@ class OfficialProxyAndVpnSplitTest {
         OfficialVlessProxyServer.stop()
         assertEquals(0, OfficialVlessProxyServer.localPort)
     }
+
+    @Test
+    fun testSmartRoutingHosts() {
+        // 国内纯小说源：走直连，避免被海外机房 GFW 拦截或吃 403 人机质询
+        assertTrue(Net.isDomesticDirectHost("dl.wenku8.com"))
+        assertTrue(Net.isDomesticDirectHost("www.wenku8.net"))
+        assertTrue(Net.isDomesticDirectHost("www.8novel.com"))
+        assertTrue(Net.isDomesticDirectHost("www.biqugese.com"))
+        assertTrue(Net.isDomesticDirectHost("m.biquge.com"))
+        assertTrue(Net.isDomesticDirectHost("m.sfacg.com"))
+        assertTrue(Net.isDomesticDirectHost("book.qidian.com"))
+        assertTrue(Net.isDomesticDirectHost("www.ciweimao.com"))
+
+        // 境外受阻漫画图片 CDN、JMcomic 与国际站点：走官方优选代理加速
+        assertFalse(Net.isDomesticDirectHost("s1.bzcdn.net"))
+        assertFalse(Net.isDomesticDirectHost("cn.webmota.com"))
+        assertFalse(Net.isDomesticDirectHost("i.hamreus.com"))
+        assertFalse(Net.isDomesticDirectHost("18comic.vip"))
+        assertFalse(Net.isDomesticDirectHost("jmcomic.me"))
+        assertFalse(Net.isDomesticDirectHost("github.com"))
+        assertFalse(Net.isDomesticDirectHost("api.github.com"))
+    }
 }

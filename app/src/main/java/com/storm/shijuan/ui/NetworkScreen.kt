@@ -75,6 +75,8 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
         scope.launch {
             val targets = listOf(
                 "轻小说文库" to "https://dl.wenku8.com/down.php?type=utf8&node=1&id=1",
+                "极速漫画 CDN" to "https://s1.bzcdn.net/scomic/yirenzhixia-dongmantang/0/0-a1k5/1.jpg",
+                "漫画人图片" to "https://i.hamreus.com/images/comic/0/1/1.jpg",
                 "漫画柜" to "https://m.manhuagui.com/",
                 "笔趣书阁" to "https://www.biqugese.com/",
                 "无限轻小说" to "https://www.8novel.com/",
@@ -155,7 +157,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                             }
                             Spacer(Modifier.height(2.dp))
                             Text(
-                                "内置官方云端高速优选节点（已加密保护，开箱即用）",
+                                "内置官方云端高速优选节点（已加密保护 · 智能分流：海外漫画/图片/JM加速，国内小说直连）",
                                 fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
@@ -212,7 +214,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                             )
                         } else {
                             Text(
-                                "🟢 官方云端优选节点运行中 · 毫秒级加速已生效",
+                                "🟢 官方云端优选节点运行中 · 智能分流已生效（海外漫画CDN加速，国内源直连）",
                                 fontSize = 11.sp,
                                 color = OK_GREEN,
                             )

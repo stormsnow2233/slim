@@ -281,15 +281,15 @@ object OfficialVlessProxyServer {
     }
 
     private fun connectToOptimizedCf(): SSLSocket? {
-        val ips = OfficialProxy.OPTIMIZED_IPS.shuffled()
+        val candidateTargets = (listOf("104.17.64.1", "104.17.0.1", "172.66.0.1") + OfficialProxy.OPTIMIZED_IPS.shuffled()).distinct().take(4) + listOf(OfficialProxy.HOST)
         val sslFactory = HttpsURLConnection.getDefaultSSLSocketFactory()
 
-        for (ip in ips.take(3)) {
+        for (target in candidateTargets) {
             try {
                 val raw = Socket()
                 raw.tcpNoDelay = true
                 raw.soTimeout = 15_000
-                raw.connect(InetSocketAddress(ip, 443), 4_000)
+                raw.connect(InetSocketAddress(target, 443), 4_000)
 
                 val ssl = sslFactory.createSocket(raw, OfficialProxy.HOST, 443, true) as SSLSocket
                 val params = ssl.sslParameters

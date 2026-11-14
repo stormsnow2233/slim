@@ -169,6 +169,9 @@ object Net {
     fun setOfficialProxyActive(active: Boolean) {
         if (isOfficialProxyActive == active) return
         isOfficialProxyActive = active
+        client = buildClient(proxyCfg)
+        fastClient = buildFastClient(proxyCfg)
+        slowClient = buildSlowClient(proxyCfg)
         pageCache.clear()
         bestBase.clear()
         com.storm.shijuan.ui.ComicImages.invalidate()
@@ -187,6 +190,52 @@ object Net {
     }
 
     fun proxy(): ProxyCfg = proxyCfg
+
+    /** 判断该域名是否属于国内纯小说/直连站，免受海外机房 GFW 拦截与 Cloudflare 403 质询 */
+    fun isDomesticDirectHost(host: String): Boolean {
+        val h = host.lowercase()
+        return h.contains("wenku8.") ||
+            h.contains("8novel.") ||
+            h.contains("biquge") ||
+            h.contains("xbiquge") ||
+            h.contains("sfacg.") ||
+            h.contains("ciweimao.") ||
+            h.contains("qidian.") ||
+            h.contains("zongheng.") ||
+            h.contains("faloo.") ||
+            h.contains("17k.com") ||
+            h.contains("jjwxc.") ||
+            h.contains("shuqi.") ||
+            h.contains("readnovel.") ||
+            h.contains("motie.") ||
+            h.contains("hongxiu.") ||
+            h.contains("zhulang.") ||
+            h.contains("kankanwu.") ||
+            h.contains("feixs.") ||
+            h.contains("shucang.") ||
+            h.contains("127.0.0.1") ||
+            h.contains("localhost")
+    }
+
+    private fun createSmartProxySelector(proxyObj: Proxy): java.net.ProxySelector {
+        return object : java.net.ProxySelector() {
+            private val directList = listOf(Proxy.NO_PROXY)
+            private val proxyList = listOf(proxyObj)
+
+            override fun select(uri: java.net.URI?): List<Proxy> {
+                val host = uri?.host ?: return directList
+                return if (isDomesticDirectHost(host)) {
+                    directList
+                } else {
+                    proxyList
+                }
+            }
+
+            override fun connectFailed(uri: java.net.URI?, sa: java.net.SocketAddress?, ioe: java.io.IOException?) {
+                // 忽略连接异常由 OkHttp 自身重试与容灾接管
+            }
+        }
+    }
 
     private fun buildClient(cfg: ProxyCfg): OkHttpClient {
         val b = OkHttpClient.Builder()
@@ -245,15 +294,23 @@ object Net {
     fun applyProxy(b: OkHttpClient.Builder, cfg: ProxyCfg = proxyCfg) {
         if (cfg.usable) {
             val type = if (cfg.socks) Proxy.Type.SOCKS else Proxy.Type.HTTP
-            b.proxy(Proxy(type, InetSocketAddress.createUnresolved(cfg.host, cfg.port)))
-            if (cfg.user.isNotBlank() && !cfg.socks) {
-                val cred = Credentials.basic(cfg.user, cfg.pass)
-                b.proxyAuthenticator(object : Authenticator {
-                    override fun authenticate(route: Route?, response: okhttp3.Response): Request? =
-                        if (response.request.header("Proxy-Authorization") != null) null
-                        else response.request.newBuilder()
-                            .header("Proxy-Authorization", cred).build()
-                })
+            val proxyObj = Proxy(type, InetSocketAddress.createUnresolved(cfg.host, cfg.port))
+            if (isOfficialProxyActive) {
+                // 官方代理采用智能域名分流：
+                // 国内小说站直接直连（毫秒级响应，永不吃海外机房 GFW 拦截与 Cloudflare 403 质询）；
+                // 境外受限漫画图片 CDN (bzcdn.net, hamreus.com)、JMcomic、受阻国外源走官方优选代理！
+                b.proxySelector(createSmartProxySelector(proxyObj))
+            } else {
+                b.proxy(proxyObj)
+                if (cfg.user.isNotBlank() && !cfg.socks) {
+                    val cred = Credentials.basic(cfg.user, cfg.pass)
+                    b.proxyAuthenticator(object : Authenticator {
+                        override fun authenticate(route: Route?, response: okhttp3.Response): Request? =
+                            if (response.request.header("Proxy-Authorization") != null) null
+                            else response.request.newBuilder()
+                                .header("Proxy-Authorization", cred).build()
+                    })
+                }
             }
         }
     }
