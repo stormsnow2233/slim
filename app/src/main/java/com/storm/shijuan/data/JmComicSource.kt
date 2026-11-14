@@ -126,10 +126,8 @@ class JmComicSource : ComicSource {
 
     private val hosts = listOf(
         "https://jm-proxy.us.ci",
-        "https://jm-proxy.storm-snow.workers.dev",
         "https://www.cdnhth.club",
-        "https://www.jmapiproxy1.cc",
-        "https://www.jmapiproxy2.cc"
+        "https://jm-proxy.storm-snow.workers.dev",
     )
     @Volatile
     private var liveHost = hosts.first()
@@ -140,9 +138,9 @@ class JmComicSource : ComicSource {
     private val userAgent = "Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36"
 
     private val fallbackImgHosts = listOf(
-        "https://cdn-msp3.jmapiproxy1.cc",
+        "https://cdn-msp2.jmdanjonproxy.vip",
         "https://cdn-msp.jmdanjonproxy.vip",
-        "https://cdn-msp.jmapiproxy1.cc"
+        "https://cdn-msp3.jmapiproxy1.cc"
     )
     @Volatile
     private var cachedImgHost: String = fallbackImgHosts[0]
