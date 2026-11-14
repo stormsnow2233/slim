@@ -151,7 +151,7 @@ class Dm5FamilySource(
         Regex("""^https?://[^/]+(/.*)$""").find(url)?.groupValues?.get(1) ?: url
 
     /** 搜索结果里补封面的上限：限制并发，避免霸占网络带宽 */
-    private val coverFillLimit = 6
+    private val coverFillLimit = 10
 
     override fun home(): List<Comic> {
         val paths = buildList {
@@ -337,7 +337,7 @@ class Dm5FamilySource(
         val need = list.withIndex().filter { it.value.cover.isBlank() }.take(coverFillLimit)
         if (need.isEmpty()) return list
         val out = list.toMutableList()
-        val pool = Executors.newFixedThreadPool(2)
+        val pool = Executors.newFixedThreadPool(4)
         try {
             val jobs = need.map { (idx, c) -> idx to pool.submit(Callable { c to detail(c) }) }
             for ((idx, f) in jobs) {
@@ -432,8 +432,8 @@ class Dm5FamilySource(
         else -> "$origin/$path"
     }
 
-    private val IMG_SRC = Regex("""<img[^>]+src="([^"]+)"""", RegexOption.IGNORE_CASE)
-    private val HREF_COMIC = Regex("""href="(/(?:manhua-[\w\-]+|\d+bz)/)(?:\?[^"]*)?""")
+    private val IMG_SRC = Regex("""<img[^>]+(?:src|data-src|data-original)="([^"]+)"""", RegexOption.IGNORE_CASE)
+    private val HREF_COMIC = Regex("""href="(/(?:manhua-?[\w\-]+|\d+bz)/)(?:\?[^"]*)?""")
     private val BZ_HREF = Regex("""href="(/[\w\-]+/)"""")
     private val DM5_TITLE = Regex("""manga-list-2-title"[^>]*>\s*<a[^>]*>([^<]+)<""")
     private val BZ_TITLE = Regex("""manga-i-list-title"[^>]*>([^<]+)<""")
@@ -1017,7 +1017,7 @@ object ComicRepo {
             base = "https://www.manhuaren.com",
             searchPath = "/search/?keywords={kw}",
             homePath = "/manhua-new/",
-            altBases = listOf("https://m.manhuaren.com"),
+            altBases = emptyList(),
         ),
         Dm5FamilySource(
             id = "1kkk",

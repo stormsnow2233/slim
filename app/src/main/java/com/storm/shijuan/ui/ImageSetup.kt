@@ -62,6 +62,16 @@ object ComicImages {
                         "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36",
                     )
                 }
+                // 自动补齐特定图床的防盗链 Referer，避免封面和漫画图片 404/403
+                if (orig.header("Referer").isNullOrBlank()) {
+                    val host = orig.url.host.lowercase()
+                    when {
+                        host.contains("cdndm5.com") || host.contains("dm5.com") -> b.header("Referer", "https://m.dm5.com/")
+                        host.contains("manhuaren.com") -> b.header("Referer", "https://www.manhuaren.com/")
+                        host.contains("1kkk.com") -> b.header("Referer", "https://m.1kkk.com/")
+                        host.contains("baozicdn.com") || host.contains("baozimh.com") -> b.header("Referer", "https://www.baozimh.com/")
+                    }
+                }
                 chain.proceed(b.build())
             }
         com.storm.shijuan.data.Net.applyProxy(clientBuilder)

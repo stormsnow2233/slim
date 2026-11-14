@@ -222,7 +222,7 @@ fun ComicScreen(
                 launch(Dispatchers.IO) {
                     val src = ComicRepo.byIdOrNull(h.sourceId) ?: return@launch
                     val future = ComicRepo.pool.submit(java.util.concurrent.Callable { src.fillCovers(h.list) })
-                    val got = runCatching { future.get(5, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull()
+                    val got = runCatching { future.get(15, java.util.concurrent.TimeUnit.SECONDS) }.getOrNull()
                     if (got != null && got.isNotEmpty()) {
                         withContext(Dispatchers.Main) {
                             val updated = h.copy(list = got)

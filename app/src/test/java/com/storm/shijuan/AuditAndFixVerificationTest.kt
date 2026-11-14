@@ -625,4 +625,30 @@ class AuditAndFixVerificationTest {
         assertTrue("古见同学章节应有图片", komiPages.images.isNotEmpty())
         println("Komi pages success: count=${komiPages.images.size}, referer=${komiPages.referer}")
     }
+
+    @Test
+    fun test1kkkAndManhuarenParsing() {
+        val src1kkk = ComicRepo.source("1kkk")
+        val sample1kkkHtml = """
+            <ul>
+              <li>
+                <a href="/manhua39169/?from=%2fmanhua-list%2f">
+                  <img class="manga-list-2-cover-img" src="https://mhfm7tel.cdndm5.com/40/39169/20190709181221_180x240_16.jpg">
+                  <p class="manga-list-2-title"><a>青之芦苇</a></p>
+                  <p class="manga-list-2-tip"><a>最新 第410话</a></p>
+                </a>
+              </li>
+            </ul>
+        """.trimIndent()
+        
+        // Reflection to call parseListPage
+        val m = Dm5FamilySource::class.java.getDeclaredMethod("parseListPage", String::class.java)
+        m.isAccessible = true
+        @Suppress("UNCHECKED_CAST")
+        val parsed = m.invoke(src1kkk, sample1kkkHtml) as List<Comic>
+        assertEquals(1, parsed.size)
+        assertEquals("青之芦苇", parsed[0].name)
+        assertTrue(parsed[0].url.contains("manhua39169"))
+        assertEquals("https://mhfm7tel.cdndm5.com/40/39169/20190709181221_180x240_16.jpg", parsed[0].cover)
+    }
 }
