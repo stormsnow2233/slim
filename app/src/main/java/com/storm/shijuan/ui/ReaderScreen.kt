@@ -578,6 +578,7 @@ fun ReaderScreen(
                                     scope.launch { pagerState?.scrollToPage(p) }
                                 }
                             },
+                            vibrateOnSteps = true,
                             valueRange = 0f..(pageCount - 1).toFloat(),
                             steps = (pageCount - 2).coerceAtLeast(0),
                             modifier = Modifier.weight(1f),

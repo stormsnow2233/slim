@@ -114,11 +114,11 @@ fun ShijuanApp(store: Store) {
     var route by remember { mutableStateOf<Route>(Route.Main) }
     val searchState = remember { SearchState() }
     val comicSearchState = remember { ComicSearchState() }
-    var shelf by remember { mutableStateOf(store.shelf()) }
+    val shelf = remember(store.shelfTick) { store.shelf() }
     var enabled by remember { mutableStateOf(store.enabledSources()) }
-    var records by remember { mutableStateOf(store.records()) }
-    var comicShelf by remember { mutableStateOf(store.comicShelf()) }
-    var comicRecords by remember { mutableStateOf(store.comicRecords()) }
+    val records = remember(store.shelfTick) { store.records() }
+    val comicShelf = remember(store.comicTick) { store.comicShelf() }
+    val comicRecords = remember(store.comicTick) { store.comicRecords() }
     var isJmEnabled by remember { mutableStateOf(store.isJmEnabled()) }
 
     // 离线：书架上只留本地有正文缓存的，最近读的也一样；JM 漫画永不在书架显示
@@ -138,20 +138,12 @@ fun ShijuanApp(store: Store) {
     }
 
     val refreshShelf = {
-        shelf = store.shelf()
-        records = store.records()
-        comicShelf = store.comicShelf()
-        comicRecords = store.comicRecords()
+        store.notifyShelfChanged()
     }
 
     val drawerState = rememberDrawerState(DrawerValue.Closed)
     val uiScope = rememberCoroutineScope()
     var section by remember { mutableStateOf(Section.Shelf) }
-
-    // 状态流驱动：任何书架增删、进度更新、切页路由均触发毫秒级实时刷新
-    LaunchedEffect(store.shelfTick, store.comicTick, route, section) {
-        refreshShelf()
-    }
 
     val lifecycleOwner = androidx.lifecycle.compose.LocalLifecycleOwner.current
     DisposableEffect(lifecycleOwner) {

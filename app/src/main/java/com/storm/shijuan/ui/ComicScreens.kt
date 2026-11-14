@@ -1409,6 +1409,8 @@ fun ComicReaderScreen(
                 // 页面进度条与页码指示
                 if (images.isNotEmpty()) {
                     val curPage = if (mode == "page") pagerState.currentPage else listState.firstVisibleItemIndex
+                    var sliderPos by remember(curPage) { mutableFloatStateOf(curPage.toFloat()) }
+                    val displayPage = (sliderPos.roundToInt() + 1).coerceIn(1, images.size)
                     Row(
                         Modifier
                             .fillMaxWidth()
@@ -1416,16 +1418,16 @@ fun ComicReaderScreen(
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Text(
-                            "${(curPage + 1).coerceAtMost(images.size)} / ${images.size}",
+                            "$displayPage / ${images.size}",
                             fontSize = 12.sp,
                             fontWeight = FontWeight.Medium,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                             modifier = Modifier.width(64.dp),
                         )
-                        var sliderPos by remember(curPage) { mutableFloatStateOf(curPage.toFloat()) }
                         AdaptiveSlider(
                             value = sliderPos,
                             onValueChange = { sliderPos = it },
+                            vibrateOnSteps = true,
                             onValueChangeFinished = {
                                 val target = sliderPos.roundToInt().coerceIn(0, images.size - 1)
                                 targetPage = target

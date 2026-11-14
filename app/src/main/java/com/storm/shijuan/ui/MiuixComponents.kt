@@ -1,5 +1,12 @@
 package com.storm.shijuan.ui
 
+import android.content.Context
+import android.os.Build
+import android.os.VibrationEffect
+import android.os.Vibrator
+import android.os.VibratorManager
+import androidx.compose.ui.platform.LocalContext
+
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
@@ -42,6 +49,31 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import kotlin.math.roundToInt
+
+/**
+ * 触感反馈工具（优先调用系统高精线性马达微轻击 TICK 反馈，双重兼容 Compose 触感）
+ */
+object HapticUtil {
+    fun tick(context: Context) {
+        runCatching {
+            val vibrator = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                val vm = context.getSystemService(Context.VIBRATOR_MANAGER_SERVICE) as? VibratorManager
+                vm?.defaultVibrator
+            } else {
+                @Suppress("DEPRECATION")
+                context.getSystemService(Context.VIBRATOR_SERVICE) as? Vibrator
+            }
+            if (vibrator != null && vibrator.hasVibrator()) {
+                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) {
+                    vibrator.vibrate(VibrationEffect.createPredefined(VibrationEffect.EFFECT_TICK))
+                } else {
+                    @Suppress("DEPRECATION")
+                    vibrator.vibrate(10L)
+                }
+            }
+        }
+    }
+}
 
 /**
  * 经典与 MiuiX 风格自适应 Switch 开关
@@ -351,10 +383,28 @@ fun AdaptiveSlider(
     enabled: Boolean = true,
     valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
     steps: Int = 0,
+    vibrateOnSteps: Boolean = false,
     onValueChangeFinished: (() -> Unit)? = null,
     interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
 ) {
+    val context = LocalContext.current
+    val hapticFeedback = LocalHapticFeedback.current
     val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
+
+    // 追踪滑动经过的离散点位（实现每经过一个刻度/一张图片就清脆震动一次）
+    var lastVibratedStep by remember { mutableIntStateOf(value.roundToInt()) }
+
+    val wrappedOnValueChange: (Float) -> Unit = { newVal ->
+        if (vibrateOnSteps) {
+            val currentStep = newVal.roundToInt()
+            if (currentStep != lastVibratedStep) {
+                lastVibratedStep = currentStep
+                HapticUtil.tick(context)
+                runCatching { hapticFeedback.performHapticFeedback(HapticFeedbackType.TextHandleMove) }
+            }
+        }
+        onValueChange(newVal)
+    }
 
     if (isMiuix) {
         val isPressed by interactionSource.collectIsPressedAsState()
@@ -369,12 +419,15 @@ fun AdaptiveSlider(
 
         Slider(
             value = value,
-            onValueChange = onValueChange,
+            onValueChange = wrappedOnValueChange,
             modifier = modifier,
             enabled = enabled,
             valueRange = valueRange,
             steps = steps,
-            onValueChangeFinished = onValueChangeFinished,
+            onValueChangeFinished = {
+                lastVibratedStep = value.roundToInt()
+                onValueChangeFinished?.invoke()
+            },
             interactionSource = interactionSource,
             colors = SliderDefaults.colors(
                 thumbColor = Color.White,
@@ -407,12 +460,15 @@ fun AdaptiveSlider(
     } else {
         Slider(
             value = value,
-            onValueChange = onValueChange,
+            onValueChange = wrappedOnValueChange,
             modifier = modifier,
             enabled = enabled,
             valueRange = valueRange,
             steps = steps,
-            onValueChangeFinished = onValueChangeFinished,
+            onValueChangeFinished = {
+                lastVibratedStep = value.roundToInt()
+                onValueChangeFinished?.invoke()
+            },
             interactionSource = interactionSource,
             colors = SliderDefaults.colors(
                 thumbColor = MaterialTheme.colorScheme.primary,
@@ -450,6 +506,7 @@ fun MiuixSlider(
     valueRange: ClosedFloatingPointRange<Float>,
     modifier: Modifier = Modifier,
     steps: Int = 0,
+    vibrateOnSteps: Boolean = false,
     onValueChangeFinished: (() -> Unit)? = null,
 ) {
     AdaptiveSlider(
@@ -457,6 +514,7 @@ fun MiuixSlider(
         onValueChange = onValueChange,
         valueRange = valueRange,
         steps = steps,
+        vibrateOnSteps = vibrateOnSteps,
         onValueChangeFinished = onValueChangeFinished,
         modifier = modifier
     )
