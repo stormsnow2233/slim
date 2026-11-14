@@ -5,6 +5,11 @@ import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.setValue
+import java.security.MessageDigest
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.launch
 import org.json.JSONArray
 import org.json.JSONObject
 
@@ -20,6 +25,9 @@ class Store(val context: Context) {
         Wenku8Direct.init(context, this)
         ComicRepo.jmSource.init(this)
         applyEffectiveProxy()
+        CoroutineScope(Dispatchers.IO).launch {
+            cleanupLegacyProgressKeys()
+        }
     }
 
     /** 全局书架/阅读记忆版本号：任何变更自动自增，驱动 UI 毫秒级响应 */
@@ -112,20 +120,126 @@ class Store(val context: Context) {
         notifyShelfChanged()
     }
 
+    data class BookProgress(
+        val chapterIndex: Int = 0,
+        val page: Int = 0,
+        val scrollY: Int = 0,
+    )
+
+    private val progressCache = ConcurrentHashMap<String, BookProgress>()
+
+    /**
+     * 基于 SHA-256 生成每本书专属的唯一 SP 键，彻底避免 hashCode() 碰撞导致两本书同章进度串书
+     */
+    private fun bookProgressKey(bookUrl: String): String {
+        val md = MessageDigest.getInstance("SHA-256")
+        val bytes = md.digest(bookUrl.toByteArray(Charsets.UTF_8))
+        return "bp_" + bytes.joinToString("") { "%02x".format(it) }
+    }
+
+    /**
+     * 读取整本小说的阅读进度（每本书只存一条，只记录当前章的页码与滚动偏移）
+     */
+    @Synchronized
+    fun loadBookProgress(bookUrl: String): BookProgress {
+        if (bookUrl.isBlank()) return BookProgress()
+        progressCache[bookUrl]?.let { return it }
+
+        val raw = sp.getString(bookProgressKey(bookUrl), null)
+        if (!raw.isNullOrBlank()) {
+            val parts = raw.split(',')
+            if (parts.size >= 3) {
+                val ch = parts[0].toIntOrNull() ?: 0
+                val p = parts[1].toIntOrNull() ?: 0
+                val s = parts[2].toIntOrNull() ?: 0
+                val prog = BookProgress(ch, p, s)
+                progressCache[bookUrl] = prog
+                return prog
+            }
+        }
+
+        // 兼容老版本：若尚无每本书一条的 bp_ 记录，尝试从 reading records / shelf / 旧 SP 键迁移
+        val legacyRec = records().firstOrNull { it.book.url == bookUrl }
+            ?: shelf().firstOrNull { it.book.url == bookUrl }?.let {
+                ReadingRecord(it.book, it.chapterIndex, it.chapterName, it.progress, it.pageIndex)
+            }
+        val ch = legacyRec?.chapterIndex ?: 0
+        val p = sp.getInt("p_${bookUrl.hashCode()}_$ch", legacyRec?.pageIndex ?: 0)
+        val s = sp.getInt("s_${bookUrl.hashCode()}_$ch", 0)
+        val migrated = BookProgress(ch, p, s)
+        if (legacyRec != null || p > 0 || s > 0) {
+            saveBookProgress(bookUrl, migrated)
+        } else {
+            progressCache[bookUrl] = migrated
+        }
+        return migrated
+    }
+
+    /**
+     * 持久化当前书进度（每本书只保留一条记录，只存当前章）
+     */
+    @Synchronized
+    fun saveBookProgress(bookUrl: String, progress: BookProgress) {
+        if (bookUrl.isBlank()) return
+        progressCache[bookUrl] = progress
+        sp.edit().putString(
+            bookProgressKey(bookUrl),
+            "${progress.chapterIndex},${progress.page},${progress.scrollY}"
+        ).apply()
+    }
+
+    @Synchronized
     fun saveBookPage(bookUrl: String, chapterIndex: Int, page: Int) {
-        sp.edit().putInt("p_${bookUrl.hashCode()}_$chapterIndex", page).apply()
+        val cur = loadBookProgress(bookUrl)
+        val updated = if (cur.chapterIndex == chapterIndex) {
+            cur.copy(page = page)
+        } else {
+            BookProgress(chapterIndex = chapterIndex, page = page, scrollY = 0)
+        }
+        saveBookProgress(bookUrl, updated)
     }
 
+    @Synchronized
     fun loadBookPage(bookUrl: String, chapterIndex: Int): Int {
-        return sp.getInt("p_${bookUrl.hashCode()}_$chapterIndex", 0)
+        val prog = loadBookProgress(bookUrl)
+        return if (prog.chapterIndex == chapterIndex) prog.page else 0
     }
 
+    @Synchronized
     fun saveBookScroll(bookUrl: String, chapterIndex: Int, scrollY: Int) {
-        sp.edit().putInt("s_${bookUrl.hashCode()}_$chapterIndex", scrollY).apply()
+        val cur = loadBookProgress(bookUrl)
+        val updated = if (cur.chapterIndex == chapterIndex) {
+            cur.copy(scrollY = scrollY)
+        } else {
+            BookProgress(chapterIndex = chapterIndex, page = 0, scrollY = scrollY)
+        }
+        saveBookProgress(bookUrl, updated)
     }
 
+    @Synchronized
     fun loadBookScroll(bookUrl: String, chapterIndex: Int): Int {
-        return sp.getInt("s_${bookUrl.hashCode()}_$chapterIndex", 0)
+        val prog = loadBookProgress(bookUrl)
+        return if (prog.chapterIndex == chapterIndex) prog.scrollY else 0
+    }
+
+    /** 清理旧版本遗留的每章一个键的 p_*_* 与 s_*_* 孤儿键，给 SharedPreferences 彻底瘦身 */
+    private fun cleanupLegacyProgressKeys() {
+        runCatching {
+            val books = (shelf().map { it.book } + records().map { it.book }).distinctBy { it.url }
+            for (b in books) {
+                if (b.url.isNotBlank() && !sp.contains(bookProgressKey(b.url))) {
+                    loadBookProgress(b.url)
+                }
+            }
+            val legacyKeys = sp.all.keys.filter { k ->
+                (k.startsWith("p_") || k.startsWith("s_")) && k.count { it == '_' } >= 2
+            }
+            if (legacyKeys.isNotEmpty()) {
+                val editor = sp.edit()
+                legacyKeys.forEach { editor.remove(it) }
+                editor.apply()
+            }
+        }
     }
 
     fun removeRecord(book: Book) {
@@ -335,16 +449,19 @@ class Store(val context: Context) {
         e.remove("toc_${book.url.hashCode()}")
         e.remove("tocu_${book.url.hashCode()}")
         e.remove("bm_${book.url.hashCode()}")
+        e.remove(bookProgressKey(book.url))
+        progressCache.remove(book.url)
         e.apply()
     }
 
     /** 清空所有小说正文缓存（连目录和元数据一起） */
     fun clearNovelCaches() {
         NovelContentCache.clearAll()
+        progressCache.clear()
         val e = sp.edit()
         sp.all.keys.filter {
             it.startsWith("c_") || it.startsWith("bm_") || it.startsWith("toc_") ||
-                it.startsWith("tocu_") || it.startsWith("toc_v2_")
+                it.startsWith("tocu_") || it.startsWith("toc_v2_") || it.startsWith("bp_")
         }.forEach { e.remove(it) }
         e.apply()
     }

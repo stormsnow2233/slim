@@ -51,12 +51,15 @@ import coil.compose.AsyncImage
 import coil.request.ImageRequest
 import com.storm.shijuan.data.*
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.FlowPreview
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.flow.debounce
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, FlowPreview::class)
 @Composable
 fun ReaderScreen(
     book: Book,
@@ -100,13 +103,16 @@ fun ReaderScreen(
     val tocState = rememberLazyListState()
     val chapter = currentChapters.getOrNull(index)
 
-    // 切章统一方法：离开前保存当前章页码，切到新章指定页
+    // 切章统一方法：离开前保存当前章页码与滚动偏移，切到新章指定页
     fun switchChapter(newIndex: Int, newPage: Int = 0) {
         if (newIndex !in currentChapters.indices || newIndex == index) return
         val p = when {
             prefs.pageMode == 1 && pageCount > 0 -> (currentPage + 1).toFloat() / pageCount
             scrollState.maxValue > 0 -> scrollState.value.toFloat() / scrollState.maxValue
             else -> 0f
+        }
+        if (prefs.pageMode != 1 && scrollState.maxValue > 0) {
+            store.saveBookScroll(currentBook.url, index, scrollState.value)
         }
         store.saveBookPage(currentBook.url, index, currentPage)
         onProgress(index, chapter?.name ?: "", p, currentPage, currentChapters.size)
@@ -222,18 +228,31 @@ fun ReaderScreen(
         onProgress(index, chapter?.name ?: "", p, page, currentChapters.size)
     }
 
-    LaunchedEffect(scrollState.value, scrollState.maxValue, loading) {
-        if (scrollState.maxValue > 0) {
-            val ratio = scrollState.value.toFloat() / scrollState.maxValue
-            store.saveBookScroll(currentBook.url, index, scrollState.value)
-            saveProgress(ratio, 0)
+    // 滚动模式：使用 snapshotFlow 监听 scrollState.value，debounce(500ms) 只在停下时写盘，IO 抛到 Dispatchers.IO
+    LaunchedEffect(currentBook.url, index, prefs.pageMode) {
+        if (prefs.pageMode != 1) {
+            snapshotFlow { scrollState.value }
+                .debounce(500L)
+                .distinctUntilChanged()
+                .collect { scrollVal ->
+                    val max = scrollState.maxValue
+                    if (max > 0) {
+                        val ratio = scrollVal.toFloat() / max
+                        withContext(Dispatchers.IO) {
+                            store.saveBookScroll(currentBook.url, index, scrollVal)
+                        }
+                        saveProgress(ratio, 0)
+                    }
+                }
         }
     }
 
     // 翻页模式下按页数算进度并实时持久化当前页码
     LaunchedEffect(currentPage, pageCount) {
         if (prefs.pageMode == 1 && pageCount > 0) {
-            store.saveBookPage(currentBook.url, index, currentPage)
+            withContext(Dispatchers.IO) {
+                store.saveBookPage(currentBook.url, index, currentPage)
+            }
             saveProgress((currentPage + 1).toFloat() / pageCount, currentPage)
         }
     }
@@ -241,7 +260,7 @@ fun ReaderScreen(
     // 滚动模式恢复保存的滚动高度
     LaunchedEffect(scrollState.maxValue, index) {
         if (prefs.pageMode != 1 && scrollState.maxValue > 0) {
-            val savedScroll = store.loadBookScroll(book.url, index)
+            val savedScroll = store.loadBookScroll(currentBook.url, index)
             if (savedScroll > 0 && scrollState.value == 0) {
                 scrollState.scrollTo(savedScroll.coerceIn(0, scrollState.maxValue))
             }
@@ -254,6 +273,9 @@ fun ReaderScreen(
                 prefs.pageMode == 1 && pageCount > 0 -> (currentPage + 1).toFloat() / pageCount
                 scrollState.maxValue > 0 -> scrollState.value.toFloat() / scrollState.maxValue
                 else -> 0f
+            }
+            if (prefs.pageMode != 1 && scrollState.maxValue > 0) {
+                store.saveBookScroll(currentBook.url, index, scrollState.value)
             }
             store.saveBookPage(currentBook.url, index, currentPage)
             onProgress(index, chapter?.name ?: "", p, currentPage, currentChapters.size)
