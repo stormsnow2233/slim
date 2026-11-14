@@ -273,11 +273,12 @@ fun SearchScreen(
 
         // 搜索进度轻量指示（纯净无多余面板）
         if (running) {
-            LinearProgressIndicator(
+            AdaptiveLinearProgressIndicator(
+                progress = { 0.75f },
                 modifier = Modifier
                     .fillMaxWidth()
                     .padding(horizontal = 16.dp, vertical = 4.dp)
-                    .height(2.dp),
+                    .height(3.dp),
                 color = MaterialTheme.colorScheme.primary,
                 trackColor = MaterialTheme.colorScheme.surfaceVariant,
             )

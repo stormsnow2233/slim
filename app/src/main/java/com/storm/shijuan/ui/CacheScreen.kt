@@ -267,9 +267,9 @@ private fun ComicCacheCard(
 
             if (task != null && (running || isPaused)) {
                 Spacer(Modifier.height(8.dp))
-                LinearProgressIndicator(
+                AdaptiveLinearProgressIndicator(
                     progress = { task.percent },
-                    modifier = Modifier.fillMaxWidth().height(5.dp),
+                    modifier = Modifier.fillMaxWidth().height(6.dp),
                     color = if (running) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outline,
                 )
                 Spacer(Modifier.height(3.dp))

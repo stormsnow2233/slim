@@ -676,9 +676,9 @@ private fun ExportSheet(
                 )
                 Spacer(Modifier.height(10.dp))
                 if (export.running) {
-                    LinearProgressIndicator(
+                    AdaptiveLinearProgressIndicator(
                         progress = { progress },
-                        modifier = Modifier.fillMaxWidth(),
+                        modifier = Modifier.fillMaxWidth().height(6.dp),
                     )
                     Spacer(Modifier.height(8.dp))
                     Text(

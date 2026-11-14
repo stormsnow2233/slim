@@ -43,6 +43,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlin.math.roundToInt
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
@@ -547,22 +548,57 @@ fun ReaderScreen(
             exit = fadeOut() + slideOutVertically { it },
             modifier = Modifier.align(Alignment.BottomCenter),
         ) {
-            Row(
+            Column(
                 Modifier
                     .fillMaxWidth()
                     .background(theme.bar)
                     .navigationBarsPadding()
-                    .padding(vertical = 8.dp),
-                horizontalArrangement = Arrangement.SpaceEvenly,
-                verticalAlignment = Alignment.CenterVertically,
+                    .padding(vertical = 4.dp),
             ) {
-                BarAction("上一章", Icons.AutoMirrored.Rounded.KeyboardArrowLeft, theme, index > 0) {
-                    switchChapter(index - 1)
+                if (prefs.pageMode == 1 && pageCount > 1) {
+                    Row(
+                        Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 16.dp, vertical = 2.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
+                        Text(
+                            "${currentPage + 1} / $pageCount",
+                            fontSize = 12.sp,
+                            fontWeight = FontWeight.Medium,
+                            color = theme.text.copy(alpha = 0.75f),
+                            modifier = Modifier.width(58.dp),
+                        )
+                        AdaptiveSlider(
+                            value = currentPage.toFloat(),
+                            onValueChange = {
+                                val p = it.roundToInt().coerceIn(0, pageCount - 1)
+                                if (p != currentPage) {
+                                    currentPage = p
+                                    scope.launch { pagerState?.scrollToPage(p) }
+                                }
+                            },
+                            valueRange = 0f..(pageCount - 1).toFloat(),
+                            steps = (pageCount - 2).coerceAtLeast(0),
+                            modifier = Modifier.weight(1f),
+                        )
+                    }
                 }
-                BarAction("目录", Icons.Rounded.FormatListBulleted, theme, true) { showToc = true }
-                BarAction("设置", Icons.Rounded.TextFields, theme, true) { showSettings = true }
-                BarAction("下一章", Icons.AutoMirrored.Rounded.KeyboardArrowRight, theme, index < currentChapters.size - 1) {
-                    switchChapter(index + 1)
+                Row(
+                    Modifier
+                        .fillMaxWidth()
+                        .padding(vertical = 4.dp),
+                    horizontalArrangement = Arrangement.SpaceEvenly,
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    BarAction("上一章", Icons.AutoMirrored.Rounded.KeyboardArrowLeft, theme, index > 0) {
+                        switchChapter(index - 1)
+                    }
+                    BarAction("目录", Icons.Rounded.FormatListBulleted, theme, true) { showToc = true }
+                    BarAction("设置", Icons.Rounded.TextFields, theme, true) { showSettings = true }
+                    BarAction("下一章", Icons.AutoMirrored.Rounded.KeyboardArrowRight, theme, index < currentChapters.size - 1) {
+                        switchChapter(index + 1)
+                    }
                 }
             }
         }
@@ -576,14 +612,15 @@ fun ReaderScreen(
                 Spacer(Modifier.height(18.dp))
 
                 Text("字号 ${prefs.fontSize.toInt()}", style = MaterialTheme.typography.bodyMedium)
-                Slider(
+                AdaptiveSlider(
                     value = prefs.fontSize,
                     onValueChange = { prefs = prefs.copy(fontSize = it); store.saveReaderPrefs(prefs) },
                     valueRange = 14f..30f, steps = 15,
                 )
 
+                Spacer(Modifier.height(8.dp))
                 Text("行距 ${String.format("%.2f", prefs.lineHeight)}", style = MaterialTheme.typography.bodyMedium)
-                Slider(
+                AdaptiveSlider(
                     value = prefs.lineHeight,
                     onValueChange = { prefs = prefs.copy(lineHeight = it); store.saveReaderPrefs(prefs) },
                     valueRange = 1.2f..2.4f, steps = 11,
@@ -619,23 +656,17 @@ fun ReaderScreen(
                 }
 
                 Spacer(Modifier.height(18.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("翻页方式", style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.weight(1f))
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (prefs.pageMode == 0) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant,
-                        onClick = { prefs = prefs.copy(pageMode = 0); store.saveReaderPrefs(prefs) },
-                    ) { Text("上下滚动", Modifier.padding(horizontal = 12.dp, vertical = 7.dp), fontSize = 12.sp) }
-                    Spacer(Modifier.width(8.dp))
-                    Surface(
-                        shape = RoundedCornerShape(8.dp),
-                        color = if (prefs.pageMode == 1) MaterialTheme.colorScheme.primaryContainer
-                        else MaterialTheme.colorScheme.surfaceVariant,
-                        onClick = { prefs = prefs.copy(pageMode = 1); store.saveReaderPrefs(prefs) },
-                    ) { Text("左右翻页", Modifier.padding(horizontal = 12.dp, vertical = 7.dp), fontSize = 12.sp) }
-                }
+                Text("翻页方式", style = MaterialTheme.typography.bodyMedium)
+                Spacer(Modifier.height(8.dp))
+                MiuixSegmentedPicker(
+                    items = listOf(0 to "上下滚动", 1 to "左右翻页"),
+                    selectedItem = prefs.pageMode,
+                    onSelect = {
+                        prefs = prefs.copy(pageMode = it)
+                        store.saveReaderPrefs(prefs)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
                 Spacer(Modifier.height(6.dp))
                 Text(
                     if (prefs.pageMode == 1) "左右滑动在章内翻页，翻到本章最后一页继续滑才进下一章"

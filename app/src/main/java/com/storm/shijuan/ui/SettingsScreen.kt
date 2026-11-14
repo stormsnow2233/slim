@@ -604,12 +604,11 @@ fun UpdateDialog(
 
                 if (downloading) {
                     Spacer(Modifier.height(14.dp))
-                    LinearProgressIndicator(
+                    AdaptiveLinearProgressIndicator(
                         progress = { downloadProgress },
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(6.dp)
-                            .clip(RoundedCornerShape(3.dp))
                     )
                     Spacer(Modifier.height(6.dp))
                     Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

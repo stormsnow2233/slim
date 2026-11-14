@@ -340,6 +340,106 @@ fun MiuixSectionHeader(title: String) {
 }
 
 /**
+ * 全局自适应滑块控件（依据当前主题动态切换小米 HyperOS 厚轨圆钮风格与经典风格）
+ */
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun AdaptiveSlider(
+    value: Float,
+    onValueChange: (Float) -> Unit,
+    modifier: Modifier = Modifier,
+    enabled: Boolean = true,
+    valueRange: ClosedFloatingPointRange<Float> = 0f..1f,
+    steps: Int = 0,
+    onValueChangeFinished: (() -> Unit)? = null,
+    interactionSource: MutableInteractionSource = remember { MutableInteractionSource() },
+) {
+    val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
+
+    if (isMiuix) {
+        val isPressed by interactionSource.collectIsPressedAsState()
+        val isDragged by interactionSource.collectIsDraggedAsState()
+        val isActive = isPressed || isDragged
+
+        val thumbScale by animateFloatAsState(
+            targetValue = if (isActive) 1.18f else 1.0f,
+            animationSpec = spring(dampingRatio = 0.7f, stiffness = 800f),
+            label = "MiuixSliderThumbScale"
+        )
+
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = modifier,
+            enabled = enabled,
+            valueRange = valueRange,
+            steps = steps,
+            onValueChangeFinished = onValueChangeFinished,
+            interactionSource = interactionSource,
+            colors = SliderDefaults.colors(
+                thumbColor = Color.White,
+                activeTrackColor = MaterialTheme.colorScheme.primary,
+                inactiveTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
+            ),
+            thumb = {
+                Surface(
+                    shape = CircleShape,
+                    color = Color.White,
+                    shadowElevation = if (isActive) 5.dp else 2.5.dp,
+                    border = BorderStroke(1.dp, Color.Black.copy(alpha = 0.08f)),
+                    modifier = Modifier
+                        .size(22.dp)
+                        .graphicsLayer {
+                            scaleX = thumbScale
+                            scaleY = thumbScale
+                        }
+                ) {}
+            },
+            track = { sliderState ->
+                SliderDefaults.Track(
+                    sliderState = sliderState,
+                    modifier = Modifier.height(7.dp),
+                    thumbTrackGapSize = 0.dp,
+                    drawStopIndicator = null
+                )
+            }
+        )
+    } else {
+        Slider(
+            value = value,
+            onValueChange = onValueChange,
+            modifier = modifier,
+            enabled = enabled,
+            valueRange = valueRange,
+            steps = steps,
+            onValueChangeFinished = onValueChangeFinished,
+            interactionSource = interactionSource,
+            colors = SliderDefaults.colors(
+                thumbColor = MaterialTheme.colorScheme.primary,
+                activeTrackColor = MaterialTheme.colorScheme.primary,
+                inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f),
+            ),
+            thumb = {
+                Surface(
+                    shape = CircleShape,
+                    color = MaterialTheme.colorScheme.primary,
+                    shadowElevation = 2.dp,
+                    modifier = Modifier.size(20.dp)
+                ) {}
+            },
+            track = { sliderState ->
+                SliderDefaults.Track(
+                    sliderState = sliderState,
+                    modifier = Modifier.height(5.dp),
+                    thumbTrackGapSize = 0.dp,
+                    drawStopIndicator = null
+                )
+            }
+        )
+    }
+}
+
+/**
  * MiuiX 风格厚轨圆钮滑块
  */
 @OptIn(ExperimentalMaterial3Api::class)
@@ -350,36 +450,57 @@ fun MiuixSlider(
     valueRange: ClosedFloatingPointRange<Float>,
     modifier: Modifier = Modifier,
     steps: Int = 0,
+    onValueChangeFinished: (() -> Unit)? = null,
 ) {
-    Slider(
+    AdaptiveSlider(
         value = value,
         onValueChange = onValueChange,
         valueRange = valueRange,
         steps = steps,
-        modifier = modifier.fillMaxWidth(),
-        colors = SliderDefaults.colors(
-            thumbColor = Color.White,
-            activeTrackColor = MaterialTheme.colorScheme.primary,
-            inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.45f),
-        ),
-        thumb = {
-            Surface(
-                shape = CircleShape,
-                color = Color.White,
-                shadowElevation = 2.5.dp,
-                border = BorderStroke(1.dp, MaterialTheme.colorScheme.primary.copy(alpha = 0.18f)),
-                modifier = Modifier.size(20.dp)
-            ) {}
-        },
-        track = { sliderState ->
-            SliderDefaults.Track(
-                sliderState = sliderState,
-                modifier = Modifier.height(6.dp),
-                thumbTrackGapSize = 0.dp,
-                drawStopIndicator = null
+        onValueChangeFinished = onValueChangeFinished,
+        modifier = modifier
+    )
+}
+
+/**
+ * 全局自适应线性进度条（支持 MiuiX 饱满圆角胶囊质感与平滑过渡）
+ */
+@Composable
+fun AdaptiveLinearProgressIndicator(
+    progress: () -> Float,
+    modifier: Modifier = Modifier,
+    color: Color = MaterialTheme.colorScheme.primary,
+    trackColor: Color = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.15f),
+) {
+    val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
+    val animatedProgress by animateFloatAsState(
+        targetValue = progress(),
+        animationSpec = spring(dampingRatio = 0.85f, stiffness = 600f),
+        label = "AdaptiveProgress"
+    )
+
+    if (isMiuix) {
+        Box(
+            modifier = modifier
+                .clip(CircleShape)
+                .background(trackColor)
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxHeight()
+                    .fillMaxWidth(animatedProgress.coerceIn(0f, 1f))
+                    .clip(CircleShape)
+                    .background(color)
             )
         }
-    )
+    } else {
+        LinearProgressIndicator(
+            progress = progress,
+            modifier = modifier.clip(RoundedCornerShape(3.dp)),
+            color = color,
+            trackColor = trackColor
+        )
+    }
 }
 
 /**

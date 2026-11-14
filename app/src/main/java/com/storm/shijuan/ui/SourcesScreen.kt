@@ -574,7 +574,7 @@ fun MineScreen(
         Surface(shape = RoundedCornerShape(14.dp), color = MaterialTheme.colorScheme.surface) {
             Column(Modifier.padding(16.dp)) {
                 Text("字号 ${prefs.fontSize.toInt()}", style = MaterialTheme.typography.bodyMedium)
-                Slider(
+                AdaptiveSlider(
                     value = prefs.fontSize,
                     onValueChange = {
                         prefs = prefs.copy(fontSize = it)
@@ -585,7 +585,7 @@ fun MineScreen(
                 )
                 Spacer(Modifier.height(4.dp))
                 Text("行距 ${String.format("%.2f", prefs.lineHeight)}", style = MaterialTheme.typography.bodyMedium)
-                Slider(
+                AdaptiveSlider(
                     value = prefs.lineHeight,
                     onValueChange = {
                         prefs = prefs.copy(lineHeight = it)
@@ -594,22 +594,18 @@ fun MineScreen(
                     valueRange = 1.2f..2.4f,
                     steps = 11,
                 )
+                Spacer(Modifier.height(8.dp))
+                Text("翻页方式", style = MaterialTheme.typography.bodyMedium)
                 Spacer(Modifier.height(6.dp))
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("翻页方式", style = MaterialTheme.typography.bodyMedium)
-                    Spacer(Modifier.weight(1f))
-                    SegmentedButton(
-                        selected = prefs.pageMode == 0,
-                        onClick = { prefs = prefs.copy(pageMode = 0); store.saveReaderPrefs(prefs) },
-                        label = "上下滚动",
-                    )
-                    Spacer(Modifier.width(8.dp))
-                    SegmentedButton(
-                        selected = prefs.pageMode == 1,
-                        onClick = { prefs = prefs.copy(pageMode = 1); store.saveReaderPrefs(prefs) },
-                        label = "左右翻页",
-                    )
-                }
+                MiuixSegmentedPicker(
+                    items = listOf(0 to "上下滚动", 1 to "左右翻页"),
+                    selectedItem = prefs.pageMode,
+                    onSelect = {
+                        prefs = prefs.copy(pageMode = it)
+                        store.saveReaderPrefs(prefs)
+                    },
+                    modifier = Modifier.fillMaxWidth()
+                )
             }
         }
 

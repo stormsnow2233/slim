@@ -645,9 +645,9 @@ private fun DownloadPanel(
                         }
                     }
                     Spacer(Modifier.height(8.dp))
-                    LinearProgressIndicator(
+                    AdaptiveLinearProgressIndicator(
                         progress = { t.percent },
-                        modifier = Modifier.fillMaxWidth().height(5.dp).clip(RoundedCornerShape(3.dp)),
+                        modifier = Modifier.fillMaxWidth().height(6.dp),
                     )
                     Spacer(Modifier.height(5.dp))
                     Row {
@@ -1343,12 +1343,11 @@ fun ComicReaderScreen(
                         color = Color.White,
                     )
                     Spacer(Modifier.height(2.dp))
-                    LinearProgressIndicator(
+                    AdaptiveLinearProgressIndicator(
                         progress = { progress },
                         modifier = Modifier
-                            .width(60.dp)
-                            .height(2.dp)
-                            .clip(CircleShape),
+                            .width(68.dp)
+                            .height(3.dp),
                         color = MaterialTheme.colorScheme.primary,
                         trackColor = Color.White.copy(alpha = 0.35f),
                     )
@@ -1424,7 +1423,7 @@ fun ComicReaderScreen(
                             modifier = Modifier.width(64.dp),
                         )
                         var sliderPos by remember(curPage) { mutableFloatStateOf(curPage.toFloat()) }
-                        Slider(
+                        AdaptiveSlider(
                             value = sliderPos,
                             onValueChange = { sliderPos = it },
                             onValueChangeFinished = {
@@ -1479,24 +1478,22 @@ fun ComicReaderScreen(
     if (showSettings) {
         AlertDialog(
             onDismissRequest = { showSettings = false },
-            title = { Text("阅读设置", fontSize = 16.sp) },
+            shape = RoundedCornerShape(20.dp),
+            title = { Text("阅读设置", fontSize = 16.sp, fontWeight = FontWeight.SemiBold) },
             text = {
                 Column {
                     Text("翻页方式", fontSize = 13.sp, fontWeight = FontWeight.Medium)
-                    Spacer(Modifier.height(6.dp))
-                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                        FilterChip(
-                            selected = mode == "page",
-                            onClick = { mode = "page"; store.setComicMode("page") },
-                            label = { Text("左右翻页", fontSize = 12.sp) },
-                        )
-                        FilterChip(
-                            selected = mode == "scroll",
-                            onClick = { mode = "scroll"; store.setComicMode("scroll") },
-                            label = { Text("上下滚动", fontSize = 12.sp) },
-                        )
-                    }
-                    Spacer(Modifier.height(16.dp))
+                    Spacer(Modifier.height(8.dp))
+                    MiuixSegmentedPicker(
+                        items = listOf("page" to "左右翻页", "scroll" to "上下滚动"),
+                        selectedItem = mode,
+                        onSelect = {
+                            mode = it
+                            store.setComicMode(it)
+                        },
+                        modifier = Modifier.fillMaxWidth()
+                    )
+                    Spacer(Modifier.height(18.dp))
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
                             Text("允许放大缩小", fontSize = 13.sp, fontWeight = FontWeight.Medium)
@@ -1514,7 +1511,7 @@ fun ComicReaderScreen(
                 }
             },
             confirmButton = {
-                TextButton(onClick = { showSettings = false }) { Text("好了") }
+                TextButton(onClick = { showSettings = false }) { Text("完成") }
             },
         )
     }
