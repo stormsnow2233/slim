@@ -223,21 +223,23 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
             // ── 轻小说文库加速 / CDN 反代 ──
             Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
-                    Text("轻小说文库加速 (Cloudflare / Worker)", style = MaterialTheme.typography.titleSmall)
+                    Text("轻小说文库加速 (Cloudflare / 边缘 CDN)", style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "轻小说文库整本下载若时快时慢，可配置自己的反代 Worker 加速（如 Cloudflare Worker），留空则自动走官方多节点容灾与本地解包缓存",
+                        "已开箱内置全球边缘 CDN 高速中转节点与全卷持久化缓存。如需覆盖使用自己的私有反代节点，可在此填入自定义 URL。",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.height(10.dp))
-                    ProxyField("反代 URL（留空为官方多节点）", wenku8Proxy, "https://wenku8-proxy.storm-snow.workers.dev") {
+                    ProxyField("自定义反代 URL（留空默认走内置节点）", wenku8Proxy, "留空默认启用内置边缘 CDN 加速") {
                         wenku8Proxy = it.trim()
                         store.setWenku8ProxyUrl(it.trim())
                     }
+                    Spacer(Modifier.height(6.dp))
                     if (wenku8Proxy.isNotBlank()) {
-                        Spacer(Modifier.height(6.dp))
                         Text("已设置自定义加速反代，请求将优先经由此节点拉取", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                    } else {
+                        Text("🟢 内置边缘 CDN 高速节点已自动启用 · 毫秒级加速", fontSize = 11.sp, color = OK_GREEN)
                     }
                 }
             }
