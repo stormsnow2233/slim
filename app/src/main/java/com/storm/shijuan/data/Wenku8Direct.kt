@@ -87,7 +87,8 @@ object Wenku8Direct {
             }
         }
 
-        // 内置官方高速 Cloudflare 边缘加速节点（全球 CDN 长效缓存，优先加速拉取）
+        // 内置官方高速 Cloudflare 边缘加速节点（支持自定义域名免翻直连，优先加速拉取）
+        urls.add("https://wenku8-proxy.us.ci/down.php?type=utf8&node=1&id=$aid")
         urls.add("https://wenku8-proxy.storm-snow.workers.dev/down.php?type=utf8&node=1&id=$aid")
 
         // 官方 3 个下载节点作为安全回退兜底
