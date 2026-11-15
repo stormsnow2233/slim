@@ -181,7 +181,7 @@ fun CacheScreen(
     }
 
     if (confirmAll) {
-        AlertDialog(
+        AdaptiveDialog(
             onDismissRequest = { confirmAll = false },
             title = { Text("清空全部缓存？") },
             text = {

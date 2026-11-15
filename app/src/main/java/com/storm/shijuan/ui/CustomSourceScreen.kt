@@ -444,7 +444,7 @@ fun CustomSourceEditScreen(
     }
 
     if (showDelete) {
-        AlertDialog(
+        AdaptiveDialog(
             onDismissRequest = { showDelete = false },
             title = { Text("删除这个书源？") },
             text = { Text("只会删掉源本身，书架里用这个源加的书不受影响（但那本书可能打不开了）。") },

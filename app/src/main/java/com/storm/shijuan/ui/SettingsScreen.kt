@@ -58,11 +58,29 @@ fun SettingsScreen(
     var jmEnabled by remember { mutableStateOf(store.isJmEnabled()) }
     var jmClickCount by remember { mutableIntStateOf(0) }
     var jmLastClickTime by remember { mutableLongStateOf(0L) }
+    val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
 
     Scaffold(
+        containerColor = MaterialTheme.colorScheme.background,
         topBar = {
-            TopAppBar(
-                title = { Text("设置", fontWeight = FontWeight.Bold) },
+            if (isMiuix) {
+                top.yukonga.miuix.kmp.basic.SmallTopAppBar(
+                    title = "设置",
+                    color = MaterialTheme.colorScheme.background,
+                    navigationIcon = {
+                        IconButton(onClick = onBack) {
+                            Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                        }
+                    },
+                )
+            } else TopAppBar(
+                title = {
+                    Text(
+                        "设置",
+                        fontWeight = FontWeight.Bold,
+                        style = MaterialTheme.typography.titleLarge,
+                    )
+                },
                 navigationIcon = {
                     IconButton(onClick = onBack) {
                         Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
@@ -541,11 +559,10 @@ fun UpdateDialog(
     var downloadedFile by remember { mutableStateOf<File?>(null) }
     var downloadError by remember { mutableStateOf("") }
 
-    AlertDialog(
+    AdaptiveDialog(
         onDismissRequest = {
             if (!downloading) onDismissRequest()
         },
-        shape = RoundedCornerShape(24.dp),
         title = {
             Row(verticalAlignment = Alignment.CenterVertically) {
                 Icon(

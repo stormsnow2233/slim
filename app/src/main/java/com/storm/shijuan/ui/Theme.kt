@@ -4,6 +4,9 @@ import android.app.Activity
 import androidx.compose.foundation.isSystemInDarkTheme
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Typography
+import androidx.compose.material3.Shapes
+import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.ui.unit.dp
 import androidx.compose.material3.darkColorScheme
 import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
@@ -159,6 +162,27 @@ private val AppTypography = Typography(
     labelMedium = TextStyle(fontSize = 12.sp),
 )
 
+// Keep the classic typography and shapes intact; MiuiX uses a larger, softer
+// hierarchy for Material components that have not yet been migrated.
+private val MiuixTypography = Typography(
+    headlineLarge = TextStyle(fontSize = 30.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.sp),
+    headlineMedium = TextStyle(fontSize = 24.sp, fontWeight = FontWeight.Bold),
+    titleLarge = TextStyle(fontSize = 21.sp, fontWeight = FontWeight.SemiBold),
+    titleMedium = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium),
+    bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
+    bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 21.sp),
+    labelLarge = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
+    labelMedium = TextStyle(fontSize = 12.sp),
+)
+
+private val MiuixShapes = Shapes(
+    extraSmall = RoundedCornerShape(8.dp),
+    small = RoundedCornerShape(12.dp),
+    medium = RoundedCornerShape(18.dp),
+    large = RoundedCornerShape(24.dp),
+    extraLarge = RoundedCornerShape(28.dp),
+)
+
 @Composable
 fun ShijuanTheme(
     style: Int = 0,
@@ -185,7 +209,32 @@ fun ShijuanTheme(
         }
     }
     CompositionLocalProvider(LocalAppThemeStyle provides themeStyle) {
-        MaterialTheme(colorScheme = colors, typography = AppTypography, content = content)
+        MaterialTheme(
+            colorScheme = colors,
+            typography = if (themeStyle == AppThemeStyle.MiuiX) MiuixTypography else AppTypography,
+            shapes = if (themeStyle == AppThemeStyle.MiuiX) MiuixShapes else Shapes(),
+        ) {
+            // Keep the content at the same composition location when switching styles,
+            // so remembered navigation and screen state are not discarded.
+            val materialIndication = androidx.compose.foundation.LocalIndication.current
+            top.yukonga.miuix.kmp.theme.MiuixTheme(
+                colors = if (dark) top.yukonga.miuix.kmp.theme.darkColorScheme()
+                else top.yukonga.miuix.kmp.theme.lightColorScheme(),
+            ) {
+                CompositionLocalProvider(
+                    androidx.compose.foundation.LocalIndication provides
+                        if (themeStyle == AppThemeStyle.MiuiX) androidx.compose.foundation.LocalIndication.current
+                        else materialIndication
+                ) {
+                    androidx.compose.foundation.layout.Box {
+                        content()
+                        if (themeStyle == AppThemeStyle.MiuiX) {
+                            top.yukonga.miuix.kmp.utils.MiuixPopupUtils.MiuixPopupHost()
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 

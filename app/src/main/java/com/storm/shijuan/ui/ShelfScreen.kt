@@ -76,6 +76,7 @@ fun ShelfScreen(
 ) {
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
+    val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
 
     var pendingUri by remember { mutableStateOf<Uri?>(null) }
     var pendingDetection by remember { mutableStateOf<DetectionResult?>(null) }
@@ -184,7 +185,8 @@ fun ShelfScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(top = 8.dp, bottom = 8.dp),
+                            .padding(top = 8.dp, bottom = 8.dp)
+                            .then(if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)).padding(horizontal = 14.dp, vertical = 10.dp) else Modifier),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
@@ -310,7 +312,8 @@ fun ShelfScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 6.dp),
+                                .padding(vertical = 6.dp)
+                                .then(if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)).padding(10.dp) else Modifier),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             for (item in chunk) {
@@ -388,7 +391,8 @@ fun ShelfScreen(
                     Row(
                         modifier = Modifier
                             .fillMaxWidth()
-                            .padding(bottom = 8.dp),
+                            .padding(bottom = 8.dp)
+                            .then(if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)).padding(horizontal = 14.dp, vertical = 10.dp) else Modifier),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
@@ -511,7 +515,8 @@ fun ShelfScreen(
                         Row(
                             modifier = Modifier
                                 .fillMaxWidth()
-                                .padding(vertical = 6.dp),
+                                .padding(vertical = 6.dp)
+                                .then(if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)).padding(10.dp) else Modifier),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             for (c in chunk) {
@@ -597,8 +602,8 @@ fun ShelfScreen(
                 .align(Alignment.BottomEnd)
                 .padding(end = 20.dp, bottom = 24.dp)
                 .navigationBarsPadding(),
-            containerColor = MaterialTheme.colorScheme.primaryContainer,
-            contentColor = MaterialTheme.colorScheme.onPrimaryContainer,
+            containerColor = if (isMiuix) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primaryContainer,
+            contentColor = if (isMiuix) MaterialTheme.colorScheme.onPrimary else MaterialTheme.colorScheme.onPrimaryContainer,
             icon = { Icon(Icons.Rounded.Add, contentDescription = "导入") },
             text = { Text("导入书籍", fontWeight = FontWeight.SemiBold) },
         )
@@ -607,7 +612,7 @@ fun ShelfScreen(
         if (pendingDetection != null && pendingUri != null) {
             val det = pendingDetection!!
             val uri = pendingUri!!
-            AlertDialog(
+            AdaptiveDialog(
                 onDismissRequest = {
                     pendingDetection = null
                     pendingUri = null
@@ -672,13 +677,13 @@ fun ShelfScreen(
                         }
                     }
                 },
-                dismissButton = null,
+                dismissButton = {},
             )
         }
 
         /* ════════════════ 导入中进度弹窗 ════════════════ */
         if (importingTitle != null) {
-            AlertDialog(
+            AdaptiveDialog(
                 onDismissRequest = {},
                 title = { Text("正在导入书籍", fontWeight = FontWeight.Bold) },
                 text = {
@@ -699,6 +704,7 @@ fun ShelfScreen(
                     }
                 },
                 confirmButton = {},
+                dismissButton = {},
             )
         }
 
@@ -750,7 +756,7 @@ fun ShelfScreen(
 
         /* ════════════════ 移除确认对话框 ════════════════ */
         confirmRemoveNovel?.let { item ->
-            AlertDialog(
+            AdaptiveDialog(
                 onDismissRequest = { confirmRemoveNovel = null },
                 title = { Text("从书架移除《${item.book.name}》？") },
                 text = { Text("从书架移除后，本地文件与阅读记录仍然保留。") },
@@ -767,7 +773,7 @@ fun ShelfScreen(
         }
 
         confirmRemoveComic?.let { comic ->
-            AlertDialog(
+            AdaptiveDialog(
                 onDismissRequest = { confirmRemoveComic = null },
                 title = { Text("从书架移除《${comic.name}》？") },
                 text = { Text("从书架移除后，本地下载与阅读记录仍然保留。") },

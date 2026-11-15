@@ -48,6 +48,10 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import top.yukonga.miuix.kmp.basic.BasicComponent
+import top.yukonga.miuix.kmp.basic.Card as MiuixOfficialCard
+import top.yukonga.miuix.kmp.basic.Slider as MiuixOfficialSlider
+import top.yukonga.miuix.kmp.basic.Switch as MiuixOfficialSwitch
 import kotlin.math.roundToInt
 
 /**
@@ -88,7 +92,7 @@ fun AdaptiveSwitch(
     enabled: Boolean = true,
 ) {
     if (LocalAppThemeStyle.current == AppThemeStyle.MiuiX) {
-        MiuixSwitch(
+        MiuixOfficialSwitch(
             checked = checked,
             onCheckedChange = onCheckedChange,
             modifier = modifier,
@@ -233,18 +237,26 @@ fun MiuixCardGroup(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    Surface(
-        modifier = modifier
-            .fillMaxWidth()
-            .clip(RoundedCornerShape(16.dp)),
-        shape = RoundedCornerShape(16.dp),
-        color = MaterialTheme.colorScheme.surface,
-        shadowElevation = if (LocalAppThemeStyle.current == AppThemeStyle.MiuiX) 0.5.dp else 0.dp
-    ) {
-        Column(
-            modifier = Modifier.fillMaxWidth(),
+    if (LocalAppThemeStyle.current == AppThemeStyle.MiuiX) {
+        MiuixOfficialCard(
+            modifier = modifier.fillMaxWidth(),
+            cornerRadius = 16.dp,
             content = content
         )
+    } else {
+        Surface(
+            modifier = modifier
+                .fillMaxWidth()
+                .clip(RoundedCornerShape(16.dp)),
+            shape = RoundedCornerShape(16.dp),
+            color = MaterialTheme.colorScheme.surface,
+            shadowElevation = 0.dp
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                content = content
+            )
+        }
     }
 }
 
@@ -261,7 +273,43 @@ fun MiuixPreferenceItem(
     onClick: (() -> Unit)? = null,
     endAction: @Composable (() -> Unit)? = null,
 ) {
-    Row(
+    if (LocalAppThemeStyle.current == AppThemeStyle.MiuiX) {
+        BasicComponent(
+            title = title,
+            summary = subtitle.takeIf { it.isNotBlank() },
+            leftAction = icon?.let { image ->
+                @Composable {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Box(
+                            modifier = Modifier
+                                .size(36.dp)
+                                .clip(RoundedCornerShape(10.dp))
+                                .background(iconBg),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Icon(imageVector = image, contentDescription = null, tint = iconTint, modifier = Modifier.size(20.dp))
+                        }
+                        Spacer(Modifier.width(14.dp))
+                    }
+                }
+            },
+            onClick = onClick,
+            rightActions = if (endAction != null || onClick != null) {
+                @Composable {
+                    if (endAction != null) {
+                        endAction()
+                    } else if (onClick != null) {
+                        Icon(
+                            imageVector = Icons.Rounded.ChevronRight,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.4f),
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+            } else null
+        )
+    } else Row(
         verticalAlignment = Alignment.CenterVertically,
         modifier = Modifier
             .fillMaxWidth()
@@ -362,13 +410,21 @@ fun MiuixDivider(hasIcon: Boolean = true) {
  */
 @Composable
 fun MiuixSectionHeader(title: String) {
-    Text(
-        text = title,
-        style = MaterialTheme.typography.labelMedium,
-        color = if (LocalAppThemeStyle.current == AppThemeStyle.MiuiX) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.primary,
-        fontWeight = FontWeight.Bold,
-        modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp)
-    )
+    if (LocalAppThemeStyle.current == AppThemeStyle.MiuiX) {
+        top.yukonga.miuix.kmp.basic.SmallTitle(
+            text = title,
+            modifier = Modifier.padding(top = 12.dp),
+            insideMargin = PaddingValues(start = 16.dp, top = 8.dp, bottom = 8.dp),
+        )
+    } else {
+        Text(
+            text = title,
+            style = MaterialTheme.typography.labelMedium,
+            color = MaterialTheme.colorScheme.primary,
+            fontWeight = FontWeight.Bold,
+            modifier = Modifier.padding(start = 16.dp, top = 20.dp, bottom = 8.dp)
+        )
+    }
 }
 
 /**
@@ -406,56 +462,20 @@ fun AdaptiveSlider(
         onValueChange(newVal)
     }
 
-    if (isMiuix) {
-        val isPressed by interactionSource.collectIsPressedAsState()
-        val isDragged by interactionSource.collectIsDraggedAsState()
-        val isActive = isPressed || isDragged
-
-        val thumbScale by animateFloatAsState(
-            targetValue = if (isActive) 1.18f else 1.0f,
-            animationSpec = spring(dampingRatio = 0.7f, stiffness = 800f),
-            label = "MiuixSliderThumbScale"
-        )
-
-        Slider(
+    // Keep Material's completion semantics for controls that commit on release.
+    if (isMiuix && onValueChangeFinished == null) {
+        MiuixOfficialSlider(
+            modifier = modifier,
             value = value,
             onValueChange = wrappedOnValueChange,
-            modifier = modifier,
             enabled = enabled,
             valueRange = valueRange,
             steps = steps,
+            height = 30.dp,
             onValueChangeFinished = {
                 lastVibratedStep = value.roundToInt()
                 onValueChangeFinished?.invoke()
             },
-            interactionSource = interactionSource,
-            colors = SliderDefaults.colors(
-                thumbColor = Color.White,
-                activeTrackColor = MaterialTheme.colorScheme.primary,
-                inactiveTrackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f),
-            ),
-            thumb = {
-                Surface(
-                    shape = CircleShape,
-                    color = Color.White,
-                    shadowElevation = if (isActive) 5.dp else 2.5.dp,
-                    border = BorderStroke(1.dp, Color.Black.copy(alpha = 0.08f)),
-                    modifier = Modifier
-                        .size(22.dp)
-                        .graphicsLayer {
-                            scaleX = thumbScale
-                            scaleY = thumbScale
-                        }
-                ) {}
-            },
-            track = { sliderState ->
-                SliderDefaults.Track(
-                    sliderState = sliderState,
-                    modifier = Modifier.height(7.dp),
-                    thumbTrackGapSize = 0.dp,
-                    drawStopIndicator = null
-                )
-            }
         )
     } else {
         Slider(

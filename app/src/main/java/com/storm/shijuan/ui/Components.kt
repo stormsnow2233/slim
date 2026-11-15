@@ -20,6 +20,46 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil.compose.AsyncImage
 
+/** 根据应用风格呈现通用对话框，内容与关闭行为由调用方控制。 */
+@Composable
+fun AdaptiveDialog(
+    onDismissRequest: () -> Unit,
+    title: @Composable () -> Unit,
+    text: @Composable () -> Unit,
+    confirmButton: @Composable () -> Unit,
+    dismissButton: @Composable () -> Unit,
+) {
+    if (LocalAppThemeStyle.current != AppThemeStyle.MiuiX) {
+        AlertDialog(
+            onDismissRequest = onDismissRequest,
+            shape = RoundedCornerShape(24.dp),
+            title = title,
+            text = text,
+            confirmButton = confirmButton,
+            dismissButton = dismissButton,
+        )
+    } else {
+        val show = androidx.compose.runtime.remember { androidx.compose.runtime.mutableStateOf(true) }
+        top.yukonga.miuix.kmp.extra.SuperDialog(
+            show = show,
+            onDismissRequest = onDismissRequest,
+        ) {
+            title()
+            Spacer(Modifier.height(18.dp))
+            text()
+            Spacer(Modifier.height(20.dp))
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.End,
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                dismissButton()
+                confirmButton()
+            }
+        }
+    }
+}
+
 /** 书籍封面：无图时按书名生成一个稳定的色块底纹 */
 @Composable
 fun BookCover(

@@ -44,6 +44,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
+import top.yukonga.miuix.kmp.basic.BasicComponent as MiuixBasicComponent
+import top.yukonga.miuix.kmp.basic.Card as MiuixCard
 
 private val OK_GREEN = Color(0xFF4C7A54)
 
@@ -56,6 +58,7 @@ fun DetailScreen(
     onRead: (Book, List<Chapter>, Int, Int) -> Unit,
     onShelfChanged: () -> Unit,
 ) {
+    val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
     val scope = rememberCoroutineScope()
     val ctx = LocalContext.current
     var full by remember { mutableStateOf(book) }
@@ -635,7 +638,18 @@ fun DetailScreen(
                         modifier = Modifier.fillMaxSize(),
                     ) {
                         items(previewToc, key = { it.url + it.index }) { ch ->
-                            Row(
+                            if (isMiuix) {
+                                MiuixCard(
+                                    modifier = Modifier.fillMaxWidth().padding(horizontal = 20.dp, vertical = 3.dp),
+                                    cornerRadius = 16.dp,
+                                ) {
+                                    MiuixBasicComponent(onClick = { read(ch.index) }) {
+                                        Text(ch.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                            color = if (ch.index == startIdx) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                                        if (ch.index == startIdx && startName.isNotBlank()) TinyTag("上次读到")
+                                    }
+                                }
+                            } else Row(
                                 modifier = Modifier
                                     .fillMaxWidth()
                                     .clickable { read(ch.index) }
@@ -720,7 +734,20 @@ fun DetailScreen(
                 )
                 LazyColumn(modifier = Modifier.weight(1f)) {
                     items(chapterList, key = { it.url + it.index }) { ch ->
-                        Row(
+                        if (isMiuix) {
+                            MiuixCard(
+                                modifier = Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 3.dp),
+                                cornerRadius = 16.dp,
+                            ) {
+                                MiuixBasicComponent(onClick = {
+                                    showToc = false
+                                    read(ch.index)
+                                }) {
+                                    Text(ch.name, maxLines = 1, overflow = TextOverflow.Ellipsis,
+                                        color = if (ch.index == startIdx) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface)
+                                }
+                            }
+                        } else Row(
                             Modifier
                                 .fillMaxWidth()
                                 .clickable {

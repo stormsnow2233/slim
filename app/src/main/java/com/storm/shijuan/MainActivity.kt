@@ -483,16 +483,17 @@ private fun SectionDrawer(
     onOpenCache: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
 ) {
+    val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
     val sections = remember(showJm) {
         if (showJm) Section.entries else Section.entries.filter { it != Section.JM }
     }
     ModalDrawerSheet(
         drawerShape = RoundedCornerShape(topEnd = 26.dp, bottomEnd = 26.dp),
-        modifier = Modifier.width(276.dp),
+        modifier = Modifier.width(312.dp),
     ) {
         Spacer(Modifier.statusBarsPadding())
         Spacer(Modifier.height(16.dp))
-        Column(Modifier.padding(horizontal = 22.dp)) {
+        Column(Modifier.padding(start = 28.dp, end = 20.dp)) {
             Text(
                 "拾卷",
                 style = MaterialTheme.typography.headlineMedium,
@@ -510,7 +511,7 @@ private fun SectionDrawer(
             val on = s == current
             Row(
                 modifier = Modifier
-                    .padding(horizontal = 12.dp, vertical = 4.dp)
+                    .padding(horizontal = 14.dp, vertical = 3.dp)
                     .fillMaxWidth()
                     .clip(RoundedCornerShape(16.dp))
                     .background(
@@ -525,43 +526,48 @@ private fun SectionDrawer(
                     imageVector = s.icon,
                     contentDescription = s.label,
                     tint = if (on) MaterialTheme.colorScheme.primary
-                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                    else MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                     modifier = Modifier.size(22.dp),
                 )
-                Spacer(Modifier.width(12.dp))
+                Spacer(Modifier.width(14.dp))
                 Column(Modifier.weight(1f)) {
                     Text(
-                        s.label,
+                        text = s.label,
                         style = MaterialTheme.typography.titleMedium,
-                        color = if (on) MaterialTheme.colorScheme.primary
-                        else MaterialTheme.colorScheme.onSurface,
+                        fontWeight = if (on) FontWeight.SemiBold else FontWeight.Medium,
+                        color = if (on) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurface,
                     )
                     Text(
-                        s.desc,
+                        text = s.desc,
                         fontSize = 11.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1,
+                        overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                     )
                 }
                 if (on) {
-                    Box(
-                        Modifier
-                            .size(6.dp)
-                            .clip(CircleShape)
-                            .background(MaterialTheme.colorScheme.primary)
-                    )
+                    if (isMiuix) {
+                        Icon(
+                            imageVector = Icons.Rounded.Check,
+                            contentDescription = "已选择",
+                            tint = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.size(20.dp),
+                        )
+                    } else {
+                        Box(Modifier.size(6.dp).clip(CircleShape).background(MaterialTheme.colorScheme.primary))
+                    }
                 }
             }
         }
 
         Spacer(Modifier.height(10.dp))
-        HorizontalDivider(Modifier.padding(horizontal = 22.dp))
+        HorizontalDivider(Modifier.padding(horizontal = 24.dp))
         Spacer(Modifier.height(10.dp))
 
         // 缓存管理：哪本存了多少、存全没有、不要了怎么删
         Row(
             modifier = Modifier
-                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .padding(horizontal = 14.dp, vertical = 3.dp)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
                 .clickable { onOpenCache() }
@@ -571,28 +577,34 @@ private fun SectionDrawer(
             Icon(
                 imageVector = Icons.Rounded.FolderOpen,
                 contentDescription = "缓存管理",
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                 modifier = Modifier.size(22.dp),
             )
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text("缓存管理", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "占用 · 体检 · 删除",
+                    text = "缓存管理",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = "占用 · 体检 · 删除",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 )
             }
         }
 
         Spacer(Modifier.weight(1f))
-        HorizontalDivider(Modifier.padding(horizontal = 22.dp))
+        HorizontalDivider(Modifier.padding(horizontal = 24.dp))
         Spacer(Modifier.height(8.dp))
 
         // 设置入口
         Row(
             modifier = Modifier
-                .padding(horizontal = 12.dp, vertical = 4.dp)
+                .padding(horizontal = 14.dp, vertical = 3.dp)
                 .fillMaxWidth()
                 .clip(RoundedCornerShape(16.dp))
                 .clickable { onOpenSettings() }
@@ -602,16 +614,22 @@ private fun SectionDrawer(
             Icon(
                 imageVector = Icons.Rounded.Settings,
                 contentDescription = "设置",
-                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.6f),
+                tint = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.65f),
                 modifier = Modifier.size(22.dp),
             )
-            Spacer(Modifier.width(12.dp))
+            Spacer(Modifier.width(14.dp))
             Column(Modifier.weight(1f)) {
-                Text("设置", style = MaterialTheme.typography.titleMedium)
                 Text(
-                    "阅读偏好 · 自动更新 · 关于",
+                    text = "设置",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Medium,
+                )
+                Text(
+                    text = "阅读偏好 · 自动更新 · 关于",
                     fontSize = 11.sp,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = androidx.compose.ui.text.style.TextOverflow.Ellipsis,
                 )
             }
         }

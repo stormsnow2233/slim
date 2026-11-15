@@ -3,6 +3,7 @@ package com.storm.shijuan.ui
 import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
@@ -86,6 +87,7 @@ fun SearchScreen(
     var searchJob by remember { mutableStateOf<kotlinx.coroutines.Job?>(null) }
     var verifyTarget by remember { mutableStateOf<Source?>(null) }
 
+    val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
     val focus = LocalFocusManager.current
     val focusRequester = remember { FocusRequester() }
     val scope = rememberCoroutineScope()
@@ -217,7 +219,53 @@ fun SearchScreen(
                 DrawerButton(onClick = onOpenDrawer)
             }
             Spacer(Modifier.width(8.dp))
-            TextField(
+            if (isMiuix) {
+                top.yukonga.miuix.kmp.basic.TextField(
+                    value = keyword,
+                    onValueChange = { keyword = it },
+                    modifier = Modifier.weight(1f).height(52.dp).focusRequester(focusRequester),
+                    insideMargin = androidx.compose.ui.unit.DpSize(12.dp, 8.dp),
+                    label = "书名或作者",
+                    useLabelAsPlaceholder = true,
+                    singleLine = true,
+                    leadingIcon = {
+                        Icon(
+                            imageVector = Icons.Rounded.Search,
+                            contentDescription = null,
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.padding(start = 4.dp, end = 8.dp).size(20.dp),
+                        )
+                    },
+                    trailingIcon = {
+                        if (keyword.isNotEmpty()) {
+                            Box(
+                                modifier = Modifier
+                                    .size(36.dp)
+                                    .clickable(
+                                        interactionSource = remember { MutableInteractionSource() },
+                                        indication = null,
+                                        onClick = {
+                                            keyword = ""
+                                            searched = ""
+                                            results = emptyMap()
+                                            filterSource = null
+                                        }
+                                    ),
+                                contentAlignment = Alignment.Center
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Rounded.Close,
+                                    contentDescription = "清空",
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    modifier = Modifier.size(18.dp),
+                                )
+                            }
+                        }
+                    },
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(onSearch = { doSearch(keyword) }),
+                )
+            } else TextField(
                 value = keyword,
                 onValueChange = { keyword = it },
                 modifier = Modifier
@@ -290,8 +338,16 @@ fun SearchScreen(
             Column(Modifier.padding(horizontal = 18.dp)) {
                 if (history.isNotEmpty()) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        Text("最近搜索", style = MaterialTheme.typography.titleMedium)
-                        Spacer(Modifier.weight(1f))
+                        if (isMiuix) {
+                            top.yukonga.miuix.kmp.basic.SmallTitle(
+                                text = "最近搜索",
+                                modifier = Modifier.weight(1f),
+                                insideMargin = PaddingValues(0.dp),
+                            )
+                        } else {
+                            Text("最近搜索", style = MaterialTheme.typography.titleMedium)
+                        }
+                        if (!isMiuix) Spacer(Modifier.weight(1f))
                         TextButton(onClick = {
                             store.clearHistory(); history = mutableListOf()
                         }) { Text("清空", fontSize = 12.sp) }
@@ -299,7 +355,14 @@ fun SearchScreen(
                     FlowRowChips(history.take(10)) { doSearch(it) }
                     Spacer(Modifier.height(18.dp))
                 }
-                Text("小说推荐", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                if (isMiuix) {
+                    top.yukonga.miuix.kmp.basic.SmallTitle(
+                        text = "小说推荐",
+                        insideMargin = PaddingValues(0.dp),
+                    )
+                } else {
+                    Text("小说推荐", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                }
                 Spacer(Modifier.height(8.dp))
                 FlowRowChips(
                     listOf(
@@ -334,7 +397,18 @@ fun SearchScreen(
                     .navigationBarsPadding(),
             ) {
                 items(merged, key = { it.name + it.primary.sourceId }) { m ->
-                    Box(Modifier.animateItem()) { BookRow(m, onOpenBook) }
+                    Box(Modifier.animateItem()) {
+                        if (isMiuix) {
+                            top.yukonga.miuix.kmp.basic.Card(
+                                modifier = Modifier.fillMaxWidth().padding(vertical = 3.dp),
+                                cornerRadius = 16.dp,
+                            ) {
+                                BookRow(m, onOpenBook, modifier = Modifier.padding(horizontal = 12.dp))
+                            }
+                        } else {
+                            BookRow(m, onOpenBook)
+                        }
+                    }
                 }
             }
         }
@@ -343,10 +417,10 @@ fun SearchScreen(
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun BookRow(m: MergedBook, onOpen: (Book) -> Unit) {
+private fun BookRow(m: MergedBook, onOpen: (Book) -> Unit, modifier: Modifier = Modifier) {
     val b = m.primary
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(12.dp))
             .clickable { onOpen(b) }

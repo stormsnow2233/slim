@@ -106,6 +106,7 @@ fun ComicScreen(
     var tick by state::tick
     var loading by remember { mutableStateOf(false) }
     val scope = rememberCoroutineScope()
+    val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
 
     val records = remember(tick, store.comicTick, offline) {
         val all = store.comicRecords().filter { it.comic.sourceId != "jm" }
@@ -325,11 +326,19 @@ fun ComicScreen(
             Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
             verticalAlignment = Alignment.CenterVertically,
         ) {
-            Text(
-                if (fromRank) "热门榜" else "搜索结果",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold,
-            )
+            if (isMiuix) {
+                top.yukonga.miuix.kmp.basic.SmallTitle(
+                    text = if (fromRank) "热门榜" else "搜索结果",
+                    modifier = Modifier.weight(1f, fill = false),
+                    insideMargin = PaddingValues(0.dp),
+                )
+            } else {
+                Text(
+                    if (fromRank) "热门榜" else "搜索结果",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+            }
             Spacer(Modifier.width(8.dp))
             Text(
                 if (loading) "加载中…" else "${shown.size} 部",
@@ -424,8 +433,10 @@ fun ComicScreen(
             }
 
             itemsIndexed(shown, key = { _, c -> c.url }) { i, c ->
+                val comicItem: @Composable () -> Unit = {
                 Column(
                     Modifier.clickable { onOpen(c) }
+                        .then(if (isMiuix) Modifier.padding(8.dp) else Modifier)
                 ) {
                     BookCover(
                         cover = c.cover,
@@ -467,6 +478,15 @@ fun ComicScreen(
                             maxLines = 1,
                         )
                     }
+                }
+                }
+                if (isMiuix) {
+                    top.yukonga.miuix.kmp.basic.Card(
+                        modifier = Modifier.fillMaxWidth(),
+                        cornerRadius = 16.dp,
+                    ) { comicItem() }
+                } else {
+                    comicItem()
                 }
             }
         }

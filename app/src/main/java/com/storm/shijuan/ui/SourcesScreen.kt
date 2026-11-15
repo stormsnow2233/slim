@@ -102,7 +102,7 @@ fun SourcesScreen(
     }
 
     if (showDeleteConfirmDialog) {
-        AlertDialog(
+        AdaptiveDialog(
             onDismissRequest = { showDeleteConfirmDialog = false },
             title = { Text("批量删除自定义书源") },
             text = { Text("确定要删除选中的 ${selectedIds.size} 个自定义书源吗？删除后无法恢复。") },
@@ -846,7 +846,7 @@ fun MineScreen(
     }
 
     if (showClear) {
-        AlertDialog(
+        AdaptiveDialog(
             onDismissRequest = { showClear = false },
             title = { Text("清除离线缓存？") },
             text = { Text("看过的章节正文会被清掉，下次阅读需要重新联网加载。书架和进度不受影响。") },
