@@ -749,6 +749,13 @@ class Store(val context: Context) {
         sp.edit().putString("jm_proxy_url", url.trim()).apply()
     }
 
+    // ── Z-Library 自定义反代 / Pages / Worker ──
+    fun zlibProxyUrl(): String = sp.getString("zlib_proxy_url", "https://zlib-proxy-bs3.pages.dev")?.trim().orEmpty().ifBlank { "https://zlib-proxy-bs3.pages.dev" }
+
+    fun setZlibProxyUrl(url: String) {
+        sp.edit().putString("zlib_proxy_url", url.trim()).apply()
+    }
+
     // ── 主题风格与深色模式偏好 ──
     var currentThemeStyle by mutableIntStateOf(sp.getInt("app_theme_style", 0))
         private set

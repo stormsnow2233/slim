@@ -370,7 +370,7 @@ object BookRepo {
         val effectiveDeadline = if (deadlineMs > 0L) deadlineMs else (t0 + budgetMs)
 
         if (src.apiKind == "zlib") {
-            val r = Zlib.search(key)
+            val r = Zlib.search(key, storeRef)
             val ok = r.first.isNotEmpty()
             val st = if (ok) SourceStatus.NORMAL else classifyStatus(false, 0, r.second, 0)
             val res = SourceResult(
@@ -1633,19 +1633,25 @@ object BookRepo {
     }
 }
 
-/** Z-Library 官方 App 接口 */
+/** Z-Library 官方 App 接口与 Pages 边缘反代支持 */
 object Zlib {
 
     private const val UA =
         "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
             "Chrome/122.0.0.0 Mobile Safari/537.36"
 
-    private val bases = listOf("https://z-lib.gd", "https://z-library.sk", "https://1lib.sk")
+    const val DEFAULT_PROXY = "https://zlib-proxy-bs3.pages.dev"
+    private val backupBases = listOf(DEFAULT_PROXY, "https://singlelogin.rs", "https://z-library.sk")
+
+    fun getBases(st: Store? = null): List<String> {
+        val custom = st?.zlibProxyUrl().orEmpty().trim().removeSuffix("/")
+        return if (custom.isNotBlank()) listOf(custom) + backupBases.filter { it != custom } else backupBases
+    }
 
     /** 返回 (书籍列表, 错误) */
-    fun search(key: String): Pair<List<Book>, String> {
+    fun search(key: String, store: Store? = null): Pair<List<Book>, String> {
         var lastErr = "连不上"
-        for (base in bases) {
+        for (base in getBases(store)) {
             val resp = Net.post(
                 "$base/eapi/book/search",
                 mapOf("message" to key, "page" to "1", "limit" to "20"),
@@ -1675,30 +1681,45 @@ object Zlib {
             val year = o.optString("year")
             val lang = o.optString("language")
             val publisher = o.optString("publisher")
+            val ext = o.optString("extension").lowercase()
+            val dlPath = o.optString("dl")
+            val href = o.optString("href")
             val desc = buildString {
                 if (publisher.isNotBlank()) append("出版社：$publisher\n")
                 if (year.isNotBlank() && year != "0") append("年份：$year\n")
                 if (lang.isNotBlank()) append("语言：$lang\n")
-                append("格式：").append(
-                    buildList {
-                        if (o.optString("extension").isNotBlank()) add(o.optString("extension").uppercase())
-                    }.joinToString(" / ").ifBlank { "EPUB / PDF" }
-                )
+                append("格式：").append(ext.uppercase().ifBlank { "EPUB / PDF" })
+                if (o.optString("filesizeString").isNotBlank()) {
+                    append(" · ").append(o.optString("filesizeString"))
+                }
             }
+
+            val targetUrl = when {
+                href.isNotBlank() -> {
+                    val cleanPath = href.substringAfter("://").substringAfter("/")
+                    "$base/$cleanPath"
+                }
+                id.isNotBlank() && hash.isNotBlank() -> "$base/book/$id/$hash"
+                else -> "$base/s/$title"
+            }
+            val downloadUrl = if (dlPath.isNotBlank()) {
+                if (dlPath.startsWith("http")) dlPath else "$base$dlPath"
+            } else targetUrl
+
             out.add(
                 Book(
                     name = title,
                     author = o.optString("author"),
                     cover = cover,
                     intro = desc,
-                    url = if (id.isNotBlank() && hash.isNotBlank()) "$base/book/$id/$hash" else "$base/s/$title",
+                    url = targetUrl,
                     sourceId = "zlib",
                     sourceName = "Z-Library",
                     year = year,
                     language = lang,
-                    kind = o.optString("extension").uppercase(),
+                    kind = ext.uppercase().ifBlank { "EPUB" },
                     external = true,
-                    downloadUrl = "$base/book/$id/$hash",
+                    downloadUrl = downloadUrl,
                 )
             )
         }

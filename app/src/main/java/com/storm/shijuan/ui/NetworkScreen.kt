@@ -43,6 +43,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
     var testing by remember { mutableStateOf(false) }
     var wenku8Proxy by remember { mutableStateOf(store.wenku8ProxyUrl()) }
     var jmProxy by remember { mutableStateOf(store.jmProxyUrl()) }
+    var zlibProxy by remember { mutableStateOf(store.zlibProxyUrl()) }
     var checks by remember { mutableStateOf<List<Triple<String, Boolean, String>>>(emptyList()) }
     val scope = rememberCoroutineScope()
 
@@ -70,6 +71,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
         scope.launch {
             val targets = listOf(
                 "轻小说文库" to "https://dl.wenku8.com/down.php?type=utf8&node=1&id=1",
+                "Z-Library" to "${store.zlibProxyUrl()}/eapi/book/search",
                 "极速漫画 CDN" to "https://s1.bzcdn.net/scomic/yirenzhixia-dongmantang/0/0-a1k5/1.jpg",
                 "漫画人图片" to "https://i.hamreus.com/images/comic/0/1/1.jpg",
                 "漫画柜" to "https://m.manhuagui.com/",
@@ -313,6 +315,32 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                         Text("已切换为你填写的专属反代", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                     } else {
                         Text("🟢 默认内置线路生效中", fontSize = 11.sp, color = OK_GREEN)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // ── Z-Library 反代设置 ──
+            Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(16.dp)) {
+                    Text("Z-Library 反代设置", style = MaterialTheme.typography.titleSmall)
+                    Spacer(Modifier.height(4.dp))
+                    Text(
+                        "默认走内置 Pages 边缘反代。如有自己的专属反代，可填在此处覆盖。",
+                        fontSize = 12.sp,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Spacer(Modifier.height(10.dp))
+                    ProxyField("自定义反代 URL", zlibProxy, "https://zlib-proxy-bs3.pages.dev") {
+                        zlibProxy = it.trim()
+                        store.setZlibProxyUrl(it.trim())
+                    }
+                    Spacer(Modifier.height(6.dp))
+                    if (zlibProxy.isNotBlank() && zlibProxy != "https://zlib-proxy-bs3.pages.dev") {
+                        Text("已切换为你填写的私有反代", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                    } else {
+                        Text("🟢 官方 Pages 专属反代已生效", fontSize = 11.sp, color = OK_GREEN)
                     }
                 }
             }

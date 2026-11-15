@@ -40,6 +40,12 @@ class CustomProxyAndNovelDownloaderTest {
         assertEquals("POST", deqixs?.search?.method)
         assertEquals("div.con@html", deqixs?.content?.body)
         assertEquals("div.dir a", deqixs?.toc?.list)
+
+        val zlib = list.firstOrNull { it.id == "zlib" }
+        assertNotNull("zlib source should be present", zlib)
+        assertEquals("Z-Library", zlib?.name)
+        assertEquals("zlib", zlib?.apiKind)
+        assertTrue("zlib should be enabled by default", zlib?.enabledByDefault == true)
     }
 
     @Test
