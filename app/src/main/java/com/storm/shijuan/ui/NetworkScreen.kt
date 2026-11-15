@@ -23,6 +23,9 @@ import androidx.compose.ui.unit.sp
 import com.storm.shijuan.data.Net
 import com.storm.shijuan.data.Store
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 
@@ -70,26 +73,58 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
         testing = true
         checks = emptyList()
         scope.launch {
-            val targets = listOf(
-                "轻小说文库" to "https://dl.wenku8.com/down.php?type=utf8&node=1&id=1",
-                "Z-Library" to "${store.zlibProxyUrl()}/eapi/book/search",
-                "极速漫画 CDN" to "https://s1.bzcdn.net/scomic/yirenzhixia-dongmantang/0/0-a1k5/1.jpg",
-                "漫画人图片" to "https://i.hamreus.com/images/comic/0/1/1.jpg",
-                "漫画柜" to "https://m.manhuagui.com/",
-                "笔趣书阁" to "https://www.biqugese.com/",
-                "无限轻小说" to "https://www.8novel.com/",
-                "SF轻小说" to "https://m.sfacg.com/",
+            val list = listOf(
+                "轻小说文库" to {
+                    val url = wenku8Proxy.ifBlank { "https://www.wenku8.cc" }.trimEnd('/') + "/index.php"
+                    Net.get(url, useCache = false, fast = true, timeoutMs = 8000L)
+                },
+                "得奇小说" to {
+                    Net.get("https://www.deqixs.org/", useCache = false, fast = true, timeoutMs = 8000L)
+                },
+                "速读谷" to {
+                    Net.get("https://www.sudugu.cc/", useCache = false, fast = true, timeoutMs = 8000L)
+                },
+                "笔趣书阁" to {
+                    Net.get("https://www.biqugese.com/", useCache = false, fast = true, timeoutMs = 8000L)
+                },
+                "轻小说百科" to {
+                    Net.get("https://lnovel.tw/", useCache = false, fast = true, timeoutMs = 8000L)
+                },
+                "SF轻小说" to {
+                    Net.get("https://m.sfacg.com/", useCache = false, fast = true, timeoutMs = 8000L)
+                },
+                "Z-Library" to {
+                    val base = zlibProxy.ifBlank { "https://zlib-proxy-bs3.pages.dev" }.trimEnd('/')
+                    Net.post(
+                        "$base/eapi/book/search",
+                        mapOf("message" to "ping", "limit" to "1"),
+                        headers = mapOf("X-Requested-With" to "XMLHttpRequest"),
+                        fast = true,
+                        timeoutMs = 8000L,
+                    )
+                },
+                "ESJ Zone" to {
+                    val base = esjProxy.ifBlank { "https://www.esjzone.one" }.trimEnd('/')
+                    Net.get("$base/", useCache = false, fast = true, timeoutMs = 8000L)
+                },
+                "漫画图片线路" to {
+                    Net.get("https://s1.bzcdn.net/scomic/yirenzhixia-dongmantang/0/0-a1k5/1.jpg", useCache = false, fast = true, timeoutMs = 8000L)
+                },
             )
-            val acc = ArrayList<Triple<String, Boolean, String>>()
+            val resultsMap = java.util.concurrent.ConcurrentHashMap<String, Triple<String, Boolean, String>>()
             withContext(Dispatchers.IO) {
-                for ((name, url) in targets) {
-                    val t0 = System.currentTimeMillis()
-                    val r = Net.get(url, useCache = false)
-                    val ms = System.currentTimeMillis() - t0
-                    val row = if (r.ok) Triple(name, true, "${ms}ms")
-                    else Triple(name, false, r.error)
-                    acc.add(row)
-                    checks = acc.toList()
+                coroutineScope {
+                    list.map { (name, probe) ->
+                        async {
+                            val t0 = System.currentTimeMillis()
+                            val r = probe()
+                            val ms = System.currentTimeMillis() - t0
+                            val row = if (r.ok) Triple(name, true, "${ms}ms")
+                            else Triple(name, false, r.error.ifBlank { "连接失败" })
+                            resultsMap[name] = row
+                            checks = list.mapNotNull { resultsMap[it.first] }
+                        }
+                    }.awaitAll()
                 }
             }
             testing = false
