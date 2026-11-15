@@ -400,7 +400,7 @@ object BookRepo {
             return cached
         }
 
-        val budgetMs = if (src.apiKind == "sfacg" || src.id == "sfacg") 20_000L else 12_000L
+        val budgetMs = if (src.apiKind == "sfacg" || src.id == "sfacg") 20_000L else 15_000L
         val effectiveDeadline = if (deadlineMs > 0L) deadlineMs else (t0 + budgetMs)
 
         if (src.apiKind == "zlib") {
@@ -508,12 +508,17 @@ object BookRepo {
                 val lowerBody = resp.body.lowercase()
                 val lowerVia = resp.via.lowercase()
 
-                if (lowerBody.contains("aliyunwaf") || lowerBody.contains("acw_sc__v2") ||
-                    lowerBody.contains("<h1>welcome</h1>") || lowerBody.contains("just a moment") || lowerBody.contains("cf-browser-verification")) {
+                if (lowerBody.contains("aliyunwaf") || lowerBody.contains("acw_sc__v2")) {
+                    val st = SourceStatus.SITE_ERROR
+                    val err = "源站已启用阿里云盾反爬，暂不支持直连搜索"
+                    val res = SourceResult(src.id, src.name, false, emptyList(), err, System.currentTimeMillis() - t0, st, 403)
+                    recordFailure(src.id, st, 403, err)
+                    return res
+                }
+
+                if (lowerBody.contains("<h1>welcome</h1>") || lowerBody.contains("just a moment") || lowerBody.contains("cf-browser-verification")) {
                     val st = SourceStatus.ACCESS_RESTRICTED
-                    val err = if (lowerBody.contains("aliyunwaf") || lowerBody.contains("acw_sc__v2"))
-                        "触发阿里云安全质询（Aliyun WAF 反爬盾），源站搜索受限"
-                    else "触发源站浏览器安全验证（Cloudflare/WAF），需在书源管理中网页验证"
+                    val err = "触发源站浏览器安全验证（Cloudflare/WAF），需在书源管理中网页验证"
                     val res = SourceResult(src.id, src.name, false, emptyList(), err, System.currentTimeMillis() - t0, st, 403)
                     recordFailure(src.id, st, 403, err)
                     return res
@@ -835,9 +840,10 @@ object BookRepo {
         val raw = metaText(doc, "og:novel:book_name")
             .ifBlank { metaText(doc, "og:title") }
             .ifBlank { metaText(doc, "title") }
+            .ifBlank { runCatching { doc.selectFirst("h1 a")?.text().orEmpty() }.getOrDefault("") }
             .ifBlank { runCatching { doc.selectFirst("h1")?.text().orEmpty() }.getOrDefault("") }
             .ifBlank { runCatching { doc.title() }.getOrDefault("") }
-        val name = (listOf(Regex("^《(.+?)》"), Regex("^(.+?)[-_|｜（(]"))
+        val name = (listOf(Regex("^《(.+?)》"), Regex("^(.+?)[-_|｜（(]"), Regex("^(.+?)最新章节"))
             .firstNotNullOfOrNull { p -> p.find(raw)?.groupValues?.get(1)?.trim()?.takeIf { it.length >= 2 } }
             ?: raw).replace(Regex("[《》]"), "").trim()
         if (name.isBlank() || isFakeBook(name, landed)) return null
@@ -1655,7 +1661,7 @@ object BookRepo {
         val active = sources.filterNot { isBlacklisted(it.id) }
         if (active.isEmpty()) return
         val latch = java.util.concurrent.CountDownLatch(active.size)
-        val deadlineMs = System.currentTimeMillis() + 14_000L
+        val deadlineMs = System.currentTimeMillis() + 16_000L
         val searchTag = tag ?: "searchAll_${System.currentTimeMillis()}"
         val futures = java.util.Collections.synchronizedList(ArrayList<java.util.concurrent.Future<*>>())
         activeSearchFutures[searchTag] = futures

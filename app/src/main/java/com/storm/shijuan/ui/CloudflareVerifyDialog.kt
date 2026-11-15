@@ -183,11 +183,12 @@ fun CloudflareVerifyDialog(
                                 override fun shouldOverrideUrlLoading(view: WebView?, request: android.webkit.WebResourceRequest?): Boolean {
                                     val target = request?.url?.toString().orEmpty()
                                     val h = request?.url?.host.orEmpty().lowercase()
-                                    // 阻断流氓第三方广告网站劫持重定向（只允许目标源站及其正规跳转）
+                                    // 阻断流氓第三方广告网站劫持重定向（允许目标源站、其子域名及其正规跳转）
                                     val allowedHost = runCatching { java.net.URI(url).host }.getOrNull()?.lowercase().orEmpty()
+                                    val rootDomain = allowedHost.removePrefix("www.").removePrefix("m.")
                                     val isAllowed = h == allowedHost ||
-                                        (allowedHost.contains("wenku8") && (h.contains("wenku8.cc") || h.contains("wenku8.net") || h.contains("wenku8.com"))) ||
-                                        h.endsWith(".$allowedHost")
+                                        (rootDomain.isNotBlank() && (h == rootDomain || h.endsWith(".$rootDomain"))) ||
+                                        (allowedHost.contains("wenku8") && (h.contains("wenku8.cc") || h.contains("wenku8.net") || h.contains("wenku8.com")))
                                     if (!isAllowed && target.startsWith("http")) {
                                         return true // 拦截恶意广告重定向
                                     }

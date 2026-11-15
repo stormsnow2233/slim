@@ -199,6 +199,8 @@ object Net {
             h.contains("biquge") ||
             h.contains("xbiquge") ||
             h.contains("sfacg.") ||
+            h.contains("sudugu.") ||
+            h.contains("deqixs.") ||
             h.contains("ciweimao.") ||
             h.contains("qidian.") ||
             h.contains("zongheng.") ||

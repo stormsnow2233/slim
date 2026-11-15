@@ -359,7 +359,7 @@ class AuditAndFixVerificationTest {
         assertTrue(def.contains("wenku8"))
         assertTrue(def.contains("lnovel"))
         assertTrue(def.contains("esjzone"))
-        assertTrue("17K 是替换起点之后的可用正版源，应默认开启", def.contains("17k"))
+        assertFalse("17K 源站已启用阿里云盾反爬，不应默认开启", def.contains("17k"))
         assertTrue("速读谷搜索重定向已适配，应默认开启", def.contains("sudugu"))
         assertNull("起点全站 JS 渲染，静态抓不到目录和正文，源已下线", Sources.byId("qidian"))
         assertFalse("novel8 requires JS rendering for chapter text and should not be enabled by default", def.contains("novel8"))
