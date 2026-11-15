@@ -756,6 +756,13 @@ class Store(val context: Context) {
         sp.edit().putString("zlib_proxy_url", url.trim()).apply()
     }
 
+    // ── ESJ Zone 自定义反代 / Pages / Worker ──
+    fun esjProxyUrl(): String = sp.getString("esj_proxy_url", "")?.trim().orEmpty()
+
+    fun setEsjProxyUrl(url: String) {
+        sp.edit().putString("esj_proxy_url", url.trim()).apply()
+    }
+
     // ── 主题风格与深色模式偏好 ──
     var currentThemeStyle by mutableIntStateOf(sp.getInt("app_theme_style", 0))
         private set

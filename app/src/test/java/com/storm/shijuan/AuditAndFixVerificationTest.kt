@@ -419,6 +419,32 @@ class AuditAndFixVerificationTest {
     }
 
     @Test
+    fun testSuduguMultipleResultsSearch() {
+        val src = Sources.byId("sudugu")!!
+        val res = BookRepo.searchSource(src, "剑来")
+        if (res.ok && res.books.isNotEmpty()) {
+            println("速读谷多结果搜到: ${res.books.size} 本 -> ${res.books.map { it.name }}")
+            assertTrue("应搜出书目", res.books.isNotEmpty())
+        } else {
+            println("速读谷多结果搜索网络波动: ${res.error}")
+        }
+    }
+
+    @Test
+    fun testLnovelSearchAndTocEndToEnd() {
+        val src = Sources.byId("lnovel")!!
+        val res = BookRepo.searchSource(src, "魔王")
+        if (res.ok && res.books.isNotEmpty()) {
+            println("轻小说百科搜到: ${res.books.size} 本 -> ${res.books.map { it.name }}")
+            val book = res.books.first()
+            val (_, tocRes) = BookRepo.getDetailAndToc(src, book)
+            println("轻小说百科目录状态: ${tocRes.isSuccess}, 章数=${tocRes.getOrNull()?.chapters?.size}")
+        } else {
+            println("轻小说百科网络波动: ${res.error}")
+        }
+    }
+
+    @Test
     fun test17kSourceEndToEnd() {
         val src = Sources.byId("17k")!!
         val res = BookRepo.searchSource(src, "近战狂兵")

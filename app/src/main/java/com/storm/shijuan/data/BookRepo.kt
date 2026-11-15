@@ -328,6 +328,14 @@ object BookRepo {
         return if (src.bases.contains(base)) base else null
     }
 
+    fun resolveBase(src: Source): String {
+        when (src.id) {
+            "wenku8" -> storeRef?.wenku8ProxyUrl()?.takeIf { it.isNotBlank() }?.let { return it }
+            "esjzone" -> storeRef?.esjProxyUrl()?.takeIf { it.isNotBlank() }?.let { return it }
+        }
+        return getActiveBase(src) ?: src.base
+    }
+
     // ── 任务取消管理 ──
     private val activeSearchFutures = ConcurrentHashMap<Any, MutableList<java.util.concurrent.Future<*>>>()
 
@@ -404,8 +412,16 @@ object BookRepo {
         var lastErr = "连接不上"
         var lastHttpCode = 0
         val known = getActiveBase(src)
-        val ordered = if (known != null && src.bases.contains(known))
-            listOf(known) + src.bases.filter { it != known } else src.bases
+        val customProxyBase = when (src.id) {
+            "wenku8" -> storeRef?.wenku8ProxyUrl()?.takeIf { it.isNotBlank() }
+            "esjzone" -> storeRef?.esjProxyUrl()?.takeIf { it.isNotBlank() }
+            else -> null
+        }
+        val ordered = if (customProxyBase != null) {
+            listOf(customProxyBase) + src.bases.filter { it != customProxyBase }
+        } else if (known != null && src.bases.contains(known)) {
+            listOf(known) + src.bases.filter { it != known }
+        } else src.bases
 
         for (base in ordered) {
             val now = System.currentTimeMillis()
@@ -466,9 +482,12 @@ object BookRepo {
                 val lowerBody = resp.body.lowercase()
                 val lowerVia = resp.via.lowercase()
 
-                if (lowerBody.contains("<h1>welcome</h1>") || lowerBody.contains("just a moment") || lowerBody.contains("cf-browser-verification")) {
+                if (lowerBody.contains("aliyunwaf") || lowerBody.contains("acw_sc__v2") ||
+                    lowerBody.contains("<h1>welcome</h1>") || lowerBody.contains("just a moment") || lowerBody.contains("cf-browser-verification")) {
                     val st = SourceStatus.ACCESS_RESTRICTED
-                    val err = "触发源站浏览器安全验证（Cloudflare/WAF），需在书源管理中网页验证"
+                    val err = if (lowerBody.contains("aliyunwaf") || lowerBody.contains("acw_sc__v2"))
+                        "触发阿里云安全质询（Aliyun WAF 反爬盾），源站搜索受限"
+                    else "触发源站浏览器安全验证（Cloudflare/WAF），需在书源管理中网页验证"
                     val res = SourceResult(src.id, src.name, false, emptyList(), err, System.currentTimeMillis() - t0, st, 403)
                     recordFailure(src.id, st, 403, err)
                     return res
@@ -569,8 +588,16 @@ object BookRepo {
         var lastErr = "连接不上"
         var lastCode = 0
         val known = getActiveBase(src)
-        val ordered = if (known != null && src.bases.contains(known))
-            listOf(known) + src.bases.filter { it != known } else src.bases
+        val customProxyBase = when (src.id) {
+            "wenku8" -> storeRef?.wenku8ProxyUrl()?.takeIf { it.isNotBlank() }
+            "esjzone" -> storeRef?.esjProxyUrl()?.takeIf { it.isNotBlank() }
+            else -> null
+        }
+        val ordered = if (customProxyBase != null) {
+            listOf(customProxyBase) + src.bases.filter { it != customProxyBase }
+        } else if (known != null && src.bases.contains(known)) {
+            listOf(known) + src.bases.filter { it != known }
+        } else src.bases
         for (base in ordered) {
             val now = System.currentTimeMillis()
             if (now >= effectiveDeadline - 800L) {
@@ -956,7 +983,7 @@ object BookRepo {
                 }
             }
         }
-        val base = getActiveBase(src) ?: src.base
+        val base = resolveBase(src)
         val t = src.toc
         // 有的站书页和目录页是分开的两页（SF 手机站就是），规则里可以单独给目录页模板
         val tocTpl = t?.page.orEmpty()
@@ -1195,7 +1222,7 @@ object BookRepo {
             return Result.failure(Exception(msg))
         }
 
-        val base = getActiveBase(src) ?: src.base
+        val base = resolveBase(src)
         val isSlow = src.id == "sfacg" || chapter.url.contains("sfacg.com")
         var resp = Net.get(chapter.url, src.charset, base + "/", slow = isSlow, profile = src.requestProfile)
         if (!resp.ok || isSoftError(resp.body)) {
@@ -1500,7 +1527,7 @@ object BookRepo {
     fun health(src: Source): SourceResult {
         if (src.probeMode.equals("URL", ignoreCase = true) && src.probeUrl.isNotBlank()) {
             val t0 = System.currentTimeMillis()
-            val base = getActiveBase(src) ?: src.base
+            val base = resolveBase(src)
             val targetUrl = if (src.probeUrl.startsWith("http")) src.probeUrl else base + src.probeUrl
             val resp = Net.get(targetUrl, src.charset, base + "/", profile = src.requestProfile)
             val ms = System.currentTimeMillis() - t0
