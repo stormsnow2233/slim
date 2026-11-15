@@ -347,6 +347,12 @@ class Store(val context: Context) {
         sp.edit().putString("comic_downloads_v1", json).apply()
     }
 
+    fun loadNovelDownloadTasks(): String? = sp.getString("novel_download_tasks_v1", null)
+
+    fun saveNovelDownloadTasks(json: String) {
+        sp.edit().putString("novel_download_tasks_v1", json).apply()
+    }
+
     // ── 漫画记忆 ──
     fun comicRecords(): List<ComicRecord> = ComicRecord.listFrom(sp.getString("comic_records", null))
 
@@ -574,73 +580,36 @@ class Store(val context: Context) {
         return cur
     }
 
-    // ── 网络代理与分流 ──
-    fun officialProxyEnabled(): Boolean = sp.getBoolean("official_proxy_enabled", false)
+    // ── 网络代理 ──
+    fun officialProxyEnabled(): Boolean = false
 
     fun setOfficialProxyEnabled(enabled: Boolean) {
-        sp.edit().putBoolean("official_proxy_enabled", enabled).apply()
-        if (enabled) {
-            // 二选一互斥：开启官方代理时，关闭自定义代理
-            val cur = proxy()
-            if (cur.enabled) {
-                sp.edit().putBoolean("proxy_on", false).apply()
-            }
-        }
+        sp.edit().putBoolean("official_proxy_enabled", false).apply()
         applyEffectiveProxy()
     }
 
-    fun vpnSplitEnabled(): Boolean = sp.getBoolean("vpn_split_enabled", true)
+    fun vpnSplitEnabled(): Boolean = false
 
     fun setVpnSplitEnabled(enabled: Boolean) {
-        sp.edit().putBoolean("vpn_split_enabled", enabled).apply()
+        sp.edit().putBoolean("vpn_split_enabled", false).apply()
         applyEffectiveProxy()
     }
 
-    fun isVpnActive(): Boolean = runCatching {
-        val cm = context.getSystemService(Context.CONNECTIVITY_SERVICE) as? android.net.ConnectivityManager ?: return@runCatching false
-        if (android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.M) {
-            val net = cm.activeNetwork ?: return@runCatching false
-            val caps = cm.getNetworkCapabilities(net) ?: return@runCatching false
-            caps.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN)
-        } else {
-            @Suppress("DEPRECATION")
-            cm.allNetworks.any { n ->
-                cm.getNetworkCapabilities(n)?.hasTransport(android.net.NetworkCapabilities.TRANSPORT_VPN) == true
-            }
-        }
-    }.getOrDefault(false)
+    fun isVpnActive(): Boolean = false
 
     fun applyEffectiveProxy() {
-        val official = officialProxyEnabled()
-        val custom = proxy()
-        val split = vpnSplitEnabled()
-        val vpnActive = isVpnActive()
+        // 清理老旧官方代理状态
+        if (sp.getBoolean("official_proxy_enabled", false)) {
+            sp.edit().putBoolean("official_proxy_enabled", false).apply()
+        }
+        runCatching { OfficialVlessProxyServer.stop() }
+        Net.setOfficialProxyActive(false)
 
-        when {
-            official -> {
-                if (split && vpnActive) {
-                    // 分流开启且检测到本地 VPN：智能分流，自带代理不生效，由系统梯子代理
-                    Net.setOfficialProxyActive(false)
-                    OfficialVlessProxyServer.stop()
-                    Net.setProxy(Net.ProxyCfg(enabled = false))
-                } else {
-                    // 分流关闭（强制走自带）或未检测到 VPN：生效官方自带优选代理
-                    Net.setOfficialProxyActive(true)
-                    val port = OfficialVlessProxyServer.ensureStarted()
-                    Net.setProxy(Net.ProxyCfg(enabled = true, socks = true, host = "127.0.0.1", port = port))
-                }
-            }
-            custom.enabled -> {
-                Net.setOfficialProxyActive(false)
-                OfficialVlessProxyServer.stop()
-                Net.setProxy(custom)
-            }
-            else -> {
-                // 两个都关：裸连
-                Net.setOfficialProxyActive(false)
-                OfficialVlessProxyServer.stop()
-                Net.setProxy(Net.ProxyCfg(enabled = false))
-            }
+        val custom = proxy()
+        if (custom.enabled && custom.usable) {
+            Net.setProxy(custom)
+        } else {
+            Net.setProxy(Net.ProxyCfg(enabled = false))
         }
     }
 

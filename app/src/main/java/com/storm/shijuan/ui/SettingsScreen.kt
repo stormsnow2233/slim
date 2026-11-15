@@ -253,7 +253,7 @@ fun SettingsScreen(
             MiuixCardGroup {
                 MiuixPreferenceItem(
                     title = "网络设置",
-                    subtitle = if (Net.isOfficialProxyActive()) "官方代理开启中 · 漫画加速，小说直连" else if (Net.proxy().usable) "已设置自定义代理 · ${Net.proxy().host}:${Net.proxy().port}" else "直连模式 · 支持配置官方加速或自定义代理",
+                    subtitle = if (Net.proxy().usable && Net.proxy().enabled) "已开启自定义代理 · ${Net.proxy().host}:${Net.proxy().port}" else "直连模式 · 支持配置自定义代理与站点反代",
                     icon = Icons.Rounded.Wifi,
                     onClick = onOpenNetwork
                 )

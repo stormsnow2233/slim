@@ -488,9 +488,10 @@ class AuditAndFixVerificationTest {
     @Test
     fun testBuiltinSourceVaultDecryption() {
         val all = Sources.ALL
-        assertEquals("应包含 7 个内置官方书源", 7, all.size)
+        assertEquals("应包含 8 个内置官方书源", 8, all.size)
         val ids = all.map { it.id }.toSet()
         assertTrue(ids.contains("biqugese"))
+        assertTrue(ids.contains("deqixs"))
         assertTrue(ids.contains("sudugu"))
         assertTrue(ids.contains("17k"))
         assertTrue(ids.contains("wenku8"))

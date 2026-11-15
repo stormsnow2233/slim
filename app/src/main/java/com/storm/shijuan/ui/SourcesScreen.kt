@@ -569,8 +569,7 @@ private fun SourceCard(
     val isCustom = src.status == "custom"
     val haptic = LocalHapticFeedback.current
 
-    val needsVerify = src.id == "wenku8" ||
-        check?.status == com.storm.shijuan.data.SourceStatus.ACCESS_RESTRICTED ||
+    val needsVerify = check?.status == com.storm.shijuan.data.SourceStatus.ACCESS_RESTRICTED ||
         check?.status == com.storm.shijuan.data.SourceStatus.NEEDS_LOGIN ||
         check?.error?.contains("Cloudflare") == true ||
         check?.error?.contains("安全质询") == true ||

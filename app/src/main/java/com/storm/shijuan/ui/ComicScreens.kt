@@ -622,7 +622,10 @@ private fun DownloadPanel(
                             Text(t.comic.name, fontSize = 14.sp, fontWeight = FontWeight.Medium, maxLines = 1, overflow = TextOverflow.Ellipsis)
                             Text(
                                 when (t.state) {
-                                    STATE_RUNNING -> t.currentChapter.ifBlank { "准备中…" }
+                                    STATE_RUNNING -> {
+                                        val spd = if (t.speedFormatted.isNotBlank()) " · ${t.speedFormatted}" else ""
+                                        "${t.currentChapter.ifBlank { "准备中…" }}$spd"
+                                    }
                                     STATE_PAUSED -> "已暂停"
                                     STATE_DONE -> "已缓存完 · ${t.pagesDone} 张"
                                     STATE_ERROR -> t.error.ifBlank { "出错了" }
@@ -652,7 +655,8 @@ private fun DownloadPanel(
                     Row {
                         Text(
                             "${t.doneChapters}/${t.total} 话 · ${t.pagesDone} 张" +
-                                if (t.bytes > 0) " · ${fmtSize(t.bytes)}" else "",
+                                (if (t.bytes > 0) " · ${fmtSize(t.bytes)}" else "") +
+                                (if (t.speedFormatted.isNotBlank()) " · ${t.speedFormatted}" else ""),
                             fontSize = 10.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
@@ -868,7 +872,10 @@ fun ComicDetailScreen(
                                 val label = when {
                                     !online -> "离线不能缓存"
                                     else -> when (dlTask?.state) {
-                                        STATE_RUNNING -> "暂停 ${dlTask.doneChapters}/${dlTask.total}"
+                                        STATE_RUNNING -> {
+                                            val spd = if (dlTask.speedFormatted.isNotBlank()) " (${dlTask.speedFormatted})" else ""
+                                            "暂停 ${dlTask.doneChapters}/${dlTask.total}$spd"
+                                        }
                                         STATE_PAUSED -> "继续缓存"
                                         STATE_ERROR -> "重试缓存"
                                         STATE_DONE -> "已缓存完"

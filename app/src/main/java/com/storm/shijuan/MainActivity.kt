@@ -98,6 +98,7 @@ sealed class Route {
 fun ShijuanApp(store: Store) {
     val ctx = LocalContext.current
     remember { ComicDownloader.init(ctx.applicationContext, store); 0 }
+    remember { NovelDownloader.init(ctx.applicationContext, store); 0 }
     remember { Offline.init(ctx.applicationContext) }
     // 自定义书源：启动时从本地读出来注册，跟内置源一起参与搜索
     remember { CustomSources.init(ctx.applicationContext, store); 0 }

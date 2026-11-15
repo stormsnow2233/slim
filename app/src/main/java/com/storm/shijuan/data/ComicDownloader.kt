@@ -12,12 +12,16 @@ import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Semaphore
+import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.util.concurrent.ConcurrentHashMap
+import java.util.concurrent.atomic.AtomicInteger
 
 /** 一个缓存任务：整本或某几话，落盘在 App 私有目录 */
 data class DownloadTask(
@@ -31,10 +35,19 @@ data class DownloadTask(
     val error: String = "",
     val bytes: Long = 0,
     val createdAt: Long = 0,
+    val speedBytesPerSec: Long = 0L,
 ) {
     val total: Int get() = chapters.size
     val percent: Float
         get() = if (total == 0) 0f else (doneChapters.toFloat() / total).coerceIn(0f, 1f)
+
+    val speedFormatted: String
+        get() {
+            if (state != STATE_RUNNING || speedBytesPerSec <= 0L) return ""
+            val kb = speedBytesPerSec / 1024.0
+            return if (kb >= 1024) String.format("%.1f MB/s", kb / 1024.0)
+            else String.format("%.0f KB/s", kb)
+        }
 
     fun toJson(): JSONObject = JSONObject().apply {
         put("key", key)
@@ -332,9 +345,35 @@ object ComicDownloader {
         launchWorker(task)
     }
 
+    private class SpeedSampler {
+        private var lastSampleTime = System.currentTimeMillis()
+        private var bytesSinceSample = 0L
+        @Volatile var currentSpeed: Long = 0L
+            private set
+
+        @Synchronized
+        fun addBytes(bytes: Long) {
+            bytesSinceSample += bytes
+            val now = System.currentTimeMillis()
+            val dt = now - lastSampleTime
+            if (dt >= 500) {
+                currentSpeed = (bytesSinceSample * 1000L / dt.coerceAtLeast(1))
+                lastSampleTime = now
+                bytesSinceSample = 0L
+            }
+        }
+
+        @Synchronized
+        fun reset() {
+            currentSpeed = 0L
+            bytesSinceSample = 0L
+            lastSampleTime = System.currentTimeMillis()
+        }
+    }
+
     fun pause(key: String) {
         paused[key] = true
-        update(key) { it.copy(state = STATE_PAUSED) }
+        update(key) { it.copy(state = STATE_PAUSED, speedBytesPerSec = 0L) }
         cancelNotif(key)
     }
 
@@ -386,7 +425,7 @@ object ComicDownloader {
         jobs[task.key]?.cancel()
         jobs[task.key] = scope.launch {
             runCatching { work(task) }
-                .onFailure { e -> update(task.key) { it.copy(state = STATE_ERROR, error = e.message ?: "缓存失败") } }
+                .onFailure { e -> update(task.key) { it.copy(state = STATE_ERROR, speedBytesPerSec = 0L, error = e.message ?: "缓存失败") } }
         }
     }
 
@@ -396,10 +435,15 @@ object ComicDownloader {
         var done = startFrom
         var pages = tasks.firstOrNull { it.key == task.key }?.pagesDone ?: 0
         var bytes = tasks.firstOrNull { it.key == task.key }?.bytes ?: 0L
+        val sampler = SpeedSampler()
+        var lastUiUpdateTime = 0L
 
         for (i in startFrom until task.chapters.size) {
             if (cancelled[task.key] == true) return
-            while (paused[task.key] == true) delay(250)
+            while (paused[task.key] == true) {
+                sampler.reset()
+                delay(250)
+            }
 
             val ch = task.chapters[i]
             val curTask = task.copy(
@@ -408,15 +452,30 @@ object ComicDownloader {
                 doneChapters = done,
                 pagesDone = pages,
                 bytes = bytes,
+                speedBytesPerSec = sampler.currentSpeed,
                 error = "",
             )
             update(task.key) { curTask }
             notifyProgress(curTask)
 
-            val saved = runCatching { downloadOne(comic, ch, i, task.key) { addBytes, addPages ->
-                bytes += addBytes
-                pages += addPages
-            } }.getOrElse { 0 }
+            val saved = runCatching {
+                downloadOne(comic, ch, i, task.key) { addBytes, addPages ->
+                    bytes += addBytes
+                    pages += addPages
+                    sampler.addBytes(addBytes)
+                    val now = System.currentTimeMillis()
+                    if (now - lastUiUpdateTime >= 600) {
+                        lastUiUpdateTime = now
+                        update(task.key) {
+                            it.copy(
+                                pagesDone = pages,
+                                bytes = bytes,
+                                speedBytesPerSec = sampler.currentSpeed,
+                            )
+                        }
+                    }
+                }
+            }.getOrElse { 0 }
 
             if (saved == 0) {
                 // 这一话拿不到图，记一笔继续下一话，不整本卡死
@@ -424,7 +483,7 @@ object ComicDownloader {
             }
             done = i + 1
             update(task.key) {
-                it.copy(doneChapters = done, pagesDone = pages, bytes = bytes)
+                it.copy(doneChapters = done, pagesDone = pages, bytes = bytes, speedBytesPerSec = sampler.currentSpeed)
             }
             persist()
         }
@@ -443,6 +502,7 @@ object ComicDownloader {
             pagesDone = realPages,
             bytes = realBytes,
             currentChapter = "",
+            speedBytesPerSec = 0L,
         )
         update(task.key) { finishedTask }
         jobs.remove(task.key)
@@ -450,7 +510,7 @@ object ComicDownloader {
         notifyDone(finishedTask)
     }
 
-    /** 下一话，返回拿到的图片数 */
+    /** 下一话，返回拿到的图片数（使用 4 并发协程下载单话图片） */
     private suspend fun downloadOne(
         comic: Comic,
         chapter: ComicChapter,
@@ -468,32 +528,43 @@ object ComicDownloader {
         dir.mkdirs()
         val reqHeaders = ComicRepo.imageHeaders(comic) + pages.headers
         val referer = pages.referer.ifBlank { reqHeaders["Referer"].orEmpty() }
-        var ok = 0
-        pages.images.forEachIndexed { idx, url ->
-            if (cancelled[taskKey] == true) return@forEachIndexed
-            while (paused[taskKey] == true) {
-                delay(200)
-            }
-            val ext = url.substringAfterLast('.').substringBefore('?').take(5)
-                .lowercase().ifBlank { "jpg" }.let { if (it.length > 4) "jpg" else it }
-            val f = File(dir, "${idx + 1}.$ext")
-            if (f.exists() && f.length() > 512 && isImageFile(f)) {
-                ok++
-                return@forEachIndexed
-            } else if (f.exists() && !isImageFile(f)) {
-                f.delete()
-            }
-            val got = Net.downloadTo(url, f, reqHeaders, referer = referer)
-            if (got > 0 && isImageFile(f)) {
-                if (url.contains("/media/photos/") || reqHeaders.containsKey("X-JM")) {
-                    JmImageDescrambler.descrambleFile(f, url)
+
+        val semaphore = Semaphore(4)
+        val okCounter = AtomicInteger(0)
+
+        coroutineScope {
+            pages.images.forEachIndexed { idx, url ->
+                launch {
+                    semaphore.withPermit {
+                        if (cancelled[taskKey] == true) return@withPermit
+                        while (paused[taskKey] == true) {
+                            delay(200)
+                        }
+                        val ext = url.substringAfterLast('.').substringBefore('?').take(5)
+                            .lowercase().ifBlank { "jpg" }.let { if (it.length > 4) "jpg" else it }
+                        val f = File(dir, "${idx + 1}.$ext")
+                        if (f.exists() && f.length() > 512 && isImageFile(f)) {
+                            okCounter.incrementAndGet()
+                            return@withPermit
+                        } else if (f.exists() && !isImageFile(f)) {
+                            f.delete()
+                        }
+                        val got = Net.downloadTo(url, f, reqHeaders, referer = referer)
+                        if (got > 0 && isImageFile(f)) {
+                            if (url.contains("/media/photos/") || reqHeaders.containsKey("X-JM")) {
+                                JmImageDescrambler.descrambleFile(f, url)
+                            }
+                            okCounter.incrementAndGet()
+                            onProgress(got, 1)
+                        } else {
+                            f.delete()
+                        }
+                    }
                 }
-                ok++
-                onProgress(got, 1)
-            } else {
-                f.delete()
             }
         }
+
+        val ok = okCounter.get()
         // 一页都没下下来的话，把空目录收掉，免得显示成已缓存
         if (ok == 0) runCatching { dir.deleteRecursively() }
         // 整话的图都齐了才盖完成章，断在半路的留着下次补

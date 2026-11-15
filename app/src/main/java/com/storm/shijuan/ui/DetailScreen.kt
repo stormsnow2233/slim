@@ -45,6 +45,8 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeoutOrNull
 
+private val OK_GREEN = Color(0xFF4C7A54)
+
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 fun DetailScreen(
@@ -317,6 +319,16 @@ fun DetailScreen(
                                         requestExport("epub")
                                     },
                                 )
+                                DropdownMenuItem(
+                                    text = { Text("离线缓存整本") },
+                                    leadingIcon = { Icon(Icons.Rounded.CloudDownload, null) },
+                                    trailingIcon = { Text("${toc.size} 章", fontSize = 11.sp, color = MaterialTheme.colorScheme.onSurfaceVariant) },
+                                    onClick = {
+                                        menuOpen = false
+                                        NovelDownloader.start(full, toc)
+                                        Toast.makeText(ctx, "已开始后台离线缓存", Toast.LENGTH_SHORT).show()
+                                    },
+                                )
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                             }
                             DropdownMenuItem(
@@ -488,6 +500,92 @@ fun DetailScreen(
                     if (toc.isNotEmpty()) {
                         TextButton(onClick = { read(toc.size - 1) }) {
                             Text("看最新")
+                        }
+                    }
+                }
+
+                // ── 离线缓存整本状态条 ──
+                if (!full.isLocalOrImported && !full.external && toc.isNotEmpty()) {
+                    val dlTask = NovelDownloader.tasks.firstOrNull { it.key == NovelDownloader.keyOf(full) }
+                    val isRunning = dlTask?.state == STATE_RUNNING
+                    val cachedCount = remember(full.url, toc.size, dlTask?.doneChapters) {
+                        NovelDownloader.cachedCount(full, toc)
+                    }
+                    val isAllCached = toc.isNotEmpty() && (cachedCount >= toc.size || dlTask?.state == STATE_DONE)
+
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = if (isAllCached) OK_GREEN.copy(alpha = 0.12f)
+                        else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(horizontal = 20.dp, vertical = 4.dp)
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Icon(
+                                if (isAllCached) Icons.Rounded.CheckCircle else Icons.Rounded.CloudDownload,
+                                contentDescription = null,
+                                modifier = Modifier.size(18.dp),
+                                tint = if (isAllCached) OK_GREEN else MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Column(Modifier.weight(1f)) {
+                                Text(
+                                    when {
+                                        isAllCached -> "已完成整本离线 · 全书共 ${toc.size} 章均已存入本地"
+                                        isRunning -> "正在离线中 · ${dlTask?.doneChapters ?: cachedCount}/${toc.size} 章" +
+                                            (if (dlTask?.speedFormatted?.isNotBlank() == true) " · ${dlTask.speedFormatted}" else "")
+                                        dlTask?.state == STATE_PAUSED -> "离线已暂停 · 已缓存 $cachedCount/${toc.size} 章"
+                                        cachedCount > 0 -> "已离线 $cachedCount/${toc.size} 章 · 随时可离线阅读"
+                                        else -> "整本离线缓存 · 5协程极速下载，断网随心读"
+                                    },
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Medium,
+                                    color = if (isAllCached) OK_GREEN else MaterialTheme.colorScheme.onSurface,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                                if (isRunning && dlTask != null) {
+                                    Spacer(Modifier.height(4.dp))
+                                    AdaptiveLinearProgressIndicator(
+                                        progress = { dlTask.percent },
+                                        modifier = Modifier.fillMaxWidth().height(4.dp)
+                                    )
+                                }
+                            }
+                            Spacer(Modifier.width(8.dp))
+                            FilledTonalButton(
+                                onClick = {
+                                    when {
+                                        isRunning -> NovelDownloader.pause(dlTask!!.key)
+                                        dlTask?.state == STATE_PAUSED -> NovelDownloader.resume(dlTask.key)
+                                        isAllCached -> {
+                                            Toast.makeText(ctx, "全本已完成离线，断网可随时阅读", Toast.LENGTH_SHORT).show()
+                                        }
+                                        else -> NovelDownloader.start(full, toc)
+                                    }
+                                },
+                                contentPadding = PaddingValues(horizontal = 10.dp, vertical = 2.dp),
+                                shape = RoundedCornerShape(8.dp),
+                                modifier = Modifier.height(30.dp)
+                            ) {
+                                if (isRunning) {
+                                    CircularProgressIndicator(Modifier.size(10.dp), strokeWidth = 1.5.dp)
+                                    Spacer(Modifier.width(4.dp))
+                                }
+                                Text(
+                                    when {
+                                        isRunning -> "暂停"
+                                        dlTask?.state == STATE_PAUSED -> "继续"
+                                        isAllCached -> "已完备"
+                                        else -> "缓存整本"
+                                    },
+                                    fontSize = 11.sp
+                                )
+                            }
                         }
                     }
                 }

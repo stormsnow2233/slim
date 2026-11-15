@@ -1,91 +1,89 @@
 package com.storm.shijuan
 
-import com.storm.shijuan.data.Net
-import com.storm.shijuan.data.OfficialProxy
-import com.storm.shijuan.data.OfficialVlessProxyServer
-import org.junit.After
+import com.storm.shijuan.data.*
 import org.junit.Assert.*
-import org.junit.Before
 import org.junit.Test
 
-class OfficialProxyAndVpnSplitTest {
-
-    @Before
-    fun setUp() {
-        OfficialVlessProxyServer.stop()
-    }
-
-    @After
-    fun tearDown() {
-        OfficialVlessProxyServer.stop()
-    }
+class CustomProxyAndNovelDownloaderTest {
 
     @Test
-    fun testOfficialProxyConstants() {
-        assertEquals("pw58ucaw.pages.dev", OfficialProxy.HOST)
-        assertEquals("/epabbfgoah", OfficialProxy.PATH)
-        assertEquals("3d5fc5eb-a03c-4e93-84ee-7a59ab6f0293", OfficialProxy.UUID_STR)
-        assertEquals(16, OfficialProxy.UUID_BYTES.size)
-        assertTrue(OfficialProxy.OPTIMIZED_IPS.isNotEmpty())
-        assertTrue(OfficialProxy.OPTIMIZED_IPS.contains("104.17.64.1"))
-    }
-
-    @Test
-    fun testNetProxyAndOfficialProxyState() {
-        // 初始状态
-        Net.setOfficialProxyActive(false)
+    fun testNetProxySwitching() {
+        // 初始状态为直连
         Net.setProxy(Net.ProxyCfg(enabled = false))
-        assertFalse(Net.isOfficialProxyActive())
         assertFalse(Net.proxy().enabled)
+        assertFalse(Net.proxy().usable)
 
-        // 切换官方代理
-        Net.setOfficialProxyActive(true)
-        assertTrue(Net.isOfficialProxyActive())
-
-        // 切换回自定义代理
-        Net.setOfficialProxyActive(false)
+        // 开启自定义代理
         val custom = Net.ProxyCfg(enabled = true, host = "127.0.0.1", port = 7890)
         Net.setProxy(custom)
-        assertFalse(Net.isOfficialProxyActive())
         assertTrue(Net.proxy().enabled)
+        assertTrue(Net.proxy().usable)
         assertEquals("127.0.0.1", Net.proxy().host)
         assertEquals(7890, Net.proxy().port)
+
+        // 关闭自定义代理，回归直连
+        Net.setProxy(Net.ProxyCfg(enabled = false))
+        assertFalse(Net.proxy().enabled)
     }
 
     @Test
-    fun testOfficialVlessProxyServerLifecycle() {
-        val port = OfficialVlessProxyServer.ensureStarted()
-        assertTrue("Port should be assigned", port > 0)
-        assertEquals(port, OfficialVlessProxyServer.localPort)
+    fun testBuiltinSourceVaultContainsDeqixs() {
+        val list = BuiltinSourceVault.load()
+        assertTrue("Vault should load sources", list.isNotEmpty())
 
-        // Idempotent start
-        val port2 = OfficialVlessProxyServer.ensureStarted()
-        assertEquals(port, port2)
-
-        // Stop
-        OfficialVlessProxyServer.stop()
-        assertEquals(0, OfficialVlessProxyServer.localPort)
+        val deqixs = list.firstOrNull { it.id == "deqixs" }
+        assertNotNull("deqixs source should be present", deqixs)
+        assertEquals("得奇小说", deqixs?.name)
+        assertEquals("https://www.deqixs.org", deqixs?.base)
+        assertTrue("deqixs should be enabled by default", deqixs?.enabledByDefault == true)
+        assertNotNull(deqixs?.search)
+        assertEquals("POST", deqixs?.search?.method)
+        assertEquals("div.con@html", deqixs?.content?.body)
+        assertEquals("div.dir a", deqixs?.toc?.list)
     }
 
     @Test
-    fun testSmartRoutingHosts() {
-        // 国内纯小说源：走直连，避免被海外机房 GFW 拦截或吃 403 人机质询
-        assertTrue(Net.isDomesticDirectHost("dl.wenku8.com"))
-        assertTrue(Net.isDomesticDirectHost("www.wenku8.net"))
-        assertTrue(Net.isDomesticDirectHost("www.8novel.com"))
-        assertTrue(Net.isDomesticDirectHost("www.biqugese.com"))
-        assertTrue(Net.isDomesticDirectHost("m.biquge.com"))
-        assertTrue(Net.isDomesticDirectHost("m.sfacg.com"))
-        assertTrue(Net.isDomesticDirectHost("book.qidian.com"))
-        assertTrue(Net.isDomesticDirectHost("www.ciweimao.com"))
+    fun testComicDownloadTaskSpeedFormatted() {
+        val task0 = DownloadTask(state = STATE_WAITING, speedBytesPerSec = 0L)
+        assertEquals("", task0.speedFormatted)
 
-        // 境外受阻漫画图片 CDN、JMcomic 与国际站点：走官方优选代理加速
-        assertFalse(Net.isDomesticDirectHost("s1.bzcdn.net"))
-        assertFalse(Net.isDomesticDirectHost("cn.webmota.com"))
-        assertFalse(Net.isDomesticDirectHost("i.hamreus.com"))
-        assertFalse(Net.isDomesticDirectHost("18comic.vip"))
-        assertFalse(Net.isDomesticDirectHost("jmcomic.me"))
-        assertFalse(Net.isDomesticDirectHost("github.com"))
-        assertFalse(Net.isDomesticDirectHost("api.github.com"))
+        val taskRunning = DownloadTask(state = STATE_RUNNING, speedBytesPerSec = 1024L * 512)
+        assertEquals("512 KB/s", taskRunning.speedFormatted)
+
+        val taskRunningMb = DownloadTask(state = STATE_RUNNING, speedBytesPerSec = 1024L * 1024 * 3)
+        assertEquals("3.0 MB/s", taskRunningMb.speedFormatted)
+
+        val taskPaused = DownloadTask(state = STATE_PAUSED, speedBytesPerSec = 1024L * 1024)
+        assertEquals("", taskPaused.speedFormatted)
+    }
+
+    @Test
+    fun testNovelDownloadTaskStateAndSpeed() {
+        val chs = listOf(
+            Chapter(name = "第1章", url = "http://test.com/1"),
+            Chapter(name = "第2章", url = "http://test.com/2"),
+            Chapter(name = "第3章", url = "http://test.com/3"),
+            Chapter(name = "第4章", url = "http://test.com/4"),
+        )
+        val book = Book(name = "测试小说", url = "http://test.com/book", sourceId = "deqixs")
+        val task = NovelDownloadTask(
+            key = "test_key",
+            book = book,
+            chapters = chs,
+            state = STATE_RUNNING,
+            doneChapters = 2,
+            speedChaptersPerSec = 4.5f,
+        )
+
+        assertEquals(4, task.total)
+        assertEquals(0.5f, task.percent, 0.001f)
+        assertEquals("4.5 章/s", task.speedFormatted)
+
+        val json = task.toJson()
+        val restored = NovelDownloadTask.from(json)
+        assertEquals(task.key, restored.key)
+        assertEquals(task.book.name, restored.book.name)
+        assertEquals(task.chapters.size, restored.chapters.size)
+        assertEquals(task.doneChapters, restored.doneChapters)
     }
 }
