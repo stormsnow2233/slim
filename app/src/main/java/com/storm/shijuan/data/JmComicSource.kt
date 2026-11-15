@@ -262,11 +262,94 @@ class JmComicSource : ComicSource {
         return parseComicList(raw)
     }
 
+    fun parseAid(s: String): Int? {
+        val trimmed = s.trim()
+        if (trimmed.all { it.isDigit() } && trimmed.length in 3..9) {
+            return trimmed.toIntOrNull()
+        }
+        val prefixMatch = Regex("""^(?:车牌号?|JM|jm)?[:\s_-]*(\d{3,9})$""", RegexOption.IGNORE_CASE).find(trimmed)
+        if (prefixMatch != null) {
+            return prefixMatch.groupValues[1].toIntOrNull()
+        }
+        val urlMatch = Regex("""(?:id=|album/|photo/)(\d{3,9})""").find(trimmed)
+        if (urlMatch != null) {
+            return urlMatch.groupValues[1].toIntOrNull()
+        }
+        return null
+    }
+
+    fun fetchAlbum(aid: Int): Comic? {
+        val raw = getApi("/album?id=$aid").ifBlank { getApi("/chapter?id=$aid") }
+        if (raw.isBlank()) return null
+        return runCatching {
+            val obj = JSONObject(raw)
+            val id = obj.optString("id").ifBlank { aid.toString() }
+            val name = obj.optString("name").trim()
+            if (name.isBlank()) return null
+            val authorArr = obj.optJSONArray("author")
+            val author = if (authorArr != null && authorArr.length() > 0) {
+                (0 until authorArr.length()).map { authorArr.optString(it) }
+                    .filter { it.isNotBlank() && it != "N/A" && it != "null" }
+                    .joinToString("/")
+            } else {
+                obj.optString("author").takeIf { it != "N/A" && it != "null" } ?: ""
+            }
+            val intro = obj.optString("description").trim()
+            val imgHost = getImgHost()
+            val cover = "$imgHost/media/albums/${id}_3x4.jpg"
+            val series = obj.optJSONArray("series")
+            val totalPhotos = obj.optInt("total_photos", 0)
+            val latest = if (series != null && series.length() > 0) {
+                "共 ${series.length()} 话"
+            } else if (totalPhotos > 0) {
+                "共 $totalPhotos 页"
+            } else "JMcomic"
+            Comic(
+                name = name,
+                cover = cover,
+                author = author.ifBlank { "JM" },
+                intro = intro,
+                latest = latest,
+                url = "$liveHost/album?id=$id",
+                sourceId = "jm",
+                sourceName = "JMcomic",
+                status = "完结",
+                pathWord = id,
+                detailed = true,
+            )
+        }.getOrNull()
+    }
+
     override fun search(keyword: String): List<Comic> {
-        val kw = URLEncoder.encode(keyword, "UTF-8")
+        val trimmed = keyword.trim()
+        val aid = parseAid(trimmed)
+        if (aid != null) {
+            val direct = fetchAlbum(aid)
+            if (direct != null) {
+                return listOf(direct)
+            }
+        }
+
+        val kw = URLEncoder.encode(trimmed, "UTF-8")
         val path = "/search?page=1&o=mr&search_query=$kw&main_tag=0"
         val raw = getApi(path)
-        return parseComicList(raw)
+        val list = parseComicList(raw)
+        if (list.isNotEmpty()) return list
+
+        if (raw.isNotBlank()) {
+            val redirectAid = runCatching {
+                val obj = JSONObject(raw)
+                val directId = obj.optInt("redirect_aid", 0).takeIf { it > 0 }
+                    ?: obj.optString("redirect_aid").toIntOrNull()
+                directId
+            }.getOrNull()
+            if (redirectAid != null && redirectAid > 0) {
+                val direct = fetchAlbum(redirectAid)
+                if (direct != null) return listOf(direct)
+            }
+        }
+
+        return emptyList()
     }
 
     private fun parseComicList(jsonStr: String): List<Comic> {

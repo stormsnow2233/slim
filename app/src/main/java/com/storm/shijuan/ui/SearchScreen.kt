@@ -81,6 +81,8 @@ fun SearchScreen(
     var running by searchState::running
     var searched by searchState::searched
     var history by remember { mutableStateOf(store.history()) }
+    // 每次进入页面抽取一批；普通重组不会打乱用户正在点击的推荐。
+    val recommendations = remember { popularNovelPool.shuffled().take(15) }
     var showStates by searchState::showStates
     var filterSource by searchState::filterSource
     var searchSeq by searchState::searchSeq
@@ -352,7 +354,7 @@ fun SearchScreen(
                             store.clearHistory(); history = mutableListOf()
                         }) { Text("清空", fontSize = 12.sp) }
                     }
-                    FlowRowChips(history.take(10)) { doSearch(it) }
+                    FlowRowChips(history, maxLines = 3) { doSearch(it) }
                     Spacer(Modifier.height(18.dp))
                 }
                 if (isMiuix) {
@@ -364,14 +366,7 @@ fun SearchScreen(
                     Text("小说推荐", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
                 }
                 Spacer(Modifier.height(8.dp))
-                FlowRowChips(
-                    listOf(
-                        "败犬女主角太多了", "古见同学有社交障碍", "邻家天使",
-                        "诡秘之主", "十日终焉", "大奉打更人", "剑来", "遮天",
-                        "欢迎来到实力至上主义的教室", "无职转生", "义妹生活", "凡人修仙传",
-                        "关于我转生变成史莱姆这档事", "斗破苍穹", "三体"
-                    )
-                ) { doSearch(it) }
+                FlowRowChips(recommendations) { doSearch(it) }
             }
         } else if (merged.isEmpty() && running) {
             Box(Modifier.fillMaxWidth().weight(1f), contentAlignment = Alignment.Center) {
@@ -501,8 +496,9 @@ private fun BookRow(m: MergedBook, onOpen: (Book) -> Unit, modifier: Modifier = 
 
 @OptIn(ExperimentalLayoutApi::class)
 @Composable
-private fun FlowRowChips(items: List<String>, onClick: (String) -> Unit) {
+private fun FlowRowChips(items: List<String>, maxLines: Int = Int.MAX_VALUE, onClick: (String) -> Unit) {
     FlowRow(
+        maxLines = maxLines,
         horizontalArrangement = Arrangement.spacedBy(8.dp),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
@@ -521,6 +517,25 @@ private fun FlowRowChips(items: List<String>, onClick: (String) -> Unit) {
         }
     }
 }
+
+// 本地热门作品池（非实时排名），涵盖常见榜单作品与经典作品。
+private val popularNovelPool = listOf(
+    "诡秘之主", "宿命之环", "道诡异仙", "十日终焉", "我不是戏神",
+    "深海余烬", "灵境行者", "大奉打更人", "夜的命名术", "第一序列",
+    "全球高武", "万族之劫", "星门", "从红月开始", "黎明之剑",
+    "异常生物见闻录", "放开那个女巫", "亏成首富从游戏开始", "轮回乐园", "惊悚乐园",
+    "剑来", "雪中悍刀行", "凡人修仙传", "仙逆", "求魔",
+    "一念永恒", "我欲封天", "光阴之外", "牧神记", "择日飞升",
+    "赤心巡天", "玄鉴仙族", "谁让他修仙的！", "烂柯棋缘", "大道争锋",
+    "斗破苍穹", "遮天", "完美世界", "圣墟", "一世之尊",
+    "盘龙", "吞噬星空", "莽荒纪", "庆余年", "赘婿",
+    "将夜", "间客", "全职高手", "修真聊天群", "诡秘地海",
+    "三体", "球状闪电", "流浪地球", "长安十二时辰", "长安的荔枝",
+    "盗墓笔记", "鬼吹灯", "开端", "坏小孩", "长夜难明",
+    "败犬女主角太多了", "欢迎来到实力至上主义的教室", "无职转生", "义妹生活",
+    "关于我转生变成史莱姆这档事", "狼与香辛料", "Re：从零开始的异世界生活",
+    "青春猪头少年不会梦到兔女郎学姐", "龙族", "全职法师",
+).distinct()
 
 private val Color_OK = androidx.compose.ui.graphics.Color(0xFF4C7A54)
 

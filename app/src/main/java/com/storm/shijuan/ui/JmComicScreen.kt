@@ -161,7 +161,7 @@ fun JmComicScreen(
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
-            placeholder = { Text("搜 JMcomic 漫画，回车开始") },
+            placeholder = { Text("搜漫画名或车牌号（如 350234）") },
             leadingIcon = { Icon(Icons.Rounded.Search, null) },
             singleLine = true,
             shape = RoundedCornerShape(14.dp),

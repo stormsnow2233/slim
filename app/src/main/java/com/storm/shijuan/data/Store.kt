@@ -400,6 +400,22 @@ class Store(val context: Context) {
         }
     }
 
+    /** 关联外部书籍与已导入副本，避免再次打开时重复下载。 */
+    fun linkExternalImport(externalUrl: String, imported: Book) {
+        if (externalUrl.isBlank() || imported.url.isBlank()) return
+        runCatching {
+            sp.edit().putString("external_import_${externalUrl.hashCode()}", imported.toJson().toString()).apply()
+        }
+    }
+
+    fun importedForExternal(externalUrl: String): Book? {
+        if (externalUrl.isBlank()) return null
+        return runCatching {
+            sp.getString("external_import_${externalUrl.hashCode()}", null)
+                ?.let { Book.from(JSONObject(it)) }
+        }.getOrNull()
+    }
+
     /** 本地存过东西的书：元数据 + 书架 + 阅读记录，三处合起来 */
     fun cachedNovelBooks(): List<Book> {
         val out = LinkedHashMap<String, Book>()

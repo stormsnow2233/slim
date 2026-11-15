@@ -72,6 +72,7 @@ fun DetailScreen(
     var menuOpen by remember { mutableStateOf(false) }
     var showExport by remember { mutableStateOf(false) }
     var pendingFormat by remember { mutableStateOf("") }
+    var importing by remember { mutableStateOf(false) }
     var verifyTarget by remember { mutableStateOf<Source?>(null) }
     val export by Exporter.state.collectAsState()
     var orderAscending by remember(book.url) { mutableStateOf(true) }
@@ -84,13 +85,20 @@ fun DetailScreen(
     val triedSources = remember(book.name) { mutableSetOf(book.sourceId) }
 
     fun loadToc(force: Boolean = false) {
+        if (full.external) {
+            loading = false
+            error = "请前往 Z-Library 观看"
+            return
+        }
         if (full.sourceId == "local") {
-            val localToc = store.loadToc(full.url)
-            if (localToc.isNotEmpty()) {
+            scope.launch {
+                loading = true
+                val localToc = withContext(Dispatchers.IO) { store.loadToc(full.url) }
                 toc = localToc
+                error = if (localToc.isEmpty()) "本地目录不存在，请重新导入文件" else ""
                 loading = false
-                return
             }
+            return
         }
         scope.launch {
             // 离线：本地有目录就直接用，不去撞网络；本地没有就直说
@@ -172,12 +180,17 @@ fun DetailScreen(
     }
 
     LaunchedEffect(book.url) {
+        if (book.external) {
+            toc = emptyList()
+            loading = false
+            error = "请前往 Z-Library 观看"
+            return@LaunchedEffect
+        }
         if (book.sourceId == "local") {
-            val localToc = store.loadToc(book.url)
-            if (localToc.isNotEmpty()) {
-                toc = localToc
-                loading = false
-            }
+            val localToc = withContext(Dispatchers.IO) { store.loadToc(book.url) }
+            toc = localToc
+            error = if (localToc.isEmpty()) "本地目录不存在，请重新导入文件" else ""
+            loading = false
             return@LaunchedEffect
         }
         if (toc.isNotEmpty()) {
@@ -334,15 +347,17 @@ fun DetailScreen(
                                 )
                                 HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.4f))
                             }
-                            DropdownMenuItem(
-                                text = { Text("刷新目录") },
-                                leadingIcon = { Icon(Icons.Rounded.Refresh, null) },
-                                onClick = {
-                                    menuOpen = false
-                                    toc = emptyList()
-                                    loadToc()
-                                },
-                            )
+                            if (!full.external) {
+                                DropdownMenuItem(
+                                    text = { Text("刷新目录") },
+                                    leadingIcon = { Icon(Icons.Rounded.Refresh, null) },
+                                    onClick = {
+                                        menuOpen = false
+                                        toc = emptyList()
+                                        loadToc()
+                                    },
+                                )
+                            }
                             if (!full.isLocalOrImported) {
                                 DropdownMenuItem(
                                     text = { Text("复制书籍链接") },
@@ -486,13 +501,14 @@ fun DetailScreen(
                         Spacer(Modifier.width(5.dp))
                         Text(if (inShelf) "已在书架" else "加入书架")
                     }
-                    TextButton(onClick = { showToc = true }) {
+                    TextButton(onClick = { showToc = true }, enabled = !full.external) {
                         Icon(Icons.Rounded.FormatListBulleted, null, Modifier.size(18.dp))
                         Spacer(Modifier.width(5.dp))
                         Text("目录")
                     }
                     TextButton(
                         onClick = { orderAscending = !orderAscending },
+                        enabled = !full.external,
                         contentPadding = PaddingValues(horizontal = 6.dp, vertical = 4.dp),
                     ) {
                         Icon(Icons.Rounded.SwapVert, null, Modifier.size(16.dp))
@@ -603,6 +619,8 @@ fun DetailScreen(
                     Box(Modifier.fillMaxWidth().padding(40.dp), contentAlignment = Alignment.Center) {
                         CircularProgressIndicator(Modifier.size(26.dp), strokeWidth = 2.dp)
                     }
+                } else if (full.external) {
+                    EmptyState(title = "请前往 Z-Library 观看", subtitle = "点击上方按钮前往下载页")
                 } else if (error.isNotBlank()) {
                     val isRestricted = error.contains("403") || error.contains("Cloudflare") || full.sourceId == "wenku8"
                     EmptyState(
@@ -620,12 +638,14 @@ fun DetailScreen(
                                 }
                                 Spacer(Modifier.height(8.dp))
                             }
-                            Button(onClick = {
-                                runCatching {
-                                    ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(full.url)))
-                                }
-                            }) { Text("浏览器打开") }
-                            Spacer(Modifier.height(8.dp))
+                            if (full.sourceId != "local") {
+                                Button(onClick = {
+                                    runCatching {
+                                        ctx.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(full.url)))
+                                    }
+                                }) { Text("浏览器打开") }
+                                Spacer(Modifier.height(8.dp))
+                            }
                             Button(onClick = { loadToc(force = true) }) { Text("重试") }
                         },
                     )

@@ -126,4 +126,20 @@ class ComicCacheAndWenku8Test {
         assertTrue("图片域名应为 baozicdn.com", result.images.all { it.contains("baozicdn.com") })
         assertTrue("不应包含被钓鱼替换的他作封面", result.images.none { it.contains("meishaonianbangjiashijian") })
     }
+
+    @Test
+    fun testJmParseAid() {
+        val jm = com.storm.shijuan.data.JmComicSource()
+        assertEquals(350234, jm.parseAid("350234"))
+        assertEquals(350234, jm.parseAid("JM350234"))
+        assertEquals(350234, jm.parseAid("jm 350234"))
+        assertEquals(350234, jm.parseAid("jm-350234"))
+        assertEquals(350234, jm.parseAid("车牌号 350234"))
+        assertEquals(350234, jm.parseAid("车牌:350234"))
+        assertEquals(350234, jm.parseAid("https://18comic.vip/album/350234"))
+        assertEquals(350234, jm.parseAid("https://18comic.org/photo/350234"))
+        assertEquals(350234, jm.parseAid("https://example.com/view?id=350234"))
+        assertEquals(null, jm.parseAid("火影忍者"))
+        assertEquals(null, jm.parseAid("12")) // 太短
+    }
 }

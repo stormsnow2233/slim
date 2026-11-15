@@ -188,7 +188,8 @@ fun ComicScreen(
         hits = emptyList()
         list = emptyList()
         fromRank = false
-        val allSources = ComicRepo.sources.map { it.id }
+        val isJmKeyword = kw.startsWith("jm", ignoreCase = true) || kw.startsWith("车牌") || (kw.all { it.isDigit() } && kw.length in 4..8)
+        val allSources = ComicRepo.sources.map { it.id } + (if (store.isJmEnabled() && isJmKeyword) listOf("jm") else emptyList())
         withContext(Dispatchers.IO) {
             ComicRepo.searchAll(kw, allSources) { hit ->
                 // 增量流式渲染：任一源出结果立刻呈现在屏幕上，无需等待其它慢源
@@ -259,35 +260,8 @@ fun ComicScreen(
             )
         }
 
-        Row(
-            Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 18.dp, vertical = 2.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp),
-            verticalAlignment = Alignment.CenterVertically,
-        ) {
-            if (!offline) {
-                FilterChip(
-                    selected = tab == 0,
-                    onClick = { tab = 0 },
-                    label = { Text("探索", fontSize = 12.sp) },
-                )
-            }
-            FilterChip(
-                selected = tab == 1,
-                onClick = { tab = 1 },
-                label = {
-                    Text(
-                        if (dlTasks.isNotEmpty()) "缓存 ${dlTasks.size}" else if (offline) "缓存管理" else "缓存",
-                        fontSize = 12.sp,
-                    )
-                },
-            )
-        }
-
         Spacer(Modifier.height(6.dp))
 
-        if (tab == 0) {
         OutlinedTextField(
             value = query,
             onValueChange = { query = it },
@@ -490,13 +464,6 @@ fun ComicScreen(
                 }
             }
         }
-        }
-        } else {
-            DownloadPanel(
-                tasks = dlTasks,
-                onOpenComic = onOpen,
-                onOpenCache = onOpenCache,
-            )
         }
     }
 }

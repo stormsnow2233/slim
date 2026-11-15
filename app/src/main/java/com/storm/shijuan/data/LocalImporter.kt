@@ -110,13 +110,31 @@ object LocalImporter {
 
     data class EpubStat(val imageCount: Int, val textChars: Int)
 
+    private fun InputStream.readBytesLimited(limit: Int): ByteArray {
+        val out = java.io.ByteArrayOutputStream()
+        val buffer = ByteArray(8192)
+        while (out.size() < limit) {
+            val count = read(buffer, 0, minOf(buffer.size, limit - out.size()))
+            if (count < 0) break
+            if (count > 0) out.write(buffer, 0, count)
+        }
+        return out.toByteArray()
+    }
+
     fun inspectEpubStream(stream: InputStream): EpubStat {
         var imgCount = 0
         var textChars = 0
         ZipInputStream(stream).use { zis ->
             var entry: ZipEntry? = zis.nextEntry
             var sampledHtmls = 0
+            var totalBytes = 0L
+            var entryCount = 0
             while (entry != null) {
+                if (++entryCount > MAX_ZIP_ENTRIES) throw IllegalStateException("EPUB 条目过多")
+                val bytes = zis.readBytesLimited(MAX_INSPECT_HTML_BYTES + 1)
+                if (bytes.size > MAX_INSPECT_HTML_BYTES) throw IllegalStateException("EPUB 检测条目过大")
+                totalBytes += bytes.size
+                if (totalBytes > MAX_TOTAL_BYTES) throw IllegalStateException("EPUB 检测数据过大")
                 val name = entry.name.lowercase()
                 if (name.endsWith(".jpg") || name.endsWith(".jpeg") || name.endsWith(".png") ||
                     name.endsWith(".webp") || name.endsWith(".gif") || name.endsWith(".bmp")
@@ -124,7 +142,6 @@ object LocalImporter {
                     imgCount++
                 } else if ((name.endsWith(".xhtml") || name.endsWith(".html") || name.endsWith(".htm")) && sampledHtmls < 10) {
                     sampledHtmls++
-                    val bytes = zis.readBytes()
                     val text = Jsoup.parse(String(bytes, Charsets.UTF_8)).text()
                     textChars += text.length
                 }
@@ -144,20 +161,22 @@ object LocalImporter {
     }
 
     fun importNovel(context: Context, uri: Uri, fileName: String, store: Store): Result<Book> {
+        var baseDir: File? = null
         return runCatching {
             val bookId = "local_novel_" + System.currentTimeMillis() + "_" + (1000..9999).random()
-            val baseDir = File(context.filesDir, "imported/novels/$bookId").apply { mkdirs() }
+            baseDir = File(context.filesDir, "imported/novels/$bookId").apply { mkdirs() }
+            val importDir = baseDir!!
             val ext = fileName.substringAfterLast('.', "").lowercase()
 
             when (ext) {
-                "txt" -> importTxtAsNovel(context, uri, fileName, baseDir, store)
-                "epub" -> importEpubAsNovel(context, uri, fileName, baseDir, store)
-                "pdf" -> importPdfAsNovel(context, uri, fileName, baseDir, store)
+                "txt" -> importTxtAsNovel(context, uri, fileName, importDir, store)
+                "epub" -> importEpubAsNovel(context, uri, fileName, importDir, store)
+                "pdf" -> importPdfAsNovel(context, uri, fileName, importDir, store)
                 else -> {
-                    importTxtAsNovel(context, uri, fileName, baseDir, store)
+                    importTxtAsNovel(context, uri, fileName, importDir, store)
                 }
             }
-        }
+        }.onFailure { baseDir?.deleteRecursively() }
     }
 
     fun importComic(context: Context, uri: Uri, fileName: String, store: Store): Result<Comic> {
@@ -297,11 +316,15 @@ object LocalImporter {
                 opfPath = doc.select("rootfile").attr("full-path")
             }
         }
-        val opfFile = if (opfPath.isNotBlank()) File(extractedDir, opfPath)
-        else extractedDir.walkTopDown().firstOrNull { it.name.endsWith(".opf") }
-            ?: throw IllegalStateException("EPUB 格式不合法：未找到 OPF 文件")
+        val opfFile = if (opfPath.isNotBlank()) {
+            resolveWithin(extractedDir, extractedDir, opfPath)
+                ?: throw IllegalStateException("EPUB OPF 路径不安全")
+        } else {
+            extractedDir.walkTopDown().firstOrNull { it.isFile && it.name.endsWith(".opf", ignoreCase = true) }
+        } ?: throw IllegalStateException("EPUB 格式不合法：未找到 OPF 文件")
 
         val opfDir = opfFile.parentFile ?: extractedDir
+        if (opfFile.length() > MAX_OPF_BYTES) throw IllegalStateException("EPUB OPF 文件过大")
         val opfDoc = Jsoup.parse(opfFile, "UTF-8")
 
         val bookTitle = opfDoc.select("dc|title, title").firstOrNull()?.text()?.ifBlank { null }
@@ -325,28 +348,29 @@ object LocalImporter {
         }
         if (coverId.isNotBlank() && manifest.containsKey(coverId)) {
             val coverRel = manifest[coverId]!!.first
-            val cFile = File(opfDir, coverRel)
-            if (cFile.exists()) coverUrl = "file://" + cFile.absolutePath
+            val cFile = resolveWithin(extractedDir, opfDir, coverRel)
+            if (cFile != null && cFile.isFile) coverUrl = "file://" + cFile.absolutePath
         }
         if (coverUrl.isBlank()) {
             val coverEntry = manifest.values.firstOrNull { (href, media) ->
                 media.startsWith("image/") && (href.lowercase().contains("cover") || href.lowercase().contains("193698"))
             } ?: manifest.values.firstOrNull { it.second.startsWith("image/") }
             if (coverEntry != null) {
-                val cFile = File(opfDir, coverEntry.first)
-                if (cFile.exists()) coverUrl = "file://" + cFile.absolutePath
+                val cFile = resolveWithin(extractedDir, opfDir, coverEntry.first)
+                if (cFile != null && cFile.isFile) coverUrl = "file://" + cFile.absolutePath
             }
         }
 
-        val spineItems = opfDoc.select("spine > itemref").map { it.attr("idref") }
+        val spineItems = opfDoc.select("spine > itemref").map { it.attr("idref") }.distinct().take(MAX_SPINE_ITEMS)
         val chapterList = mutableListOf<Chapter>()
 
         for (idref in spineItems) {
             val pair = manifest[idref] ?: continue
             val href = pair.first
-            val xhtmlFile = File(opfDir, href)
-            if (!xhtmlFile.exists()) continue
+            val xhtmlFile = resolveWithin(extractedDir, opfDir, href)
+            if (xhtmlFile == null || !xhtmlFile.isFile) continue
 
+            if (xhtmlFile.length() > MAX_XHTML_BYTES) continue
             val doc = Jsoup.parse(xhtmlFile, "UTF-8")
             val chTitle = doc.selectFirst("h1, h2, h3, title")?.text()?.trim()
                 ?.ifBlank { null } ?: "第 ${chapterList.size + 1} 章"
@@ -357,8 +381,8 @@ object LocalImporter {
             fun resolveImg(rawSrc: String): File? {
                 val s = rawSrc.trim().replace("\\", "/")
                 if (s.isBlank()) return null
-                val target = File(xhtmlFile.parentFile ?: opfDir, s).normalize()
-                return if (target.exists() && target.isFile) target else null
+                val target = resolveWithin(extractedDir, xhtmlFile.parentFile ?: opfDir, s)
+                return if (target != null && target.isFile) target else null
             }
 
             fun extractNode(el: org.jsoup.nodes.Element) {
@@ -477,6 +501,7 @@ object LocalImporter {
         } ?: throw IllegalStateException("无法打开 EPUB 文件")
 
         val imageFiles = extractedDir.walkTopDown().filter { f ->
+            f.isFile && f.canonicalPath.startsWith(extractedDir.canonicalPath + File.separator)
             val n = f.name.lowercase()
             n.endsWith(".jpg") || n.endsWith(".jpeg") || n.endsWith(".png") ||
                 n.endsWith(".webp") || n.endsWith(".gif")
@@ -715,25 +740,98 @@ object LocalImporter {
 
     /* -------------------- Helper -------------------- */
 
+    private fun resolveWithin(rootDir: File, baseDir: File, relativePath: String): File? {
+        val clean = relativePath.trim().substringBefore('#').substringBefore('?').replace('\\', '/')
+        if (clean.isBlank() || clean.startsWith('/') || clean.contains(':')) return null
+        val root = rootDir.canonicalFile
+        val candidate = File(baseDir.canonicalFile, clean).canonicalFile
+        return if (candidate.path.startsWith(root.path + File.separator)) candidate else null
+    }
+
     private fun unzip(inputStream: InputStream, targetDir: File) {
-        ZipInputStream(inputStream).use { zis ->
-            var entry: ZipEntry? = zis.nextEntry
-            while (entry != null) {
-                val f = File(targetDir, entry.name)
-                if (!f.canonicalPath.startsWith(targetDir.canonicalPath)) {
+        // EPUBs are untrusted archives: bound both metadata and expanded data to
+        // prevent zip bombs and avoid leaving a partially imported book behind.
+        val targetRoot = targetDir.canonicalFile
+        var entryCount = 0
+        var totalBytes = 0L
+        try {
+            ZipInputStream(inputStream).use { zis ->
+                var entry: ZipEntry? = zis.nextEntry
+                while (entry != null) {
+                    if (++entryCount > MAX_ZIP_ENTRIES) {
+                        throw IllegalStateException("EPUB 条目数量超过限制")
+                    }
+
+                    val rawName = entry.name.replace('\\', '/')
+                    if (entry.isDirectory) {
+                        var directoryBytes = 0L
+                        val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                        while (true) {
+                            val read = zis.read(buffer)
+                            if (read < 0) break
+                            directoryBytes += read
+                            totalBytes += read
+                            if (directoryBytes > MAX_ENTRY_BYTES || totalBytes > MAX_TOTAL_BYTES) {
+                                throw IllegalStateException("EPUB 解压大小超过限制")
+                            }
+                        }
+                        if (directoryBytes > 0) throw IllegalStateException("EPUB 目录条目包含数据")
+                    }
+                    if (rawName.isBlank() || rawName.startsWith('/') ||
+                        rawName.contains(':') || rawName.split('/').any { it == ".." }) {
+                        throw IllegalStateException("EPUB 包含不安全路径")
+                    }
+                    val f = File(targetRoot, rawName).canonicalFile
+                    if (f != targetRoot && !f.path.startsWith(targetRoot.path + File.separator)) {
+                        throw IllegalStateException("EPUB 包含不安全路径")
+                    }
+
+                    if (entry.isDirectory) {
+                        if (!f.exists() && !f.mkdirs()) {
+                            throw IllegalStateException("无法创建 EPUB 目录")
+                        }
+                    } else {
+                        val declaredSize = entry.size
+                        if (declaredSize > MAX_ENTRY_BYTES) {
+                            throw IllegalStateException("EPUB 单个条目超过大小限制")
+                        }
+                        f.parentFile?.let { parent ->
+                            if (!parent.exists() && !parent.mkdirs()) {
+                                throw IllegalStateException("无法创建 EPUB 目录")
+                            }
+                        }
+                        var entryBytes = 0L
+                        FileOutputStream(f).use { fos ->
+                            val buffer = ByteArray(DEFAULT_BUFFER_SIZE)
+                            while (true) {
+                                val read = zis.read(buffer)
+                                if (read < 0) break
+                                entryBytes += read
+                                totalBytes += read
+                                if (entryBytes > MAX_ENTRY_BYTES || totalBytes > MAX_TOTAL_BYTES) {
+                                    throw IllegalStateException("EPUB 解压大小超过限制")
+                                }
+                                fos.write(buffer, 0, read)
+                            }
+                        }
+                    }
                     zis.closeEntry()
                     entry = zis.nextEntry
-                    continue
                 }
-                if (entry.isDirectory) {
-                    f.mkdirs()
-                } else {
-                    f.parentFile?.mkdirs()
-                    FileOutputStream(f).use { fos -> zis.copyTo(fos) }
-                }
-                zis.closeEntry()
-                entry = zis.nextEntry
             }
+        } catch (failure: Throwable) {
+            // The caller's import directory is new for this operation; remove all
+            // extracted content so a failed import cannot be reused accidentally.
+            targetDir.deleteRecursively()
+            throw failure
         }
     }
+
+    private const val MAX_ZIP_ENTRIES = 10_000
+    private const val MAX_INSPECT_HTML_BYTES = 4 * 1024 * 1024
+    private const val MAX_OPF_BYTES = 4L * 1024L * 1024L
+    private const val MAX_XHTML_BYTES = 16L * 1024L * 1024L
+    private const val MAX_SPINE_ITEMS = 2_000
+    private const val MAX_ENTRY_BYTES = 64L * 1024L * 1024L
+    private const val MAX_TOTAL_BYTES = 512L * 1024L * 1024L
 }

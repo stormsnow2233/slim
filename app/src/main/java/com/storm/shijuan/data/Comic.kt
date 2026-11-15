@@ -1073,7 +1073,8 @@ object ComicRepo {
         onHit: ((ComicHit) -> Unit)? = null,
     ): List<ComicHit> {
         val targetIds = ids.ifEmpty { sources.map { it.id } }
-        val picked = sources.filter { it.id in targetIds && !isBlacklisted(it.id) }
+        val allSourcesMap = (sources + jmSource).associateBy { it.id }
+        val picked = targetIds.mapNotNull { allSourcesMap[it] }.filter { !isBlacklisted(it.id) }
         if (picked.isEmpty()) return emptyList()
         val deadline = System.currentTimeMillis() + 6000L
         val candidates = NovelAliasHelper.expandQueries(keyword)

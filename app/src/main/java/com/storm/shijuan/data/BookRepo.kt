@@ -1733,6 +1733,12 @@ object Zlib {
         return emptyList<Book>() to lastErr
     }
 
+    internal fun resolveLink(base: String, link: String): String = runCatching {
+        val resolved = java.net.URI(base.trimEnd('/') + "/").resolve(link)
+        require(resolved.scheme == "https" || resolved.scheme == "http")
+        resolved.toString()
+    }.getOrDefault("")
+
     private fun parse(json: String, base: String): Pair<List<Book>, String> {
         val root = JSONObject(json)
         val arr = root.optJSONArray("books") ?: return emptyList<Book>() to "没有结果"
@@ -1761,16 +1767,11 @@ object Zlib {
             }
 
             val targetUrl = when {
-                href.isNotBlank() -> {
-                    val cleanPath = href.substringAfter("://").substringAfter("/")
-                    "$base/$cleanPath"
-                }
+                href.isNotBlank() -> resolveLink(base, href)
                 id.isNotBlank() && hash.isNotBlank() -> "$base/book/$id/$hash"
-                else -> "$base/s/$title"
+                else -> "$base/s/${URLEncoder.encode(title, "UTF-8")}"
             }
-            val downloadUrl = if (dlPath.isNotBlank()) {
-                if (dlPath.startsWith("http")) dlPath else "$base$dlPath"
-            } else targetUrl
+            val downloadUrl = if (dlPath.isNotBlank()) resolveLink(base, dlPath) else targetUrl
 
             out.add(
                 Book(
