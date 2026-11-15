@@ -757,7 +757,7 @@ class Store(val context: Context) {
     }
 
     // ── ESJ Zone 自定义反代 / Pages / Worker ──
-    fun esjProxyUrl(): String = sp.getString("esj_proxy_url", "")?.trim().orEmpty()
+    fun esjProxyUrl(): String = sp.getString("esj_proxy_url", "https://esj-proxy.pages.dev")?.trim().orEmpty().ifBlank { "https://esj-proxy.pages.dev" }
 
     fun setEsjProxyUrl(url: String) {
         sp.edit().putString("esj_proxy_url", url.trim()).apply()

@@ -104,7 +104,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                     )
                 },
                 "ESJ Zone" to {
-                    val base = esjProxy.ifBlank { "https://www.esjzone.one" }.trimEnd('/')
+                    val base = esjProxy.ifBlank { "https://esj-proxy.pages.dev" }.trimEnd('/')
                     Net.get("$base/", useCache = false, fast = true, timeoutMs = 8000L)
                 },
                 "漫画图片线路" to {
@@ -389,20 +389,20 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                     Text("ESJ Zone 反代设置", style = MaterialTheme.typography.titleSmall)
                     Spacer(Modifier.height(4.dp))
                     Text(
-                        "ESJ 属于境外站，国内裸连易受阻断。如有自建 Cloudflare Pages / Workers 反代，可填在此处。",
+                        "默认走专属 Pages 边缘反代直连。如有自己的私有反代节点，可在此填入覆盖。",
                         fontSize = 12.sp,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
                     Spacer(Modifier.height(10.dp))
-                    ProxyField("自定义反代 URL（留空走官方直连）", esjProxy, "留空默认走官方直连/镜像") {
+                    ProxyField("自定义反代 URL", esjProxy, "https://esj-proxy.pages.dev") {
                         esjProxy = it.trim()
                         store.setEsjProxyUrl(it.trim())
                     }
                     Spacer(Modifier.height(6.dp))
-                    if (esjProxy.isNotBlank()) {
-                        Text("已切换为你填写的专属反代", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
+                    if (esjProxy.isNotBlank() && esjProxy != "https://esj-proxy.pages.dev") {
+                        Text("已切换为你填写的私有反代", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
                     } else {
-                        Text("🟢 默认官方直连/镜像线路", fontSize = 11.sp, color = OK_GREEN)
+                        Text("🟢 官方 Pages 专属反代已生效", fontSize = 11.sp, color = OK_GREEN)
                     }
                 }
             }

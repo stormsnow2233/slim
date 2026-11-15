@@ -336,6 +336,32 @@ object BookRepo {
         return getActiveBase(src) ?: src.base
     }
 
+    fun applyProxyBase(src: Source, url: String): String {
+        if (url.isBlank()) return url
+        if (src.id == "esjzone") {
+            val proxy = (storeRef?.esjProxyUrl().orEmpty().ifBlank { src.base }).trim().trimEnd('/')
+            if (proxy.isNotBlank()) {
+                val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return url
+                val host = uri.host?.lowercase().orEmpty()
+                if (host.contains("esjzone.")) {
+                    val pUri = runCatching { java.net.URI(proxy) }.getOrNull() ?: return url
+                    return java.net.URI(pUri.scheme, pUri.authority, uri.rawPath, uri.rawQuery, uri.rawFragment).toString()
+                }
+            }
+        } else if (src.id == "wenku8") {
+            val proxy = storeRef?.wenku8ProxyUrl().orEmpty().trim().trimEnd('/')
+            if (proxy.isNotBlank()) {
+                val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return url
+                val host = uri.host?.lowercase().orEmpty()
+                if (host.contains("wenku8.cc") || host.contains("wenku8.net")) {
+                    val pUri = runCatching { java.net.URI(proxy) }.getOrNull() ?: return url
+                    return java.net.URI(pUri.scheme, pUri.authority, uri.rawPath, uri.rawQuery, uri.rawFragment).toString()
+                }
+            }
+        }
+        return url
+    }
+
     // ── 任务取消管理 ──
     private val activeSearchFutures = ConcurrentHashMap<Any, MutableList<java.util.concurrent.Future<*>>>()
 
@@ -718,7 +744,8 @@ object BookRepo {
         }
         var books = rows.mapNotNull { row ->
             val name = row["name"].orEmpty().trim()
-            val url = row["bookUrl"].orEmpty().trim()
+            val rawUrl = row["bookUrl"].orEmpty().trim()
+            val url = applyProxyBase(src, rawUrl)
             if (name.isEmpty() || url.isEmpty() || isFakeBook(name, url)) null
             else Book(
                 name = name,
@@ -984,15 +1011,16 @@ object BookRepo {
             }
         }
         val base = resolveBase(src)
+        val targetBookUrl = applyProxyBase(src, book.url)
         val t = src.toc
         // 有的站书页和目录页是分开的两页（SF 手机站就是），规则里可以单独给目录页模板
         val tocTpl = t?.page.orEmpty()
-        val tocUrl = if (tocTpl.isBlank()) book.url
-        else Rules.absUrl(base + "/", fillTocPage(tocTpl, book.url, page = 1))
+        val tocUrl = if (tocTpl.isBlank()) targetBookUrl
+        else Rules.absUrl(base + "/", fillTocPage(tocTpl, targetBookUrl, page = 1))
         var resp = Net.get(tocUrl, src.charset, base + "/", useCache = true)
         // 目录页偶发挂了（限流/换版），回书页再试一次，别直接判死
-        if (!resp.ok && tocUrl != book.url) {
-            val alt = Net.get(book.url, src.charset, base + "/", useCache = true)
+        if (!resp.ok && tocUrl != targetBookUrl) {
+            val alt = Net.get(targetBookUrl, src.charset, base + "/", useCache = true)
             if (alt.ok) resp = alt
         }
         if (!resp.ok && src.mirrors.isNotEmpty()) {
@@ -1158,8 +1186,12 @@ object BookRepo {
             detailDoc.selectFirst("meta[name=author]")?.attr("content")?.ifBlank { null }?.let { author = it }
         }
         cover = normalizeCover(src, cover, book.url)
+        val mappedList = list.map { ch ->
+            val u = applyProxyBase(src, ch.url)
+            if (u != ch.url) ch.copy(url = u) else ch
+        }
         recordTocResult(src.id, ok = true)
-        return Result.success(Toc(list, cover, intro, author))
+        return Result.success(Toc(mappedList, cover, intro, author))
     }
 
     /** 识别盗版转码失败、广告推销、防盗占位等伪正文 */
@@ -1223,12 +1255,13 @@ object BookRepo {
         }
 
         val base = resolveBase(src)
-        val isSlow = src.id == "sfacg" || chapter.url.contains("sfacg.com")
-        var resp = Net.get(chapter.url, src.charset, base + "/", slow = isSlow, profile = src.requestProfile)
+        val targetChapterUrl = applyProxyBase(src, chapter.url)
+        val isSlow = src.id == "sfacg" || targetChapterUrl.contains("sfacg.com")
+        var resp = Net.get(targetChapterUrl, src.charset, base + "/", slow = isSlow, profile = src.requestProfile)
         if (!resp.ok || isSoftError(resp.body)) {
             // 正文拿失败、或拿到软错误页 → 隔 450ms 重试一次（SF 等源站偶发错误页/排队抖动，重试大多能成功）
             runCatching { Thread.sleep(450) }
-            val retry = Net.get(chapter.url, src.charset, base + "/", slow = isSlow, profile = src.requestProfile)
+            val retry = Net.get(targetChapterUrl, src.charset, base + "/", slow = isSlow, profile = src.requestProfile)
             if (retry.ok && !isSoftError(retry.body)) {
                 resp = retry
             }
