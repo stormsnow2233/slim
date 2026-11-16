@@ -180,19 +180,20 @@ object LocalImporter {
     }
 
     fun importComic(context: Context, uri: Uri, fileName: String, store: Store): Result<Comic> {
+        var baseDir: File? = null
         return runCatching {
             val comicId = "local_comic_" + System.currentTimeMillis() + "_" + (1000..9999).random()
-            val baseDir = File(context.filesDir, "imported/comics/$comicId").apply { mkdirs() }
+            baseDir = File(context.filesDir, "imported/comics/$comicId").apply { mkdirs() }
+            val importDir = baseDir!!
             val ext = fileName.substringAfterLast('.', "").lowercase()
 
             when (ext) {
-                "epub" -> importEpubAsComic(context, uri, fileName, baseDir, store)
-                "pdf" -> importPdfAsComic(context, uri, fileName, baseDir, store)
-                else -> {
-                    importTxtAsComic(context, uri, fileName, baseDir, store)
-                }
+                "epub" -> importEpubAsComic(context, uri, fileName, importDir, store)
+                "pdf" -> importPdfAsComic(context, uri, fileName, importDir, store)
+                "txt" -> throw IllegalStateException("TXT 文件不能作为漫画导入")
+                else -> throw IllegalStateException("不支持的漫画文件格式")
             }
-        }
+        }.onFailure { baseDir?.deleteRecursively() }
     }
 
     /* -------------------- TXT -------------------- */
@@ -505,9 +506,7 @@ object LocalImporter {
             val n = f.name.lowercase()
             n.endsWith(".jpg") || n.endsWith(".jpeg") || n.endsWith(".png") ||
                 n.endsWith(".webp") || n.endsWith(".gif")
-        }.sortedWith(Comparator { a, b ->
-            a.name.compareTo(b.name, ignoreCase = true)
-        }).toList()
+        }.sortedWith { a, b -> naturalCompare(a.relativeTo(extractedDir).path, b.relativeTo(extractedDir).path) }.toList()
 
         if (imageFiles.isEmpty()) {
             throw IllegalStateException("EPUB 中未找到图片内容")
@@ -569,37 +568,30 @@ object LocalImporter {
         } ?: throw IllegalStateException("无法读取 PDF 文件")
 
         val pagesDir = File(baseDir, "pages").apply { mkdirs() }
-        val pfd = ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY)
-        val renderer = PdfRenderer(pfd)
-        val pageCount = renderer.pageCount
-
-        if (pageCount == 0) {
-            renderer.close()
-            pfd.close()
-            throw IllegalStateException("PDF 页面为空")
-        }
-
         val renderedImages = mutableListOf<String>()
-        for (i in 0 until pageCount) {
-            val page = renderer.openPage(i)
-            val scale = (1440f / page.width).coerceIn(1.0f, 2.0f)
-            val bmp = Bitmap.createBitmap(
-                (page.width * scale).toInt(),
-                (page.height * scale).toInt(),
-                Bitmap.Config.ARGB_8888
-            )
-            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            page.close()
-
-            val outFile = File(pagesDir, "page_%04d.jpg".format(i))
-            FileOutputStream(outFile).use { fos ->
-                bmp.compress(Bitmap.CompressFormat.JPEG, 88, fos)
+        ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+            PdfRenderer(pfd).use { renderer ->
+                val pageCount = renderer.pageCount
+                if (pageCount <= 0) throw IllegalStateException("PDF 页面为空")
+                for (i in 0 until pageCount) {
+                    renderer.openPage(i).use { page ->
+                        val scale = (1440f / page.width).coerceIn(1.0f, 2.0f)
+                        val bmp = Bitmap.createBitmap((page.width * scale).toInt(), (page.height * scale).toInt(), Bitmap.Config.ARGB_8888)
+                        try {
+                            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            val outFile = File(pagesDir, "page_%04d.jpg".format(i))
+                            FileOutputStream(outFile).use { fos ->
+                                if (!bmp.compress(Bitmap.CompressFormat.JPEG, 88, fos)) throw IllegalStateException("PDF 页面压缩失败")
+                            }
+                            renderedImages.add("file://" + outFile.absolutePath)
+                        } finally {
+                            bmp.recycle()
+                        }
+                    }
+                }
             }
-            bmp.recycle()
-            renderedImages.add("file://" + outFile.absolutePath)
         }
-        renderer.close()
-        pfd.close()
+        val pageCount = renderedImages.size
 
         val title = fileName.substringBeforeLast('.')
         val coverUrl = renderedImages.firstOrNull() ?: ""
@@ -655,41 +647,37 @@ object LocalImporter {
 
         val pagesDir = File(baseDir, "pages").apply { mkdirs() }
         val chaptersDir = File(baseDir, "chapters").apply { mkdirs() }
-        val pfd = ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY)
-        val renderer = PdfRenderer(pfd)
-        val pageCount = renderer.pageCount
-
         val chapterList = mutableListOf<Chapter>()
         var coverUrl = ""
-
-        for (i in 0 until pageCount) {
-            val page = renderer.openPage(i)
-            val scale = (1200f / page.width).coerceIn(1.0f, 1.8f)
-            val bmp = Bitmap.createBitmap(
-                (page.width * scale).toInt(),
-                (page.height * scale).toInt(),
-                Bitmap.Config.ARGB_8888
-            )
-            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
-            page.close()
-
-            val imgFile = File(pagesDir, "page_%04d.jpg".format(i))
-            FileOutputStream(imgFile).use { fos ->
-                bmp.compress(Bitmap.CompressFormat.JPEG, 85, fos)
+        var pageCount = 0
+        ParcelFileDescriptor.open(pdfFile, ParcelFileDescriptor.MODE_READ_ONLY).use { pfd ->
+            PdfRenderer(pfd).use { renderer ->
+                pageCount = renderer.pageCount
+                if (pageCount <= 0) throw IllegalStateException("PDF 页面为空")
+                for (i in 0 until pageCount) {
+                    renderer.openPage(i).use { page ->
+                        val scale = (1200f / page.width).coerceIn(1.0f, 1.8f)
+                        val bmp = Bitmap.createBitmap((page.width * scale).toInt(), (page.height * scale).toInt(), Bitmap.Config.ARGB_8888)
+                        try {
+                            page.render(bmp, null, null, PdfRenderer.Page.RENDER_MODE_FOR_DISPLAY)
+                            val imgFile = File(pagesDir, "page_%04d.jpg".format(i))
+                            FileOutputStream(imgFile).use { fos ->
+                                if (!bmp.compress(Bitmap.CompressFormat.JPEG, 85, fos)) throw IllegalStateException("PDF 页面压缩失败")
+                            }
+                            if (i == 0) coverUrl = "file://" + imgFile.absolutePath
+                            val chContent = "<!--image-->file://${imgFile.absolutePath}<!--image-->"
+                            val chFile = File(chaptersDir, "ch_$i.txt")
+                            chFile.writeText(chContent)
+                            val chUrl = "file://" + chFile.absolutePath
+                            NovelContentCache.put("local", chUrl, chContent)
+                            chapterList.add(Chapter(name = "第 ${i + 1} 页", url = chUrl, index = i))
+                        } finally {
+                            bmp.recycle()
+                        }
+                    }
+                }
             }
-            bmp.recycle()
-
-            if (i == 0) coverUrl = "file://" + imgFile.absolutePath
-
-            val chContent = "<!--image-->file://${imgFile.absolutePath}<!--image-->"
-            val chFile = File(chaptersDir, "ch_$i.txt")
-            chFile.writeText(chContent)
-            val chUrl = "file://" + chFile.absolutePath
-            NovelContentCache.put("local", chUrl, chContent)
-            chapterList.add(Chapter(name = "第 ${i + 1} 页", url = chUrl, index = i))
         }
-        renderer.close()
-        pfd.close()
 
         val title = fileName.substringBeforeLast('.')
         val book = Book(
@@ -739,6 +727,20 @@ object LocalImporter {
     }
 
     /* -------------------- Helper -------------------- */
+
+    internal fun naturalCompare(a: String, b: String): Int {
+        val regex = Regex("""\d+|\D+""")
+        val ap = regex.findAll(a.lowercase()).map { it.value }.toList()
+        val bp = regex.findAll(b.lowercase()).map { it.value }.toList()
+        for (i in 0 until minOf(ap.size, bp.size)) {
+            val x = ap[i]; val y = bp[i]
+            val cmp = if (x.firstOrNull()?.isDigit() == true && y.firstOrNull()?.isDigit() == true) {
+                (x.toLongOrNull() ?: Long.MAX_VALUE).compareTo(y.toLongOrNull() ?: Long.MAX_VALUE)
+            } else x.compareTo(y)
+            if (cmp != 0) return cmp
+        }
+        return ap.size.compareTo(bp.size).takeIf { it != 0 } ?: a.compareTo(b, ignoreCase = true)
+    }
 
     private fun resolveWithin(rootDir: File, baseDir: File, relativePath: String): File? {
         val clean = relativePath.trim().substringBefore('#').substringBefore('?').replace('\\', '/')

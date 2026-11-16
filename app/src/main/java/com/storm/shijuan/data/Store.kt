@@ -231,14 +231,8 @@ class Store(val context: Context) {
                     loadBookProgress(b.url)
                 }
             }
-            val legacyKeys = sp.all.keys.filter { k ->
-                (k.startsWith("p_") || k.startsWith("s_")) && k.count { it == '_' } >= 2
-            }
-            if (legacyKeys.isNotEmpty()) {
-                val editor = sp.edit()
-                legacyKeys.forEach { editor.remove(it) }
-                editor.apply()
-            }
+            // 不删除旧版 p_*/s_* 键：升级时可能还有未出现在当前书架/记录中的旧书，
+            // 保留它们可避免版本迁移误删阅读历史；新键会优先读取，旧键仅作兼容回退。
         }
     }
 
@@ -797,7 +791,11 @@ class Store(val context: Context) {
         sp.edit().putInt("app_theme_mode", mode).apply()
     }
 
+    /** 清除离线缓存；保留书架、阅读进度、搜索历史和应用设置。 */
     fun clearAll() {
-        sp.edit().clear().apply()
+        clearNovelCaches()
+        runCatching { ComicDownloader.clearAll() }
+        // 只清临时缓存，不触碰 files/imported 等书架数据目录。
+        runCatching { context.cacheDir.listFiles()?.forEach { it.deleteRecursively() } }
     }
 }

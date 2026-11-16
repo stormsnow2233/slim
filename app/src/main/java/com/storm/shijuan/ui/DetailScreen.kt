@@ -76,6 +76,8 @@ fun DetailScreen(
     var verifyTarget by remember { mutableStateOf<Source?>(null) }
     val export by Exporter.state.collectAsState()
     var orderAscending by remember(book.url) { mutableStateOf(true) }
+    var requestId by remember(book.url) { mutableIntStateOf(0) }
+    var loadJob by remember(book.url) { mutableStateOf<kotlinx.coroutines.Job?>(null) }
 
     val chapterList = remember(toc, tocQuery, orderAscending) {
         val filtered = if (tocQuery.isBlank()) toc else toc.filter { it.name.contains(tocQuery, true) }
@@ -85,13 +87,15 @@ fun DetailScreen(
     val triedSources = remember(book.name) { mutableSetOf(book.sourceId) }
 
     fun loadToc(force: Boolean = false) {
+        val currentRequest = ++requestId
+        loadJob?.cancel()
         if (full.external) {
             loading = false
             error = "请前往 Z-Library 观看"
             return
         }
         if (full.sourceId == "local") {
-            scope.launch {
+            loadJob = scope.launch {
                 loading = true
                 val localToc = withContext(Dispatchers.IO) { store.loadToc(full.url) }
                 toc = localToc
@@ -100,7 +104,7 @@ fun DetailScreen(
             }
             return
         }
-        scope.launch {
+        loadJob = scope.launch {
             // 离线：本地有目录就直接用，不去撞网络；本地没有就直说
             if (!force && !Offline.isOnline(ctx)) {
                 if (toc.isEmpty()) error = "离线模式：这本的目录没存过，联网后再进"
@@ -177,6 +181,10 @@ fun DetailScreen(
                 loading = false
             }
         }
+    }
+
+    DisposableEffect(book.url) {
+        onDispose { loadJob?.cancel() }
     }
 
     LaunchedEffect(book.url) {

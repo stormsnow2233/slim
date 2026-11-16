@@ -29,6 +29,9 @@ import kotlin.coroutines.resumeWithException
 object ExternalBookDownload {
     private const val MAX_BYTES = 32L * 1024 * 1024
     private const val MAX_XML = 2 * 1024 * 1024
+    private const val MAX_ZIP_ENTRY_BYTES = 64L * 1024 * 1024
+    private const val MAX_ZIP_TOTAL_BYTES = 256L * 1024 * 1024
+    private const val MAX_ZIP_ENTRIES = 10_000
     private const val MAX_REDIRECTS = 5
 
     private val publicDns = object : Dns {
@@ -151,12 +154,31 @@ object ExternalBookDownload {
             val names = HashSet<String>()
             val entries = zip.entries()
             var count = 0
+            var declaredTotal = 0L
+            var totalUncompressed = 0L
             while (entries.hasMoreElements()) {
                 if (!active()) throw IOException("Cancelled")
                 val entry = entries.nextElement()
-                if (++count > 10000 || !names.add(entry.name) || entry.name.startsWith('/') ||
-                    entry.name.split('/').any { it == ".." || it == "." } || entry.name.contains('\\'))
+                val declaredSize = entry.size
+                if (++count > MAX_ZIP_ENTRIES || !names.add(entry.name) || entry.name.startsWith('/') ||
+                    entry.name.split('/').any { it == ".." || it == "." } || entry.name.contains('\\') ||
+                    declaredSize > MAX_ZIP_ENTRY_BYTES ||
+                    (declaredSize >= 0 && declaredTotal > MAX_ZIP_TOTAL_BYTES - declaredSize))
                     throw IOException("Invalid EPUB entries")
+                if (declaredSize >= 0) declaredTotal += declaredSize
+                var entryBytes = 0L
+                zip.getInputStream(entry).use { input ->
+                    val buffer = ByteArray(16 * 1024)
+                    while (true) {
+                        if (!active()) throw IOException("Cancelled")
+                        val n = input.read(buffer)
+                        if (n < 0) break
+                        entryBytes += n
+                        totalUncompressed += n
+                        if (entryBytes > MAX_ZIP_ENTRY_BYTES || totalUncompressed > MAX_ZIP_TOTAL_BYTES)
+                            throw IOException("EPUB decompressed data exceeds limit")
+                    }
+                }
             }
             val container = zip.getEntry("META-INF/container.xml") ?: throw IOException("Missing EPUB container")
             val containerBytes = zip.getInputStream(container).use { readLimited(it, MAX_XML, active) }

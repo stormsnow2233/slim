@@ -247,10 +247,15 @@ fun SearchScreen(
                                         interactionSource = remember { MutableInteractionSource() },
                                         indication = null,
                                         onClick = {
+                                            val prevSeq = searchSeq
+                                            BookRepo.cancelSearch("search_$prevSeq")
+                                            searchJob?.cancel()
+                                            searchSeq++
                                             keyword = ""
                                             searched = ""
                                             results = emptyMap()
                                             filterSource = null
+                                            running = false
                                         }
                                     ),
                                 contentAlignment = Alignment.Center
@@ -290,10 +295,15 @@ fun SearchScreen(
                 trailingIcon = {
                     if (keyword.isNotEmpty()) {
                         IconButton(onClick = {
+                            val prevSeq = searchSeq
+                            BookRepo.cancelSearch("search_$prevSeq")
+                            searchJob?.cancel()
+                            searchSeq++
                             keyword = ""
                             searched = ""
                             results = emptyMap()
                             filterSource = null
+                            running = false
                         }) {
                             Icon(Icons.Rounded.Close, "清空", Modifier.size(18.dp))
                         }

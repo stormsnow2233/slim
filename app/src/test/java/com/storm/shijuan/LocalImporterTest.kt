@@ -134,4 +134,11 @@ class LocalImporterTest {
         assertTrue(converted.contains("第二段文本继续展开。"))
         assertTrue(converted.contains("illus_2.png<!--image-->"))
     }
+
+    @Test
+    fun testNaturalCompare() {
+        val files = listOf("page_10.jpg", "page_1.jpg", "page_2.jpg", "page_20.jpg", "page_3.jpg")
+        val sorted = files.sortedWith { a, b -> LocalImporter.naturalCompare(a, b) }
+        assertEquals(listOf("page_1.jpg", "page_2.jpg", "page_3.jpg", "page_10.jpg", "page_20.jpg"), sorted)
+    }
 }

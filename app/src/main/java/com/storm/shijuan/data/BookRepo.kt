@@ -902,8 +902,17 @@ object BookRepo {
         val b = Thread { tocRef.set(runCatching { getToc(src, book) }.getOrElse { Result.failure(it) }) }
         a.isDaemon = true; b.isDaemon = true
         a.start(); b.start()
-        runCatching { a.join(35000) }
-        runCatching { b.join(35000) }
+        // 共享总预算：不能对两个并行任务分别 join 35s（最坏会拖到 70s）。
+        // 超时后中断尚未完成的任务，避免详情/目录继续占用调用线程。
+        val deadline = System.nanoTime() + 35_000_000_000L
+        fun awaitUntilDone(t: Thread) {
+            val remaining = deadline - System.nanoTime()
+            if (remaining > 0L) runCatching { t.join((remaining + 999_999L) / 1_000_000L) }
+        }
+        awaitUntilDone(a)
+        awaitUntilDone(b)
+        if (a.isAlive) a.interrupt()
+        if (b.isAlive) b.interrupt()
         return detRef.get() to tocRef.get()
     }
 
@@ -1029,14 +1038,15 @@ object BookRepo {
             val alt = Net.get(targetBookUrl, src.charset, base + "/", useCache = true)
             if (alt.ok) resp = alt
         }
-        if (!resp.ok && src.mirrors.isNotEmpty()) {
+        // HTTP 200 但返回错误/验证空壳时也必须切镜像。
+        if ((!resp.ok || isSoftError(resp.body)) && src.mirrors.isNotEmpty()) {
             val curUri = runCatching { java.net.URI(tocUrl) }.getOrNull()
             if (curUri != null) {
                 for (mirror in src.mirrors) {
                     val mirrorUri = runCatching { java.net.URI(mirror) }.getOrNull() ?: continue
                     val altUrl = java.net.URI(mirrorUri.scheme, mirrorUri.authority, curUri.path, curUri.query, curUri.fragment).toString()
                     val r2 = Net.get(altUrl, src.charset, "$mirror/", useCache = true)
-                    if (r2.ok) {
+                    if (r2.ok && !isSoftError(r2.body)) {
                         resp = r2
                         recordActiveBase(src.id, mirror)
                         break
@@ -1226,7 +1236,9 @@ object BookRepo {
     }
 
     /** 正文 */
-    fun getChapter(src: Source, chapter: Chapter): Result<Content> {
+    fun getChapter(src: Source, chapter: Chapter, totalTimeoutMs: Long = 35_000L, tag: Any? = null): Result<Content> {
+        val deadlineNs = if (totalTimeoutMs > 0L) System.nanoTime() + totalTimeoutMs * 1_000_000L else Long.MAX_VALUE
+        fun remainingTimeoutMs(): Long = ((deadlineNs - System.nanoTime()) / 1_000_000L).coerceAtLeast(1L)
         if (src.id == "local") {
             val file = java.io.File(chapter.url.removePrefix("file://"))
             if (file.exists()) {
@@ -1263,22 +1275,23 @@ object BookRepo {
         val base = resolveBase(src)
         val targetChapterUrl = applyProxyBase(src, chapter.url)
         val isSlow = src.id == "sfacg" || targetChapterUrl.contains("sfacg.com")
-        var resp = Net.get(targetChapterUrl, src.charset, base + "/", slow = isSlow, profile = src.requestProfile)
+        var resp = Net.get(targetChapterUrl, src.charset, base + "/", slow = isSlow, tag = tag, timeoutMs = remainingTimeoutMs(), profile = src.requestProfile)
         if (!resp.ok || isSoftError(resp.body)) {
             // 正文拿失败、或拿到软错误页 → 隔 450ms 重试一次（SF 等源站偶发错误页/排队抖动，重试大多能成功）
             runCatching { Thread.sleep(450) }
-            val retry = Net.get(targetChapterUrl, src.charset, base + "/", slow = isSlow, profile = src.requestProfile)
+            val retry = Net.get(targetChapterUrl, src.charset, base + "/", slow = isSlow, tag = tag, timeoutMs = remainingTimeoutMs(), profile = src.requestProfile)
             if (retry.ok && !isSoftError(retry.body)) {
                 resp = retry
             }
         }
-        if (!resp.ok && src.mirrors.isNotEmpty()) {
+        // HTTP 200 软错误同样触发镜像，避免把错误页当作源站成功。
+        if ((!resp.ok || isSoftError(resp.body)) && src.mirrors.isNotEmpty()) {
             val curUri = runCatching { java.net.URI(chapter.url) }.getOrNull()
             if (curUri != null) {
                 for (mirror in src.mirrors) {
                     val mirrorUri = runCatching { java.net.URI(mirror) }.getOrNull() ?: continue
                     val altUrl = java.net.URI(mirrorUri.scheme, mirrorUri.authority, curUri.path, curUri.query, curUri.fragment).toString()
-                    val r2 = Net.get(altUrl, src.charset, "$mirror/", slow = isSlow, profile = src.requestProfile)
+                    val r2 = Net.get(altUrl, src.charset, "$mirror/", slow = isSlow, tag = tag, timeoutMs = remainingTimeoutMs(), profile = src.requestProfile)
                     if (r2.ok && !isSoftError(r2.body)) {
                         resp = r2
                         recordActiveBase(src.id, mirror)
