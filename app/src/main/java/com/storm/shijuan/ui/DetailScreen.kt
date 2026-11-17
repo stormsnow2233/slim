@@ -538,7 +538,7 @@ fun DetailScreen(
                     val cachedCount = remember(full.url, toc.size, dlTask?.doneChapters) {
                         NovelDownloader.cachedCount(full, toc)
                     }
-                    val isAllCached = toc.isNotEmpty() && (cachedCount >= toc.size || dlTask?.state == STATE_DONE)
+                    val isAllCached = toc.isNotEmpty() && cachedCount >= toc.size
 
                     Surface(
                         shape = RoundedCornerShape(12.dp),
@@ -566,6 +566,7 @@ fun DetailScreen(
                                         isRunning -> "正在离线中 · ${dlTask?.doneChapters ?: cachedCount}/${toc.size} 章" +
                                             (if (dlTask?.speedFormatted?.isNotBlank() == true) " · ${dlTask.speedFormatted}" else "")
                                         dlTask?.state == STATE_PAUSED -> "离线已暂停 · 已缓存 $cachedCount/${toc.size} 章"
+                                        dlTask?.state == com.storm.shijuan.data.STATE_ERROR -> "离线未完成 · 已缓存 $cachedCount/${toc.size} 章，点重试"
                                         cachedCount > 0 -> "已离线 $cachedCount/${toc.size} 章 · 随时可离线阅读"
                                         else -> "整本离线缓存 · 5协程极速下载，断网随心读"
                                     },
@@ -588,7 +589,7 @@ fun DetailScreen(
                                 onClick = {
                                     when {
                                         isRunning -> NovelDownloader.pause(dlTask!!.key)
-                                        dlTask?.state == STATE_PAUSED -> NovelDownloader.resume(dlTask.key)
+                                        dlTask?.state == STATE_PAUSED || dlTask?.state == com.storm.shijuan.data.STATE_ERROR -> NovelDownloader.resume(dlTask.key)
                                         isAllCached -> {
                                             Toast.makeText(ctx, "全本已完成离线，断网可随时阅读", Toast.LENGTH_SHORT).show()
                                         }
@@ -607,6 +608,7 @@ fun DetailScreen(
                                     when {
                                         isRunning -> "暂停"
                                         dlTask?.state == STATE_PAUSED -> "继续"
+                                        dlTask?.state == com.storm.shijuan.data.STATE_ERROR -> "重试"
                                         isAllCached -> "已完备"
                                         else -> "缓存整本"
                                     },

@@ -746,14 +746,20 @@ class Store(val context: Context) {
     fun loadSourceMetrics(): String? = sp.getString("source_health_metrics_v2", null)
 
     // ── 轻小说文库自定义反代 / Worker / CDN ──
-    fun wenku8ProxyUrl(): String = sp.getString("wenku8_proxy_url", "")?.trim().orEmpty()
+    fun wenku8ProxyUrl(): String {
+        val value = sp.getString("wenku8_proxy_url", null)?.trim().orEmpty()
+        return if (value.isBlank() || value.contains("wenku8-proxy.storm-snow.workers.dev") || value.contains("wenku8-proxy.us.ci")) "https://wenku8-proxy.pages.dev" else value
+    }
 
     fun setWenku8ProxyUrl(url: String) {
         sp.edit().putString("wenku8_proxy_url", url.trim()).apply()
     }
 
     // ── JMcomic 自定义反代 / Pages / Worker / CDN ──
-    fun jmProxyUrl(): String = sp.getString("jm_proxy_url", "")?.trim().orEmpty()
+    fun jmProxyUrl(): String {
+        val value = sp.getString("jm_proxy_url", null)?.trim().orEmpty()
+        return if (value.isBlank() || value.contains("jm-proxy.storm-snow.workers.dev") || value.contains("jm-proxy.us.ci")) "https://jm-proxy.pages.dev" else value
+    }
 
     fun setJmProxyUrl(url: String) {
         sp.edit().putString("jm_proxy_url", url.trim()).apply()

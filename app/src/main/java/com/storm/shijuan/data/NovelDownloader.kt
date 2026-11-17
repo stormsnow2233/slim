@@ -15,6 +15,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import android.util.Log
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
@@ -227,12 +228,14 @@ object NovelDownloader {
             createdAt = exist?.createdAt ?: System.currentTimeMillis(),
         )
         upsert(task)
+        ctx?.let(CacheDownloadService::sync)
         notifyProgress(task, force = true)
         launchWorker(task)
     }
 
     fun pause(key: String) {
         paused[key] = true
+        jobs.remove(key)?.cancel()
         update(key) { it.copy(state = STATE_PAUSED, speedChaptersPerSec = 0f) }
         cancelNotif(key)
     }
@@ -246,6 +249,7 @@ object NovelDownloader {
         cancelled[key] = false
         val runningTask = t.copy(state = STATE_RUNNING, error = "")
         update(key) { runningTask }
+        ctx?.let(CacheDownloadService::sync)
         notifyProgress(runningTask, force = true)
         launchWorker(runningTask)
     }
@@ -259,15 +263,19 @@ object NovelDownloader {
         cancelNotif(key)
         tasks = tasks.filterNot { it.key == key }
         persist()
+        ctx?.let(CacheDownloadService::sync)
     }
 
     private fun launchWorker(task: NovelDownloadTask) {
         jobs[task.key]?.cancel()
         jobs[task.key] = scope.launch {
-            runCatching { work(task) }
-                .onFailure { e ->
-                    update(task.key) { it.copy(state = STATE_ERROR, speedChaptersPerSec = 0f, error = e.message ?: "缓存失败") }
-                }
+            try {
+                work(task)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                update(task.key) { it.copy(state = STATE_ERROR, speedChaptersPerSec = 0f, error = e.message ?: "缓存失败") }
+            }
         }
     }
 
@@ -279,6 +287,7 @@ object NovelDownloader {
         val chapters = task.chapters
         val total = chapters.size
         val doneCounter = AtomicInteger(task.doneChapters)
+        val failures = java.util.concurrent.ConcurrentLinkedQueue<String>()
         val semaphore = Semaphore(5) // 5 路并发
 
         var lastSampleTime = System.currentTimeMillis()
@@ -306,13 +315,32 @@ object NovelDownloader {
                             delay(250)
                         }
 
-                        val result = runCatching { BookRepo.getChapter(src, ch) }.getOrNull()
-                        if (result != null && result.isSuccess) {
-                            val text = result.getOrNull()?.text.orEmpty()
+                        var downloaded = false
+                        var lastFailure = ""
+                        repeat(3) { attempt ->
+                            if (downloaded || cancelled[task.key] == true) return@repeat
+                            val result = try {
+                                BookRepo.getChapter(src, ch)
+                            } catch (e: kotlinx.coroutines.CancellationException) {
+                                throw e
+                            } catch (e: Exception) {
+                                lastFailure = e.message.orEmpty()
+                                null
+                            }
+                            val text = result?.getOrNull()?.text.orEmpty()
                             if (text.isNotBlank()) {
                                 NovelContentCache.put(book.sourceId, ch.url, text)
                                 st?.saveContent(ch.url, book.sourceId, text)
+                                downloaded = true
+                            } else {
+                                lastFailure = result?.exceptionOrNull()?.message ?: lastFailure
+                                if (attempt < 2) delay(500L * (attempt + 1))
                             }
+                        }
+                        if (!downloaded) {
+                            failures.add(ch.name)
+                            Log.w("NovelDownloader", "chapter failed: ${ch.name}; $lastFailure")
+                            return@withPermit
                         }
 
                         val done = doneCounter.incrementAndGet()
@@ -344,20 +372,25 @@ object NovelDownloader {
 
         val finalDone = cachedCount(book, chapters)
         val finishedTask = task.copy(
-            state = STATE_DONE,
+            state = if (finalDone == total && failures.isEmpty()) STATE_DONE else STATE_ERROR,
             doneChapters = finalDone,
             currentChapter = "",
             speedChaptersPerSec = 0f,
+            error = if (finalDone == total && failures.isEmpty()) "" else "${total - finalDone} 章未缓存成功，请重试补齐",
         )
         update(task.key) { finishedTask }
         jobs.remove(task.key)
         persist()
-        notifyDone(finishedTask)
+        if (finishedTask.state == STATE_DONE) notifyDone(finishedTask)
     }
 
     private fun update(key: String, f: (NovelDownloadTask) -> NovelDownloadTask) {
+        val wasRunning = tasks.any { it.key == key && it.state == STATE_RUNNING }
         tasks = tasks.map { if (it.key == key) f(it) else it }
         persist()
+        if (wasRunning && tasks.none { it.key == key && it.state == STATE_RUNNING }) {
+            ctx?.let(CacheDownloadService::sync)
+        }
     }
 
     private fun upsert(task: NovelDownloadTask) {

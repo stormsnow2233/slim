@@ -341,6 +341,7 @@ object ComicDownloader {
             createdAt = exist?.createdAt ?: System.currentTimeMillis(),
         )
         upsert(task)
+        ctx?.let(CacheDownloadService::sync)
         notifyProgress(task, force = true)
         launchWorker(task)
     }
@@ -373,7 +374,9 @@ object ComicDownloader {
 
     fun pause(key: String) {
         paused[key] = true
+        jobs.remove(key)?.cancel()
         update(key) { it.copy(state = STATE_PAUSED, speedBytesPerSec = 0L) }
+        ctx?.let(CacheDownloadService::sync)
         cancelNotif(key)
     }
 
@@ -386,6 +389,7 @@ object ComicDownloader {
         cancelled[key] = false
         val runningTask = t.copy(state = STATE_RUNNING, error = "")
         update(key) { runningTask }
+        ctx?.let(CacheDownloadService::sync)
         notifyProgress(runningTask, force = true)
         launchWorker(runningTask)
     }
@@ -401,6 +405,7 @@ object ComicDownloader {
         if (t != null) runCatching { dirOf(t.comic).deleteRecursively() }
         tasks = tasks.filterNot { it.key == key }
         persist()
+        ctx?.let(CacheDownloadService::sync)
     }
 
     /** 删掉缓存但保留任务记录 */
@@ -419,13 +424,19 @@ object ComicDownloader {
         runCatching { rootDir().deleteRecursively() }
         tasks = emptyList()
         persist()
+        ctx?.let(CacheDownloadService::sync)
     }
 
     private fun launchWorker(task: DownloadTask) {
         jobs[task.key]?.cancel()
         jobs[task.key] = scope.launch {
-            runCatching { work(task) }
-                .onFailure { e -> update(task.key) { it.copy(state = STATE_ERROR, speedBytesPerSec = 0L, error = e.message ?: "缓存失败") } }
+            try {
+                work(task)
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                update(task.key) { it.copy(state = STATE_ERROR, speedBytesPerSec = 0L, error = e.message ?: "缓存失败") }
+            }
         }
     }
 
@@ -458,7 +469,7 @@ object ComicDownloader {
             update(task.key) { curTask }
             notifyProgress(curTask)
 
-            val saved = runCatching {
+            val saved = try {
                 downloadOne(comic, ch, i, task.key) { addBytes, addPages ->
                     bytes += addBytes
                     pages += addPages
@@ -467,19 +478,24 @@ object ComicDownloader {
                     if (now - lastUiUpdateTime >= 600) {
                         lastUiUpdateTime = now
                         update(task.key) {
-                            it.copy(
-                                pagesDone = pages,
-                                bytes = bytes,
-                                speedBytesPerSec = sampler.currentSpeed,
-                            )
+                            it.copy(pagesDone = pages, bytes = bytes, speedBytesPerSec = sampler.currentSpeed)
                         }
                     }
                 }
-            }.getOrElse { 0 }
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                0
+            }
 
             if (saved == 0) {
-                // 这一话拿不到图，记一笔继续下一话，不整本卡死
-                update(task.key) { it.copy(error = "第 ${i + 1} 话取图失败，已跳过") }
+                // 后台网络受限时不能把失败章节当作完成，否则任务会跳过并误报全部完成。
+                update(task.key) {
+                    it.copy(state = STATE_ERROR, doneChapters = done, pagesDone = pages,
+                        bytes = bytes, speedBytesPerSec = 0L, error = "第 ${i + 1} 话未下载完整，请重试")
+                }
+                jobs.remove(task.key)
+                return
             }
             done = i + 1
             update(task.key) {
@@ -549,7 +565,14 @@ object ComicDownloader {
                         } else if (f.exists() && !isImageFile(f)) {
                             f.delete()
                         }
-                        val got = Net.downloadTo(url, f, reqHeaders, referer = referer)
+                        var got = -1L
+                        for (attempt in 0 until 3) {
+                            if (cancelled[taskKey] == true) break
+                            got = Net.downloadTo(url, f, reqHeaders, referer = referer)
+                            if (got > 0 && isImageFile(f)) break
+                            f.delete()
+                            if (attempt < 2) delay(400L * (attempt + 1))
+                        }
                         if (got > 0 && isImageFile(f)) {
                             if (url.contains("/media/photos/") || reqHeaders.containsKey("X-JM")) {
                                 JmImageDescrambler.descrambleFile(f, url)
@@ -571,12 +594,17 @@ object ComicDownloader {
         if (ok > 0 && ok >= pages.images.size) {
             runCatching { File(dir, DONE_MARK).writeText(ok.toString()) }
         }
-        return ok
+        // 有部分图片并不代表整话完成；重试时复用已验证的本地图片。
+        return if (ok == pages.images.size) ok else 0
     }
 
     private fun update(key: String, f: (DownloadTask) -> DownloadTask) {
+        val wasRunning = tasks.any { it.key == key && it.state == STATE_RUNNING }
         tasks = tasks.map { if (it.key == key) f(it) else it }
         persist()
+        if (wasRunning && tasks.none { it.key == key && it.state == STATE_RUNNING }) {
+            ctx?.let(CacheDownloadService::sync)
+        }
     }
 
     private fun upsert(task: DownloadTask) {

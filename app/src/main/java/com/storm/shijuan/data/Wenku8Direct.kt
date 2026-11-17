@@ -28,6 +28,7 @@ object Wenku8Direct {
     // 内存中保存 aid -> (章节名 -> 正文) 映射，确保即使 URL 形式不同也能按名称秒级匹配
     private val contentByNameMap = ConcurrentHashMap<String, String>()
     private val contentByUrlMap = ConcurrentHashMap<String, String>()
+    private val contentByIndexMap = ConcurrentHashMap<String, String>()
 
     fun extractAid(url: String): Int? {
         val m = Regex("(?:/book/|/novel/\\d+/|id=|wenku8://)(\\d+)").find(url)
@@ -87,9 +88,8 @@ object Wenku8Direct {
             }
         }
 
-        // 内置官方高速 Cloudflare 边缘加速节点（支持自定义域名免翻直连，优先加速拉取）
-        urls.add("https://wenku8-proxy.us.ci/down.php?type=utf8&node=1&id=$aid")
-        urls.add("https://wenku8-proxy.storm-snow.workers.dev/down.php?type=utf8&node=1&id=$aid")
+        // 内置高速 Cloudflare Pages 加速节点（自定义代理仍优先）
+        urls.add("https://wenku8-proxy.pages.dev/down.php?type=utf8&node=1&id=$aid")
 
         // 官方 3 个下载节点作为安全回退兜底
         for (node in 1..3) {
@@ -158,6 +158,7 @@ object Wenku8Direct {
             contentByUrlMap[ch.url] = content
             val nameKey = "${aid}_${normalizeName(ch.name)}"
             contentByNameMap[nameKey] = content
+            contentByIndexMap["${aid}_${ch.index}"] = content
             NovelContentCache.put("wenku8", ch.url, content)
         }
     }
@@ -170,9 +171,10 @@ object Wenku8Direct {
         contentByUrlMap[chapter.url]?.let { return it }
         NovelContentCache.get("wenku8", chapter.url)?.let { return it }
 
-        // 2. 按 aid + 章节名查询
+        // 2. 按 aid + 章节名/索引查询
         val nameKey = "${aid}_${normalizeName(chapter.name)}"
         contentByNameMap[nameKey]?.let { return it }
+        contentByIndexMap["${aid}_${chapter.index}"]?.let { return it }
 
         // 3. 内存与缓存均未命中 → 触发整本拉取解包（优先走本地持久化磁盘）
         val unpackRes = fetchAndUnpack(aid)
