@@ -12,6 +12,7 @@ captures/
 *.apk
 *.apk.idsig
 *.aab
+*.ipa
 output/
 .kotlin/
 
