@@ -39,8 +39,10 @@ import com.storm.shijuan.data.ReaderPrefs
  * - Image: 独立插图页（由 Coil 异步加载居中展示，支持点按全屏大图预览）
  */
 private fun imageReferer(url: String): String = when {
-    url.contains("wenku8", ignoreCase = true) -> "https://www.wenku8.cc/"
+    url.contains("wenku8", ignoreCase = true) || url.contains("777743", ignoreCase = true) -> "https://www.wenku8.cc/"
     url.contains("sfacg", ignoreCase = true) -> "https://m.sfacg.com/"
+    url.contains("esjzone", ignoreCase = true) -> "https://www.esjzone.cc/"
+    url.contains("faloo", ignoreCase = true) -> "https://wap.faloo.com/"
     else -> ""
 }
 

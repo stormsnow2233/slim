@@ -167,29 +167,113 @@ object Wenku8Direct {
      * 获取某一章的正文（优先查内存、次查 NovelContentCache，若未解包则触发整本直下）
      */
     fun getChapterContent(aid: Int, chapter: Chapter): String? {
+        val nameKey = "${aid}_${normalizeName(chapter.name)}"
+        val isIllustChapter = chapter.name.contains("插图") || chapter.name.contains("插画") ||
+            chapter.name.contains("彩页") || chapter.name.contains("彩图")
+
         // 1. 按具体 URL 查询
-        contentByUrlMap[chapter.url]?.let { return it }
-        NovelContentCache.get("wenku8", chapter.url)?.let { return it }
+        contentByUrlMap[chapter.url]?.let { if (it.isNotBlank()) return it }
+        NovelContentCache.get("wenku8", chapter.url)?.let { if (it.isNotBlank()) return it }
 
         // 2. 按 aid + 章节名/索引查询
-        val nameKey = "${aid}_${normalizeName(chapter.name)}"
-        contentByNameMap[nameKey]?.let { return it }
-        contentByIndexMap["${aid}_${chapter.index}"]?.let { return it }
+        contentByNameMap[nameKey]?.let { if (it.isNotBlank()) return it }
+        contentByIndexMap["${aid}_${chapter.index}"]?.let { if (it.isNotBlank()) return it }
 
         // 3. 内存与缓存均未命中 → 触发整本拉取解包（优先走本地持久化磁盘）
         val unpackRes = fetchAndUnpack(aid)
         if (unpackRes.isSuccess) {
-            contentByUrlMap[chapter.url]?.let { return it }
-            contentByNameMap[nameKey]?.let { return it }
+            contentByUrlMap[chapter.url]?.let { if (it.isNotBlank()) return it }
+            contentByNameMap[nameKey]?.let { if (it.isNotBlank()) return it }
             // 按索引相近或匹配章节
             val found = unpackRes.getOrNull()?.chapters?.firstOrNull {
                 normalizeName(it.name) == normalizeName(chapter.name) || it.name.contains(chapter.name) || chapter.name.contains(it.name)
             }
             if (found != null) {
                 val matched = contentByUrlMap[found.url]
-                if (matched != null) {
+                if (!matched.isNullOrBlank()) {
                     NovelContentCache.put("wenku8", chapter.url, matched)
                     return matched
+                }
+            }
+        }
+
+        // 4. 若为插图章节（官方 TXT 中插图章节正文为空），自动从文库网页拉取该卷插图图片
+        if (isIllustChapter) {
+            val illust = fetchIllustrations(aid, chapter.name, chapter.volume)
+            if (!illust.isNullOrBlank()) {
+                contentByUrlMap[chapter.url] = illust
+                contentByNameMap[nameKey] = illust
+                NovelContentCache.put("wenku8", chapter.url, illust)
+                return illust
+            }
+        }
+
+        return null
+    }
+
+    /**
+     * 智能在线抓取文库8对应卷或插图章节的插图大图
+     */
+    fun fetchIllustrations(aid: Int, chapterName: String, volumeName: String = ""): String? {
+        val gid = aid / 1000
+        val bases = listOf("https://www.wenku8.cc", "https://www.wenku8.net")
+        val volKey = volumeName.trim().ifBlank {
+            val m = Regex("(第[一二三四五六七八九十百千万\\d]+[卷部篇集])").find(chapterName)
+            m?.groupValues?.get(1).orEmpty()
+        }
+
+        for (base in bases) {
+            val tocUrl = "$base/novel/$gid/$aid/index.htm"
+            val resp = Net.get(tocUrl, charset = "gbk", referer = "$base/book/$aid.htm", useCache = true)
+            if (!resp.ok) continue
+            val doc = Rules.parse(resp.body)
+            var curVol = ""
+            var targetHref = ""
+            for (td in doc.select("td")) {
+                if (td.hasClass("vcss")) {
+                    curVol = td.text().trim()
+                }
+                val a = td.selectFirst("a") ?: continue
+                val title = a.text().trim()
+                val href = a.attr("href").trim()
+                val isIllust = title.contains("插图") || title.contains("插画") || title.contains("彩")
+                val volMatch = volKey.isBlank() || curVol.contains(volKey) || volKey.contains(curVol)
+                if (isIllust && volMatch) {
+                    targetHref = href
+                    break
+                }
+            }
+            // 若按卷没匹配到，退化为只要匹配到包含插图的章节即可
+            if (targetHref.isBlank()) {
+                for (a in doc.select("a[href]")) {
+                    val title = a.text().trim()
+                    if (title.contains("插图") || title.contains("插画") || title.contains("彩")) {
+                        targetHref = a.attr("href").trim()
+                        break
+                    }
+                }
+            }
+            if (targetHref.isNotBlank()) {
+                val chUrl = Rules.absUrl("$base/novel/$gid/$aid/", targetHref)
+                val chResp = Net.get(chUrl, charset = "gbk", referer = tocUrl, useCache = true)
+                if (chResp.ok) {
+                    val chDoc = Rules.parse(chResp.body)
+                    val imgs = mutableListOf<String>()
+                    for (img in chDoc.select("img")) {
+                        val src = img.attr("src").ifBlank { img.attr("data-src") }.trim()
+                        if (src.isNotBlank() && !src.startsWith("data:")) {
+                            val full = Rules.absUrl(chUrl, src)
+                            imgs.add(Rules.upgradeWenku8Image(full))
+                        }
+                    }
+                    if (imgs.isNotEmpty()) {
+                        val sb = StringBuilder()
+                        sb.append(chapterName).append("\n\n")
+                        for (u in imgs.distinct()) {
+                            sb.append("<!--image-->").append(u).append("<!--image-->\n")
+                        }
+                        return sb.toString().trim()
+                    }
                 }
             }
         }

@@ -1375,14 +1375,14 @@ object BookRepo {
                 }
             }
         }
+        val hasHtmlImages = html.contains("<img") || html.contains("<!--image-->")
         if (html.isBlank()) html = guessContent(doc)
-        // 规则命中的东西太短，多半抓到的是导航/提示条，换成整页里最像正文的那块
-        if (html.replace(Regex("\\s"), "").length < 180 && src.id != "esjzone") {
+        // 规则命中的东西太短，多半抓到的是导航/提示条，换成整页里最像正文的那块（有插图章节不覆盖）
+        if (html.replace(Regex("\\s"), "").length < 180 && src.id != "esjzone" && !hasHtmlImages) {
             val guess = guessContent(doc)
             if (guess.replace(Regex("\\s"), "").length > html.replace(Regex("\\s"), "").length) html = guess
         }
         // 有的站免费章节正常给正文，付费章节只给一段购买提示——这时别报"被拦截"，要报准
-        val hasHtmlImages = html.contains("<img") || html.contains("<!--image-->")
         val minLenCheck = if (src.id == "esjzone") 15 else 120
         if (html.replace(Regex("\\s"), "").length < minLenCheck && !hasHtmlImages) {
             val page = doc.text()

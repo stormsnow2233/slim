@@ -9,11 +9,12 @@ import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.fadeIn
 import androidx.compose.animation.fadeOut
-import androidx.compose.animation.slideInVertically
-import androidx.compose.animation.slideOutVertically
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
 import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -92,6 +93,17 @@ sealed class Route {
         val index: Int,
         val initialPage: Int = 0,
     ) : Route()
+}
+
+private fun routeDepth(r: Route): Int = when (r) {
+    is Route.Main -> 0
+    is Route.Search -> 1
+    is Route.Settings -> 1
+    is Route.Cache -> 1
+    is Route.Detail, is Route.ComicDetail -> 1
+    is Route.Network, is Route.Sources -> 2
+    is Route.Reader, is Route.ComicRead -> 2
+    is Route.CustomSourceEdit -> 3
 }
 
 @Composable
@@ -263,68 +275,97 @@ fun ShijuanApp(store: Store) {
                 AnimatedContent(
                     targetState = route,
                     transitionSpec = {
-                        (fadeIn(tween(240)) + slideInVertically(tween(260)) { it / 18 }) togetherWith
-                            (fadeOut(tween(170)) + slideOutVertically(tween(200)) { -it / 26 })
+                        val initialDepth = routeDepth(initialState)
+                        val targetDepth = routeDepth(targetState)
+                        if (targetDepth > initialDepth) {
+                            // 前进（下钻进入二级/三级页面）：新页从右向左推入，旧页向左微移
+                            (slideInHorizontally(tween(300, easing = FastOutSlowInEasing)) { fullWidth -> fullWidth } + fadeIn(tween(260))) togetherWith
+                                (slideOutHorizontally(tween(300, easing = FastOutSlowInEasing)) { fullWidth -> -fullWidth / 3 } + fadeOut(tween(200)))
+                        } else if (targetDepth < initialDepth) {
+                            // 后退（返回上一层）：旧页向右滑出，上一层从左边回弹推入
+                            (slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { fullWidth -> -fullWidth / 3 } + fadeIn(tween(240))) togetherWith
+                                (slideOutHorizontally(tween(280, easing = FastOutSlowInEasing)) { fullWidth -> fullWidth } + fadeOut(tween(200)))
+                        } else {
+                            // 同级平级页面切换：微弱横向位移 + 平滑淡入淡出
+                            (slideInHorizontally(tween(260, easing = FastOutSlowInEasing)) { fullWidth -> fullWidth / 4 } + fadeIn(tween(240))) togetherWith
+                                (slideOutHorizontally(tween(260, easing = FastOutSlowInEasing)) { fullWidth -> -fullWidth / 4 } + fadeOut(tween(200)))
+                        }
                     },
                     label = "route",
                 ) { r ->
                     when (r) {
-                        is Route.Main -> when (section) {
-                            Section.Shelf -> ShelfScreen(
-                                store = store,
-                                shelf = shelfShown,
-                                records = recordsShown,
-                                comicShelf = comicShelfShown,
-                                comicRecords = comicRecordsShown,
-                                onOpenNovel = { item -> route = Route.Detail(item.book, fromSearch = false) },
-                                onRemoveNovel = { item ->
-                                    store.removeFromShelf(item.book.url, item.book.sourceId)
-                                    refreshShelf()
-                                },
-                                onOpenNovelRecord = { rec -> route = Route.Detail(rec.book, fromSearch = false) },
-                                onRemoveNovelRecord = { book ->
-                                    store.removeRecord(book)
-                                    refreshShelf()
-                                },
-                                onBrowseNovel = {
-                                    section = Section.Novel
-                                },
-                                onOpenComic = { c -> route = Route.ComicDetail(c) },
-                                onRemoveComic = { c ->
-                                    store.removeComicFromShelf(c)
-                                    refreshShelf()
-                                },
-                                onOpenComicRecord = { rec -> route = Route.ComicDetail(rec.comic) },
-                                onBrowseComic = {
-                                    section = Section.Comic
-                                },
-                                onOpenDrawer = openDrawer,
-                                offline = !online,
-                                onImportSuccess = { refreshShelf() },
-                            )
-                            Section.Novel -> SearchScreen(
-                                store = store,
-                                enabled = enabled,
-                                onOpenBook = { route = Route.Detail(it, fromSearch = true) },
-                                onOpenDrawer = openDrawer,
-                                onBack = null,
-                                searchState = searchState,
-                            )
-                            Section.Comic -> ComicScreen(
-                                store = store,
-                                onOpen = { route = Route.ComicDetail(it) },
-                                onOpenDrawer = openDrawer,
-                                offline = !online,
-                                onOpenCache = { route = Route.Cache },
-                                state = comicSearchState,
-                            )
-                            Section.JM -> JmComicScreen(
-                                store = store,
-                                onOpen = { route = Route.ComicDetail(it) },
-                                onOpenDrawer = openDrawer,
-                                offline = !online,
-                                onOpenCache = { route = Route.Cache },
-                            )
+                        is Route.Main -> AnimatedContent(
+                            targetState = section,
+                            transitionSpec = {
+                                if (targetState.ordinal > initialState.ordinal) {
+                                    // 往右侧 Tab 切换（书架 -> 小说 -> 漫画 -> JM）：从右向左推进
+                                    (slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { fullWidth -> fullWidth } + fadeIn(tween(220))) togetherWith
+                                        (slideOutHorizontally(tween(280, easing = FastOutSlowInEasing)) { fullWidth -> -fullWidth } + fadeOut(tween(180)))
+                                } else {
+                                    // 往左侧 Tab 切换（JM -> 漫画 -> 小说 -> 书架）：从左向右推进
+                                    (slideInHorizontally(tween(280, easing = FastOutSlowInEasing)) { fullWidth -> -fullWidth } + fadeIn(tween(220))) togetherWith
+                                        (slideOutHorizontally(tween(280, easing = FastOutSlowInEasing)) { fullWidth -> fullWidth } + fadeOut(tween(180)))
+                                }
+                            },
+                            label = "section",
+                        ) { sec ->
+                            when (sec) {
+                                Section.Shelf -> ShelfScreen(
+                                    store = store,
+                                    shelf = shelfShown,
+                                    records = recordsShown,
+                                    comicShelf = comicShelfShown,
+                                    comicRecords = comicRecordsShown,
+                                    onOpenNovel = { item -> route = Route.Detail(item.book, fromSearch = false) },
+                                    onRemoveNovel = { item ->
+                                        store.removeFromShelf(item.book.url, item.book.sourceId)
+                                        refreshShelf()
+                                    },
+                                    onOpenNovelRecord = { rec -> route = Route.Detail(rec.book, fromSearch = false) },
+                                    onRemoveNovelRecord = { book ->
+                                        store.removeRecord(book)
+                                        refreshShelf()
+                                    },
+                                    onBrowseNovel = {
+                                        section = Section.Novel
+                                    },
+                                    onOpenComic = { c -> route = Route.ComicDetail(c) },
+                                    onRemoveComic = { c ->
+                                        store.removeComicFromShelf(c)
+                                        refreshShelf()
+                                    },
+                                    onOpenComicRecord = { rec -> route = Route.ComicDetail(rec.comic) },
+                                    onBrowseComic = {
+                                        section = Section.Comic
+                                    },
+                                    onOpenDrawer = openDrawer,
+                                    offline = !online,
+                                    onImportSuccess = { refreshShelf() },
+                                )
+                                Section.Novel -> SearchScreen(
+                                    store = store,
+                                    enabled = enabled,
+                                    onOpenBook = { route = Route.Detail(it, fromSearch = true) },
+                                    onOpenDrawer = openDrawer,
+                                    onBack = null,
+                                    searchState = searchState,
+                                )
+                                Section.Comic -> ComicScreen(
+                                    store = store,
+                                    onOpen = { route = Route.ComicDetail(it) },
+                                    onOpenDrawer = openDrawer,
+                                    offline = !online,
+                                    onOpenCache = { route = Route.Cache },
+                                    state = comicSearchState,
+                                )
+                                Section.JM -> JmComicScreen(
+                                    store = store,
+                                    onOpen = { route = Route.ComicDetail(it) },
+                                    onOpenDrawer = openDrawer,
+                                    offline = !online,
+                                    onOpenCache = { route = Route.Cache },
+                                )
+                            }
                         }
 
                         is Route.Search -> SearchScreen(

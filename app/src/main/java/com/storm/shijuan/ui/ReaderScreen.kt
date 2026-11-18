@@ -836,9 +836,20 @@ private fun BodyText(
                             .fillMaxWidth()
                             .clickable { onImageClick(imgUrl) }
                     ) {
+                        val ref = when {
+                            imgUrl.contains("wenku8", ignoreCase = true) || imgUrl.contains("777743", ignoreCase = true) -> "https://www.wenku8.cc/"
+                            imgUrl.contains("sfacg", ignoreCase = true) -> "https://m.sfacg.com/"
+                            imgUrl.contains("esjzone", ignoreCase = true) -> "https://www.esjzone.cc/"
+                            imgUrl.contains("faloo", ignoreCase = true) -> "https://wap.faloo.com/"
+                            else -> ""
+                        }
                         AsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
                                 .data(imgUrl)
+                                .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36")
+                                .apply {
+                                    if (ref.isNotBlank()) addHeader("Referer", ref)
+                                }
                                 .crossfade(true)
                                 .build(),
                             contentDescription = "插图",
@@ -892,9 +903,20 @@ private fun ImageViewerDialog(
                     )
                 }
         ) {
+            val ref = when {
+                imageUrl.contains("wenku8", ignoreCase = true) || imageUrl.contains("777743", ignoreCase = true) -> "https://www.wenku8.cc/"
+                imageUrl.contains("sfacg", ignoreCase = true) -> "https://m.sfacg.com/"
+                imageUrl.contains("esjzone", ignoreCase = true) -> "https://www.esjzone.cc/"
+                imageUrl.contains("faloo", ignoreCase = true) -> "https://wap.faloo.com/"
+                else -> ""
+            }
             AsyncImage(
                 model = ImageRequest.Builder(LocalContext.current)
                     .data(imageUrl)
+                    .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Mobile Safari/537.36")
+                    .apply {
+                        if (ref.isNotBlank()) addHeader("Referer", ref)
+                    }
                     .crossfade(true)
                     .build(),
                 contentDescription = "全屏插图",

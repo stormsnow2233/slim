@@ -285,7 +285,7 @@ fun DetailScreen(
 
         AnimatedVisibility(
             visible = true,
-            enter = fadeIn(tween(320)) + slideInVertically(tween(320)) { it / 22 },
+            enter = fadeIn(tween(260)),
         ) {
             Column(Modifier.fillMaxSize()) {
 
