@@ -23,7 +23,15 @@ private struct ShelfView: View {
         NavigationStack {
             List {
                 if state.books.isEmpty {
-                    ContentUnavailableView("书架为空", systemImage: "books.vertical", description: Text("从搜索页添加一本书吧"))
+                    VStack(spacing: 12) {
+                        Image(systemName: "books.vertical")
+                            .font(.system(size: 36))
+                            .foregroundStyle(.secondary)
+                        Text("书架为空").font(.headline)
+                        Text("从搜索页添加一本书吧").foregroundStyle(.secondary)
+                    }
+                    .frame(maxWidth: .infinity)
+                    .padding(.vertical, 40)
                 } else {
                     ForEach(state.books) { book in
                         NavigationLink {

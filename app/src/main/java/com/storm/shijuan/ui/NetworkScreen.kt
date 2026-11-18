@@ -44,10 +44,6 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
     var pass by remember { mutableStateOf(cfg.pass) }
     var saved by remember { mutableStateOf(false) }
     var testing by remember { mutableStateOf(false) }
-    var wenku8Proxy by remember { mutableStateOf(store.wenku8ProxyUrl()) }
-    var jmProxy by remember { mutableStateOf(store.jmProxyUrl()) }
-    var zlibProxy by remember { mutableStateOf(store.zlibProxyUrl()) }
-    var esjProxy by remember { mutableStateOf(store.esjProxyUrl()) }
     var checks by remember { mutableStateOf<List<Triple<String, Boolean, String>>>(emptyList()) }
     val scope = rememberCoroutineScope()
 
@@ -75,7 +71,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
         scope.launch {
             val list = listOf(
                 "轻小说文库" to {
-                    val url = wenku8Proxy.ifBlank { "https://www.wenku8.cc" }.trimEnd('/') + "/index.php"
+                    val url = store.wenku8ProxyUrl().ifBlank { "https://www.wenku8.cc" }.trimEnd('/') + "/index.php"
                     Net.get(url, useCache = false, fast = true, timeoutMs = 8000L)
                 },
                 "得奇小说" to {
@@ -94,7 +90,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                     Net.get("https://m.sfacg.com/", useCache = false, fast = true, timeoutMs = 8000L)
                 },
                 "Z-Library" to {
-                    val base = zlibProxy.ifBlank { "https://zlib-proxy-bs3.pages.dev" }.trimEnd('/')
+                    val base = store.zlibProxyUrl().ifBlank { "https://zlib-proxy-bs3.pages.dev" }.trimEnd('/')
                     Net.post(
                         "$base/eapi/book/search",
                         mapOf("message" to "ping", "limit" to "1"),
@@ -104,7 +100,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                     )
                 },
                 "ESJ Zone" to {
-                    val base = esjProxy.ifBlank { "https://esj-proxy.pages.dev" }.trimEnd('/')
+                    val base = store.esjProxyUrl().ifBlank { "https://esj-proxy.pages.dev" }.trimEnd('/')
                     Net.get("$base/", useCache = false, fast = true, timeoutMs = 8000L)
                 },
                 "漫画图片线路" to {
@@ -157,36 +153,6 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                 .verticalScroll(rememberScrollState())
                 .padding(horizontal = 16.dp)
         ) {
-
-            // ── 直连状态说明卡片 ──
-            if (!cfg.enabled) {
-                Card(
-                    shape = RoundedCornerShape(16.dp),
-                    modifier = Modifier.fillMaxWidth(),
-                    colors = CardDefaults.cardColors(
-                        containerColor = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
-                    )
-                ) {
-                    Row(
-                        modifier = Modifier.padding(14.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        Text("⚡", fontSize = 18.sp)
-                        Spacer(Modifier.width(10.dp))
-                        Column {
-                            Text("直连模式运行中", fontWeight = FontWeight.Medium, fontSize = 13.sp)
-                            Text(
-                                "国内小说源直连速度最快。如遇到漫画图片加载缓慢，可开启下方自定义代理。",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                lineHeight = 15.sp
-                            )
-                        }
-                    }
-                }
-                Spacer(Modifier.height(12.dp))
-            }
-
             // ── 自定义代理卡片 ──
             Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
@@ -299,110 +265,6 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            // ── 轻小说文库反代 ──
-            Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("轻小说文库反代", style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "默认走内置加速节点。如果你自己搭了文库反代 Workers，可以填在这里覆盖。",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    ProxyField("自定义反代 URL（留空走内置）", wenku8Proxy, "留空默认走内置加速节点") {
-                        wenku8Proxy = it.trim()
-                        store.setWenku8ProxyUrl(it.trim())
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    if (wenku8Proxy.isNotBlank()) {
-                        Text("已切换为你填写的私有反代", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                    } else {
-                        Text("🟢 默认内置加速生效中", fontSize = 11.sp, color = OK_GREEN)
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            // ── JMcomic 反代设置 ──
-            Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("JMcomic 反代设置", style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "默认走内置线路。如果你在 Cloudflare 搭建了专属反代，填在这里即可。",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    ProxyField("自定义反代 URL（留空走内置）", jmProxy, "留空默认走内置线路") {
-                        jmProxy = it.trim()
-                        store.setJmProxyUrl(it.trim())
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    if (jmProxy.isNotBlank()) {
-                        Text("已切换为你填写的专属反代", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                    } else {
-                        Text("🟢 默认内置线路生效中", fontSize = 11.sp, color = OK_GREEN)
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            // ── Z-Library 反代设置 ──
-            Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("Z-Library 反代设置", style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "默认走内置 Pages 边缘反代。如有自己的专属反代，可填在此处覆盖。",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    ProxyField("自定义反代 URL", zlibProxy, "https://zlib-proxy-bs3.pages.dev") {
-                        zlibProxy = it.trim()
-                        store.setZlibProxyUrl(it.trim())
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    if (zlibProxy.isNotBlank() && zlibProxy != "https://zlib-proxy-bs3.pages.dev") {
-                        Text("已切换为你填写的私有反代", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                    } else {
-                        Text("🟢 官方 Pages 专属反代已生效", fontSize = 11.sp, color = OK_GREEN)
-                    }
-                }
-            }
-
-            Spacer(Modifier.height(12.dp))
-
-            // ── ESJ Zone 反代设置 ──
-            Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
-                Column(Modifier.padding(16.dp)) {
-                    Text("ESJ Zone 反代设置", style = MaterialTheme.typography.titleSmall)
-                    Spacer(Modifier.height(4.dp))
-                    Text(
-                        "默认走专属 Pages 边缘反代直连。如有自己的私有反代节点，可在此填入覆盖。",
-                        fontSize = 12.sp,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    )
-                    Spacer(Modifier.height(10.dp))
-                    ProxyField("自定义反代 URL", esjProxy, "https://esj-proxy.pages.dev") {
-                        esjProxy = it.trim()
-                        store.setEsjProxyUrl(it.trim())
-                    }
-                    Spacer(Modifier.height(6.dp))
-                    if (esjProxy.isNotBlank() && esjProxy != "https://esj-proxy.pages.dev") {
-                        Text("已切换为你填写的私有反代", fontSize = 11.sp, color = MaterialTheme.colorScheme.primary)
-                    } else {
-                        Text("🟢 官方 Pages 专属反代已生效", fontSize = 11.sp, color = OK_GREEN)
                     }
                 }
             }

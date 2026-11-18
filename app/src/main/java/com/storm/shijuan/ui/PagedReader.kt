@@ -38,6 +38,12 @@ import com.storm.shijuan.data.ReaderPrefs
  * - Text: 文本切片（由 PageView 的 StaticLayout 高性能绘制）
  * - Image: 独立插图页（由 Coil 异步加载居中展示，支持点按全屏大图预览）
  */
+private fun imageReferer(url: String): String = when {
+    url.contains("wenku8", ignoreCase = true) -> "https://www.wenku8.cc/"
+    url.contains("sfacg", ignoreCase = true) -> "https://m.sfacg.com/"
+    else -> ""
+}
+
 sealed class PageSlice {
     data class Text(val content: String, val showTitle: Boolean) : PageSlice()
     data class Image(val url: String) : PageSlice()
@@ -331,7 +337,9 @@ fun PagedChapter(
                     ) {
                         AsyncImage(
                             model = ImageRequest.Builder(LocalContext.current)
-                                .data(page.url)
+                                .data(page.url.trim())
+                                .addHeader("User-Agent", "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/122.0.0.0 Mobile Safari/537.36")
+                                .addHeader("Referer", imageReferer(page.url))
                                 .crossfade(true)
                                 .build(),
                             contentDescription = "插图",

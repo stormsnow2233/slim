@@ -8,7 +8,7 @@ struct Book: Identifiable, Hashable {
     var isDownloaded: Bool
     var chapters: [Chapter] = []
 
-    init(id: UUID = UUID(), title: String, author: String, progress: Double = 0, isDownloaded: Bool = false) {
+    init(id: UUID = UUID(), title: String, author: String, progress: Double = 0, isDownloaded: Bool = false, chapters: [Chapter] = []) {
         self.id = id
         self.title = title
         self.author = author

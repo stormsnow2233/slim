@@ -144,6 +144,7 @@ object Net {
         if (code == 403 || code == 503) {
             val lower = body.lowercase()
             return lower.contains("just a moment") ||
+                lower.contains("checking your browser") ||
                 lower.contains("cloudflare") ||
                 lower.contains("cf-browser-verification") ||
                 lower.contains("challenge-platform") ||
@@ -151,6 +152,7 @@ object Net {
                 lower.contains("cf-mitigated") ||
                 lower.contains("ray id:") ||
                 lower.contains("error 1020") ||
+                lower.contains("error 1010") ||
                 lower.contains("access denied")
         }
         return false

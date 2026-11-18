@@ -1,0 +1,41 @@
+// !$*UTF8*$!
+{
+ archiveVersion = 1;
+ classes = { };
+ objectVersion = 56;
+ objects = {
+ 000000000000000000000001 /* ShijuanApp.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "ShijuanApp.swift"; sourceTree = "<group>"; };
+ 000000000000000000000002 /* Book.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "Models/Book.swift"; sourceTree = "<group>"; };
+ 000000000000000000000003 /* Chapter.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "Models/Chapter.swift"; sourceTree = "<group>"; };
+ 000000000000000000000004 /* AppState.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "Services/AppState.swift"; sourceTree = "<group>"; };
+ 000000000000000000000005 /* ProxyConfiguration.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "Services/ProxyConfiguration.swift"; sourceTree = "<group>"; };
+ 000000000000000000000006 /* BookDetailView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "Views/BookDetailView.swift"; sourceTree = "<group>"; };
+ 000000000000000000000007 /* ContentView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "Views/ContentView.swift"; sourceTree = "<group>"; };
+ 000000000000000000000008 /* ReaderView.swift */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.swift; path = "Views/ReaderView.swift"; sourceTree = "<group>"; };
+ 000000000000000000000064 /* ShijuanApp.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000001; };
+ 000000000000000000000065 /* Book.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000002; };
+ 000000000000000000000066 /* Chapter.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000003; };
+ 000000000000000000000067 /* AppState.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000004; };
+ 000000000000000000000068 /* ProxyConfiguration.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000005; };
+ 000000000000000000000069 /* BookDetailView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000006; };
+ 00000000000000000000006A /* ContentView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000007; };
+ 00000000000000000000006B /* ReaderView.swift in Sources */ = {isa = PBXBuildFile; fileRef = 000000000000000000000008; };
+ 0000000000000000000000C8 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
+ 0000000000000000000000C9 /* Shijuan.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = Shijuan.app; sourceTree = BUILT_PRODUCTS_DIR; };
+ 0000000000000000000000CA /* Shijuan */ = {isa = PBXGroup; children = (000000000000000000000001, 000000000000000000000002, 000000000000000000000003, 000000000000000000000004, 000000000000000000000005, 000000000000000000000006, 000000000000000000000007, 000000000000000000000008); path = Shijuan; sourceTree = "<group>"; };
+ 0000000000000000000000CB /* main group */ = {isa = PBXGroup; children = (0000000000000000000000CA, 0000000000000000000000C8, 0000000000000000000000CC); sourceTree = "<group>"; };
+ 0000000000000000000000CC /* Products */ = {isa = PBXGroup; children = (0000000000000000000000C9); name = Products; sourceTree = "<group>"; };
+ 0000000000000000000000CD /* Sources */ = {isa = PBXSourcesBuildPhase; buildActionMask = 2147483647; files = (000000000000000000000064, 000000000000000000000065, 000000000000000000000066, 000000000000000000000067, 000000000000000000000068, 000000000000000000000069, 00000000000000000000006A, 00000000000000000000006B); runOnlyForDeploymentPostprocessing = 0; };
+ 0000000000000000000000CE /* Resources */ = {isa = PBXResourcesBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+ 0000000000000000000000CF /* Frameworks */ = {isa = PBXFrameworksBuildPhase; buildActionMask = 2147483647; files = (); runOnlyForDeploymentPostprocessing = 0; };
+ 0000000000000000000000D0 = {isa = XCBuildConfiguration; buildSettings = { IPHONEOS_DEPLOYMENT_TARGET = 16.0; SWIFT_VERSION = 5.0; }; name = Debug; };
+ 0000000000000000000000D1 = {isa = XCBuildConfiguration; buildSettings = { IPHONEOS_DEPLOYMENT_TARGET = 16.0; SWIFT_VERSION = 5.0; }; name = Release; };
+ 0000000000000000000000D2 = {isa = XCBuildConfiguration; buildSettings = { PRODUCT_BUNDLE_IDENTIFIER = com.storm.shijuan.ios; PRODUCT_NAME = Shijuan; INFOPLIST_FILE = Shijuan/Info.plist; SDKROOT = iphoneos; TARGETED_DEVICE_FAMILY = "1,2"; CODE_SIGNING_ALLOWED = NO; CODE_SIGNING_REQUIRED = NO; }; name = Debug; };
+ 0000000000000000000000D3 = {isa = XCBuildConfiguration; buildSettings = { PRODUCT_BUNDLE_IDENTIFIER = com.storm.shijuan.ios; PRODUCT_NAME = Shijuan; INFOPLIST_FILE = Shijuan/Info.plist; SDKROOT = iphoneos; TARGETED_DEVICE_FAMILY = "1,2"; CODE_SIGNING_ALLOWED = NO; CODE_SIGNING_REQUIRED = NO; }; name = Release; };
+ 0000000000000000000000D4 = {isa = XCConfigurationList; buildConfigurations = (0000000000000000000000D0, 0000000000000000000000D1); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+ 0000000000000000000000D5 = {isa = XCConfigurationList; buildConfigurations = (0000000000000000000000D2, 0000000000000000000000D3); defaultConfigurationIsVisible = 0; defaultConfigurationName = Release; };
+ 0000000000000000000000D6 = {isa = PBXNativeTarget; buildConfigurationList = 0000000000000000000000D5; buildPhases = (0000000000000000000000CD, 0000000000000000000000CE, 0000000000000000000000CF); buildRules = (); dependencies = (); name = Shijuan; productName = Shijuan; productReference = 0000000000000000000000C9; productType = "com.apple.product-type.application"; };
+ 0000000000000000000000D7 = {isa = PBXProject; attributes = { LastUpgradeCheck = 1520; }; buildConfigurationList = 0000000000000000000000D4; compatibilityVersion = "Xcode 14.0"; developmentRegion = en; hasScannedForEncodings = 0; knownRegions = (en, Base); mainGroup = 0000000000000000000000CB; productRefGroup = 0000000000000000000000CC; projectDirPath = ""; projectRoot = ""; targets = (0000000000000000000000D6); };
+ };
+ rootObject = 0000000000000000000000D7;
+}
