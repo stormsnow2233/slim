@@ -594,13 +594,14 @@ fun ReaderScreen(
                         AdaptiveSlider(
                             value = currentPage.toFloat(),
                             onValueChange = {
-                                val p = it.roundToInt().coerceIn(0, pageCount - 1)
-                                if (p != currentPage) {
-                                    currentPage = p
-                                    scope.launch { pagerState?.scrollToPage(p) }
-                                }
+                                // 拖动期间只更新轻量状态，避免每个触摸事件都驱动 Pager 重组和布局。
+                                currentPage = it.roundToInt().coerceIn(0, pageCount - 1)
                             },
-                            vibrateOnSteps = true,
+                            onValueChangeFinished = {
+                                val target = currentPage.coerceIn(0, pageCount - 1)
+                                scope.launch { pagerState?.scrollToPage(target) }
+                            },
+                            vibrateOnSteps = false,
                             valueRange = 0f..(pageCount - 1).toFloat(),
                             steps = (pageCount - 2).coerceAtLeast(0),
                             modifier = Modifier.weight(1f),

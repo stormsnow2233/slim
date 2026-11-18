@@ -77,12 +77,12 @@ enum class Section(val label: String, val desc: String, val icon: ImageVector) {
 sealed class Route {
     data object Main : Route()
     data object Search : Route()
-    data object Sources : Route()
+    data class Sources(val fromSettings: Boolean = false) : Route()
     data object Settings : Route()
     data object Cache : Route()
     data object Network : Route()
     /** 自定义书源编辑；id 为 null 表示新建 */
-    data class CustomSourceEdit(val id: String? = null) : Route()
+    data class CustomSourceEdit(val id: String? = null, val fromSettings: Boolean = false) : Route()
     data class Detail(val book: Book, val fromSearch: Boolean = false) : Route()
     data class Reader(val book: Book, val chapters: List<Chapter>, val index: Int, val initialPage: Int = 0, val fromSearch: Boolean = false) : Route()
     data class ComicDetail(val comic: Comic) : Route()
@@ -174,7 +174,7 @@ fun ShijuanApp(store: Store) {
                 is Route.Reader -> Route.Detail(r.book, r.fromSearch)
                 is Route.Detail -> Route.Main
                 is Route.ComicDetail -> Route.Main
-                is Route.CustomSourceEdit -> Route.Sources
+                is Route.CustomSourceEdit -> Route.Sources(fromSettings = r.fromSettings)
                 else -> Route.Main
             }
             if (prev is Route.Settings) {
@@ -341,9 +341,9 @@ fun ShijuanApp(store: Store) {
                             enabled = enabled,
                             onToggle = { id, on -> enabled = store.setSourceEnabled(id, on) },
                             onOpenDrawer = openDrawer,
-                            onBack = { route = Route.Main },
-                            onAddSource = { route = Route.CustomSourceEdit(null) },
-                            onEditSource = { src -> route = Route.CustomSourceEdit(src.id) },
+                            onBack = { route = if (r.fromSettings) Route.Settings else Route.Main },
+                            onAddSource = { route = Route.CustomSourceEdit(null, fromSettings = r.fromSettings) },
+                            onEditSource = { src -> route = Route.CustomSourceEdit(src.id, fromSettings = r.fromSettings) },
                         )
 
                         is Route.Settings -> SettingsScreen(
@@ -357,7 +357,7 @@ fun ShijuanApp(store: Store) {
                             },
                             onOpenNetwork = { route = Route.Network },
                             onOpenCache = { route = Route.Cache },
-                            onOpenSources = { route = Route.Sources },
+                            onOpenSources = { route = Route.Sources(fromSettings = true) },
                             onShowUpdate = { activeUpdateInfo = it },
                             onJmEnabledChanged = { enabled ->
                                 isJmEnabled = enabled
@@ -380,14 +380,14 @@ fun ShijuanApp(store: Store) {
 
                         is Route.CustomSourceEdit -> CustomSourceEditScreen(
                             initial = r.id?.let { Sources.byId(it) },
-                            onBack = { route = Route.Sources },
+                            onBack = { route = Route.Sources(fromSettings = r.fromSettings) },
                             onSaved = {
                                 enabled = store.enabledSources()
-                                route = Route.Sources
+                                route = Route.Sources(fromSettings = r.fromSettings)
                             },
                             onDeleted = {
                                 enabled = store.enabledSources()
-                                route = Route.Sources
+                                route = Route.Sources(fromSettings = r.fromSettings)
                             },
                         )
 

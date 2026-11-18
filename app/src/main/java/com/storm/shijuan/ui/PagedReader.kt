@@ -298,6 +298,8 @@ fun PagedChapter(
 
         HorizontalPager(
             state = pager,
+            // 预组合相邻页，避免翻页时首次创建 AndroidView 造成中间卡顿。
+            beyondViewportPageCount = 1,
             modifier = Modifier.fillMaxSize(),
         ) { i ->
             val page = pages.getOrElse(i) { PageSlice.Text("", false) }

@@ -578,7 +578,7 @@ class Store(val context: Context) {
         return runCatching {
             val a = JSONArray(s)
             (0 until a.length()).map { a.getString(it) }
-                .filter { id -> Sources.ALL.any { it.id == id } }
+                .filter { id -> Sources.all.any { it.id == id } }
                 .toSet()
         }.getOrDefault(Sources.defaultEnabled)
     }
