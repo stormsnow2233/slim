@@ -80,18 +80,19 @@ sealed class Route {
     data object Search : Route()
     data class Sources(val fromSettings: Boolean = false) : Route()
     data object Settings : Route()
-    data object Cache : Route()
-    data object Network : Route()
+    data class Cache(val fromSettings: Boolean = false) : Route()
+    data class Network(val fromSettings: Boolean = true) : Route()
     /** 自定义书源编辑；id 为 null 表示新建 */
     data class CustomSourceEdit(val id: String? = null, val fromSettings: Boolean = false) : Route()
     data class Detail(val book: Book, val fromSearch: Boolean = false) : Route()
     data class Reader(val book: Book, val chapters: List<Chapter>, val index: Int, val initialPage: Int = 0, val fromSearch: Boolean = false) : Route()
-    data class ComicDetail(val comic: Comic) : Route()
+    data class ComicDetail(val comic: Comic, val fromCache: Boolean = false) : Route()
     data class ComicRead(
         val comic: Comic,
         val chapters: List<ComicChapter>,
         val index: Int,
         val initialPage: Int = 0,
+        val fromCache: Boolean = false,
     ) : Route()
 }
 
@@ -99,11 +100,14 @@ private fun routeDepth(r: Route): Int = when (r) {
     is Route.Main -> 0
     is Route.Search -> 1
     is Route.Settings -> 1
-    is Route.Cache -> 1
-    is Route.Detail, is Route.ComicDetail -> 1
-    is Route.Network, is Route.Sources -> 2
-    is Route.Reader, is Route.ComicRead -> 2
-    is Route.CustomSourceEdit -> 3
+    is Route.Detail -> 1
+    is Route.ComicDetail -> if (r.fromCache) 3 else 1
+    is Route.Cache -> if (r.fromSettings) 2 else 1
+    is Route.Network -> if (r.fromSettings) 2 else 1
+    is Route.Sources -> if (r.fromSettings) 2 else 1
+    is Route.Reader -> 2
+    is Route.ComicRead -> if (r.fromCache) 4 else 2
+    is Route.CustomSourceEdit -> if (r.fromSettings) 3 else 2
 }
 
 @Composable
@@ -182,11 +186,15 @@ fun ShijuanApp(store: Store) {
         if (route !is Route.Main) {
             val prev = route
             route = when (val r = route) {
-                is Route.ComicRead -> Route.ComicDetail(r.comic)
+                is Route.ComicRead -> Route.ComicDetail(r.comic, r.fromCache)
                 is Route.Reader -> Route.Detail(r.book, r.fromSearch)
                 is Route.Detail -> Route.Main
-                is Route.ComicDetail -> Route.Main
+                is Route.ComicDetail -> if (r.fromCache) Route.Cache(fromSettings = true) else Route.Main
                 is Route.CustomSourceEdit -> Route.Sources(fromSettings = r.fromSettings)
+                is Route.Sources -> if (r.fromSettings) Route.Settings else Route.Main
+                is Route.Network -> if (r.fromSettings) Route.Settings else Route.Main
+                is Route.Cache -> if (r.fromSettings) Route.Settings else Route.Main
+                is Route.Settings -> Route.Main
                 else -> Route.Main
             }
             if (prev is Route.Settings) {
@@ -249,7 +257,7 @@ fun ShijuanApp(store: Store) {
                     uiScope.launch { drawerState.close() }
                 },
                 onOpenCache = {
-                    route = Route.Cache
+                    route = Route.Cache()
                     uiScope.launch { drawerState.close() }
                 },
                 onOpenSettings = {
@@ -274,6 +282,7 @@ fun ShijuanApp(store: Store) {
             Box(Modifier.weight(1f)) {
                 AnimatedContent(
                     targetState = route,
+                    modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
                     transitionSpec = {
                         val initialDepth = routeDepth(initialState)
                         val targetDepth = routeDepth(targetState)
@@ -293,7 +302,11 @@ fun ShijuanApp(store: Store) {
                     },
                     label = "route",
                 ) { r ->
-                    when (r) {
+                    androidx.compose.material3.Surface(
+                        modifier = Modifier.fillMaxSize(),
+                        color = MaterialTheme.colorScheme.background,
+                    ) {
+                        when (r) {
                         is Route.Main -> AnimatedContent(
                             targetState = section,
                             transitionSpec = {
@@ -355,7 +368,7 @@ fun ShijuanApp(store: Store) {
                                     onOpen = { route = Route.ComicDetail(it) },
                                     onOpenDrawer = openDrawer,
                                     offline = !online,
-                                    onOpenCache = { route = Route.Cache },
+                                    onOpenCache = { route = Route.Cache() },
                                     state = comicSearchState,
                                 )
                                 Section.JM -> JmComicScreen(
@@ -363,7 +376,7 @@ fun ShijuanApp(store: Store) {
                                     onOpen = { route = Route.ComicDetail(it) },
                                     onOpenDrawer = openDrawer,
                                     offline = !online,
-                                    onOpenCache = { route = Route.Cache },
+                                    onOpenCache = { route = Route.Cache() },
                                 )
                             }
                         }
@@ -396,8 +409,8 @@ fun ShijuanApp(store: Store) {
                                 }
                                 route = Route.Main
                             },
-                            onOpenNetwork = { route = Route.Network },
-                            onOpenCache = { route = Route.Cache },
+                            onOpenNetwork = { route = Route.Network(fromSettings = true) },
+                            onOpenCache = { route = Route.Cache(fromSettings = true) },
                             onOpenSources = { route = Route.Sources(fromSettings = true) },
                             onShowUpdate = { activeUpdateInfo = it },
                             onJmEnabledChanged = { enabled ->
@@ -410,13 +423,13 @@ fun ShijuanApp(store: Store) {
 
                         is Route.Cache -> CacheScreen(
                             store = store,
-                            onBack = { route = Route.Main },
-                            onOpenComic = { c -> route = Route.ComicDetail(c) },
+                            onBack = { route = if (r.fromSettings) Route.Settings else Route.Main },
+                            onOpenComic = { c -> route = Route.ComicDetail(c, fromCache = r.fromSettings) },
                         )
 
                         is Route.Network -> NetworkScreen(
                             store = store,
-                            onBack = { route = Route.Main },
+                            onBack = { route = if (r.fromSettings) Route.Settings else Route.Main },
                         )
 
                         is Route.CustomSourceEdit -> CustomSourceEditScreen(
@@ -459,8 +472,8 @@ fun ShijuanApp(store: Store) {
                         is Route.ComicDetail -> ComicDetailScreen(
                             comic = r.comic,
                             store = store,
-                            onBack = { route = Route.Main },
-                            onRead = { c, chs, idx, initPage -> route = Route.ComicRead(c, chs, idx, initPage) },
+                            onBack = { route = if (r.fromCache) Route.Cache(fromSettings = true) else Route.Main },
+                            onRead = { c, chs, idx, initPage -> route = Route.ComicRead(c, chs, idx, initPage, fromCache = r.fromCache) },
                             onShelfChanged = { refreshShelf() },
                             onSearchSimilar = { kw ->
                                 comicSearchState.query = kw
@@ -477,9 +490,10 @@ fun ShijuanApp(store: Store) {
                             chapters = r.chapters,
                             startIndex = r.index,
                             store = store,
-                            onBack = { route = Route.ComicDetail(r.comic) },
+                            onBack = { route = Route.ComicDetail(r.comic, fromCache = r.fromCache) },
                             initialPage = r.initialPage,
                         )
+                    }
                     }
                 }
             }

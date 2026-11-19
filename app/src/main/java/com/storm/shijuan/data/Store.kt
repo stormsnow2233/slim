@@ -424,7 +424,7 @@ class Store(val context: Context) {
         return out.values.toList()
     }
 
-    /** 一本书的正文缓存体检：存了几章、缺几章、有几章是空的、大约占多少 */
+    /** 一本书的正文缓存体检：存了几章、缺几章、有几章是空的、大约占多少（轻量元数据探测，不加载大文件正文入内存） */
     fun novelCacheEntry(book: Book): NovelCacheEntry {
         val chs = loadToc(book.url)
         val missing = ArrayList<Int>()
@@ -432,13 +432,14 @@ class Store(val context: Context) {
         var cached = 0
         var bytes = 0L
         chs.forEachIndexed { i, ch ->
-            val text = loadContent(ch.url, book.sourceId)
+            val v2Len = NovelContentCache.getLengthOrNull(book.sourceId, ch.url)
+            val len = v2Len ?: sp.getString("c_${ch.url.hashCode()}", null)?.length?.toLong()
             when {
-                text == null -> missing += i
-                text.trim().length < 120 -> broken += i
+                len == null -> missing += i
+                len < 120 -> broken += i
                 else -> {
                     cached++
-                    bytes += text.length.toLong()
+                    bytes += len
                 }
             }
         }

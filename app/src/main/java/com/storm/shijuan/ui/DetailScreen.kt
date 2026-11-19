@@ -266,7 +266,7 @@ fun DetailScreen(
         }
     }
 
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         if (verifyTarget != null) {
             CloudflareVerifyDialog(
                 url = verifyTarget!!.base,

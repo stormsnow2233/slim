@@ -65,7 +65,7 @@ fun CacheScreen(
     val novelBytes = novels.sumOf { it.bytes }
     val dlRunning = ComicDownloader.tasks.filter { it.state == STATE_RUNNING }
 
-    Column(Modifier.fillMaxSize()) {
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()
@@ -135,19 +135,19 @@ fun CacheScreen(
                             entry = e,
                             onOpen = { onOpenComic(e.comic) },
                             onRepair = {
-                                CacheManager.repair(e)
+                                scope.launch(Dispatchers.IO) { CacheManager.repair(e) }
                                 tick++
                             },
                             onDelete = {
-                                CacheManager.deleteComic(e)
-                                tick++
+                                comics = comics.filterNot { it.key == e.key }
+                                scope.launch(Dispatchers.IO) { CacheManager.deleteComic(e) }
                             },
                             onPause = {
-                                ComicDownloader.pause(e.key)
+                                scope.launch(Dispatchers.IO) { ComicDownloader.pause(e.key) }
                                 tick++
                             },
                             onResume = {
-                                ComicDownloader.resume(e.key)
+                                scope.launch(Dispatchers.IO) { ComicDownloader.resume(e.key) }
                                 tick++
                             },
                         )
@@ -170,8 +170,8 @@ fun CacheScreen(
                         NovelCacheCard(
                             entry = e,
                             onDelete = {
-                                CacheManager.deleteNovel(store, e)
-                                tick++
+                                novels = novels.filterNot { it.book.url == e.book.url }
+                                scope.launch(Dispatchers.IO) { CacheManager.deleteNovel(store, e) }
                             },
                         )
                     }
@@ -193,11 +193,21 @@ fun CacheScreen(
             confirmButton = {
                 TextButton(onClick = {
                     confirmAll = false
+                    val currentTab = tab
+                    if (currentTab == 0) {
+                        comics = emptyList()
+                    } else {
+                        novels = emptyList()
+                    }
                     scope.launch {
                         withContext(Dispatchers.IO) {
-                            if (tab == 0) CacheManager.clearComics() else CacheManager.clearNovels(store)
+                            if (currentTab == 0) CacheManager.clearComics() else CacheManager.clearNovels(store)
                         }
-                        tick++
+                        val r = withContext(Dispatchers.IO) {
+                            CacheManager.scanComics(store) to CacheManager.scanNovels(store)
+                        }
+                        comics = r.first
+                        novels = r.second
                     }
                 }) { Text("清空") }
             },

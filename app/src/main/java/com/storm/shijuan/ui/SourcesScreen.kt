@@ -155,7 +155,7 @@ fun SourcesScreen(
         )
     }
 
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
         if (isSelectionMode) {
             Row(
                 modifier = Modifier
@@ -760,6 +760,7 @@ fun MineScreen(
 ) {
     var prefs by remember { mutableStateOf(store.readerPrefs()) }
     var showClear by remember { mutableStateOf(false) }
+    val scope = rememberCoroutineScope()
 
     Column(
         Modifier
@@ -851,7 +852,10 @@ fun MineScreen(
             title = { Text("清除离线缓存？") },
             text = { Text("看过的章节正文会被清掉，下次阅读需要重新联网加载。书架和进度不受影响。") },
             confirmButton = {
-                TextButton(onClick = { store.clearAll(); showClear = false }) { Text("清除") }
+                TextButton(onClick = {
+                    showClear = false
+                    scope.launch(Dispatchers.IO) { store.clearAll() }
+                }) { Text("清除") }
             },
             dismissButton = { TextButton(onClick = { showClear = false }) { Text("取消") } },
         )

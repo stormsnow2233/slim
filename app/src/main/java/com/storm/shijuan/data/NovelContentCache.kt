@@ -129,6 +129,25 @@ object NovelContentCache {
         return text
     }
 
+    /** 轻量获取正文长度（字节）：先查 L1 内存，未命中仅 stat L2 磁盘文件，不执行整文件内存读取，极速省内存 */
+    fun getLengthOrNull(sourceId: String, chapterUrl: String, maxAgeMs: Long = DEFAULT_TTL_MS): Long? {
+        val key = buildKey(sourceId, chapterUrl)
+        memoryLru[key]?.let { return it.length.toLong() }
+
+        val dir = diskCacheDir ?: return null
+        val file = File(dir, "$key.txt")
+        if (!file.exists() || !file.isFile) return null
+
+        val now = System.currentTimeMillis()
+        val fileAge = now - file.lastModified()
+        if (maxAgeMs > 0 && fileAge > maxAgeMs) {
+            file.delete()
+            return null
+        }
+        val len = file.length()
+        return if (len > 0) len else null
+    }
+
     /** 保存正文：写入 L1 内存与 L2 磁盘，并触发容量治理 */
     fun put(sourceId: String, chapterUrl: String, text: String) {
         if (!isValidContent(text)) return
@@ -155,7 +174,10 @@ object NovelContentCache {
     fun clearAll() {
         memoryLru.clear()
         val dir = diskCacheDir ?: return
-        dir.listFiles { f -> f.isFile && f.name.endsWith(".txt") }?.forEach { it.delete() }
+        if (dir.exists()) {
+            dir.deleteRecursively()
+            dir.mkdirs()
+        }
     }
 
     /** 磁盘缓存容量自动淘汰：超过 150MB 时淘汰最旧文件至 120MB */

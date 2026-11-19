@@ -177,7 +177,7 @@ fun CustomSourceEditScreen(
         }
     }
 
-    Column(Modifier.fillMaxSize().statusBarsPadding()) {
+    Column(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background).statusBarsPadding()) {
         Row(
             modifier = Modifier
                 .fillMaxWidth()

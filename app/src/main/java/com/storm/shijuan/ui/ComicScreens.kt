@@ -747,7 +747,7 @@ fun ComicDetailScreen(
         if (orderAscending) chapters else chapters.asReversed()
     }
 
-    Box(Modifier.fillMaxSize()) {
+    Box(Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background)) {
         LazyColumn(
             contentPadding = PaddingValues(bottom = 32.dp),
             modifier = Modifier.fillMaxSize(),

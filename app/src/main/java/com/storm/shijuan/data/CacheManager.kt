@@ -115,32 +115,36 @@ object CacheManager {
                 ?: emptyList()
             bytes += images.sumOf { it.length() }
 
-            val good = ArrayList<File>()
-            var broken = 0
-            images.forEach { f ->
-                if (f.length() > 256 && looksLikeImage(f)) good.add(f) else broken++
-            }
-            brokenTotal += broken
-            pagesTotal += good.size
-
-            val numbers = good.mapNotNull { it.nameWithoutExtension.toIntOrNull() }.sorted()
-            val contiguous = numbers.isNotEmpty() &&
-                numbers.first() == 1 && numbers.last() == numbers.size && numbers.distinct().size == numbers.size
-
-            if (good.isEmpty()) {
-                // 目录存在但一张能看的图都没有，当没下
-                runCatching { chDir.deleteRecursively() }
-                return@forEach
-            }
             val done = File(chDir, DONE_MARK).exists()
-            if (done && broken == 0 && contiguous) {
-                complete += idx
-            } else if (!done && broken == 0 && contiguous) {
-                // 老缓存没盖完成章但页是齐的：顺手补上，下次体检就不再当半成品
-                runCatching { File(chDir, DONE_MARK).writeText(good.size.toString()) }
+            if (done && images.isNotEmpty()) {
+                // 已有完成标记的章节已通过完整性校验，直接计入，不再耗费 I/O 逐图打开流校验
+                pagesTotal += images.size
                 complete += idx
             } else {
-                partial += idx
+                val good = ArrayList<File>()
+                var broken = 0
+                images.forEach { f ->
+                    if (f.length() > 256 && looksLikeImage(f)) good.add(f) else broken++
+                }
+                brokenTotal += broken
+                pagesTotal += good.size
+
+                val numbers = good.mapNotNull { it.nameWithoutExtension.toIntOrNull() }.sorted()
+                val contiguous = numbers.isNotEmpty() &&
+                    numbers.first() == 1 && numbers.last() == numbers.size && numbers.distinct().size == numbers.size
+
+                if (good.isEmpty()) {
+                    // 目录存在但一张能看的图都没有，当没下
+                    runCatching { chDir.deleteRecursively() }
+                    return@forEach
+                }
+                if (broken == 0 && contiguous) {
+                    // 老缓存没盖完成章但页是齐的：顺手补上，下次体检就不再当半成品
+                    runCatching { File(chDir, DONE_MARK).writeText(good.size.toString()) }
+                    complete += idx
+                } else {
+                    partial += idx
+                }
             }
         }
 

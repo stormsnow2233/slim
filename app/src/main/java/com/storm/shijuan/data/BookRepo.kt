@@ -1003,12 +1003,19 @@ object BookRepo {
         val skip = t?.skip?.takeIf { it.isNotBlank() }?.let { runCatching { Regex(it) }.getOrNull() }
         val seen = HashSet<String>()
         var idx = 0
-        return list.mapNotNull { c ->
+        val filtered = list.mapNotNull { c ->
             if (c.name in nav) return@mapNotNull null
             if (!seen.add(c.url)) return@mapNotNull null
             if (skip != null && skip.containsMatchIn(c.name)) return@mapNotNull null
             c.copy(index = idx++)
         }
+        return if (filtered.isEmpty() && list.isNotEmpty()) {
+            var rawIdx = 0
+            val rawSeen = HashSet<String>()
+            list.mapNotNull { c ->
+                if (c.name in nav || !rawSeen.add(c.url)) null else c.copy(index = rawIdx++)
+            }
+        } else filtered
     }
 
     /** 目录（支持单页抓取与基于 nextPage / page 模板的真实多页分页拉取） */
@@ -1097,6 +1104,10 @@ object BookRepo {
             }
         }
         if (list.isEmpty()) {
+            if (src.id == "sfacg") {
+                recordTocResult(src.id, ok = false, error = "该书在SF手机站已清空章节或暂未收录")
+                return Result.failure(Exception("该书在SF手机站暂未开放或已清空章节，建议换源阅读同名书"))
+            }
             if (isTakenDownPage(doc, "")) {
                 recordTocResult(src.id, ok = false, error = "书籍已下架")
                 return Result.failure(Exception("该书已下架（源站因版权或作者要求已停止提供在线阅读）"))
@@ -1367,7 +1378,7 @@ object BookRepo {
                         text = Rules.applyRegex(text, regex)
                     }
                     val hasImg = el.select("img").isNotEmpty() || text.contains("<img") || text.contains("<!--image-->")
-                    val minLen = if (src.id == "esjzone") 15 else 80
+                    val minLen = if (src.id == "esjzone" || src.id == "sfacg") 15 else 80
                     if (text.replace(Regex("\\s"), "").length >= minLen || hasImg) {
                         html = if (field == "html") text else "<p>" + text.replace("\n", "</p><p>") + "</p>"
                         break
@@ -1378,12 +1389,12 @@ object BookRepo {
         val hasHtmlImages = html.contains("<img") || html.contains("<!--image-->")
         if (html.isBlank()) html = guessContent(doc)
         // 规则命中的东西太短，多半抓到的是导航/提示条，换成整页里最像正文的那块（有插图章节不覆盖）
-        if (html.replace(Regex("\\s"), "").length < 180 && src.id != "esjzone" && !hasHtmlImages) {
+        if (html.replace(Regex("\\s"), "").length < 180 && src.id != "esjzone" && src.id != "sfacg" && !hasHtmlImages) {
             val guess = guessContent(doc)
             if (guess.replace(Regex("\\s"), "").length > html.replace(Regex("\\s"), "").length) html = guess
         }
         // 有的站免费章节正常给正文，付费章节只给一段购买提示——这时别报"被拦截"，要报准
-        val minLenCheck = if (src.id == "esjzone") 15 else 120
+        val minLenCheck = if (src.id == "esjzone" || src.id == "sfacg") 15 else 120
         if (html.replace(Regex("\\s"), "").length < minLenCheck && !hasHtmlImages) {
             val page = doc.text()
             val vipMark = listOf("VIP章节", "vip章节", "购买本章", "订阅本章", "本章需购买", "余额不足", "充值后阅读", "登录后阅读", "请支持作者", "VIP章节必须登录购买")
