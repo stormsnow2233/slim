@@ -31,6 +31,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import coil.compose.AsyncImage
 import coil.request.ImageRequest
+import com.storm.shijuan.R
 import com.storm.shijuan.data.ReaderPrefs
 
 /**
@@ -248,24 +249,59 @@ fun PagedChapter(
         val wPx = with(density) { maxWidth.toPx() }
         val hPx = with(density) { maxHeight.toPx() }
 
-        val bodyPaint = remember(prefs.fontSize, colors.text) {
+        val themeStyle = LocalAppThemeStyle.current
+        val context = LocalContext.current
+        val readerTypeface = remember(themeStyle) {
+            if (themeStyle == AppThemeStyle.MiuiX) {
+                runCatching {
+                    android.graphics.Typeface.create("misans", android.graphics.Typeface.NORMAL)
+                }.getOrNull() ?: runCatching {
+                    androidx.core.content.res.ResourcesCompat.getFont(context, R.font.misans_latin)
+                }.getOrNull() ?: android.graphics.Typeface.SANS_SERIF
+            } else {
+                runCatching {
+                    androidx.core.content.res.ResourcesCompat.getFont(context, R.font.google_sans_regular)
+                }.getOrNull() ?: runCatching {
+                    android.graphics.Typeface.create("google-sans", android.graphics.Typeface.NORMAL)
+                }.getOrNull() ?: android.graphics.Typeface.SANS_SERIF
+            }
+        }
+        val titleTypeface = remember(themeStyle) {
+            if (themeStyle == AppThemeStyle.MiuiX) {
+                runCatching {
+                    android.graphics.Typeface.create("misans", android.graphics.Typeface.BOLD)
+                }.getOrNull() ?: runCatching {
+                    androidx.core.content.res.ResourcesCompat.getFont(context, R.font.misans_latin)
+                }.getOrNull() ?: android.graphics.Typeface.DEFAULT_BOLD
+            } else {
+                runCatching {
+                    androidx.core.content.res.ResourcesCompat.getFont(context, R.font.google_sans_bold)
+                }.getOrNull() ?: runCatching {
+                    android.graphics.Typeface.create("google-sans-bold", android.graphics.Typeface.BOLD)
+                }.getOrNull() ?: android.graphics.Typeface.DEFAULT_BOLD
+            }
+        }
+
+        val bodyPaint = remember(prefs.fontSize, colors.text, readerTypeface) {
             TextPaint().apply {
                 isAntiAlias = true
                 textSize = with(density) { prefs.fontSize.dp.toPx() }
                 color = colors.text.toArgb()
+                typeface = readerTypeface
             }
         }
-        val titlePaint = remember(prefs.fontSize, colors.text) {
+        val titlePaint = remember(prefs.fontSize, colors.text, titleTypeface) {
             TextPaint().apply {
                 isAntiAlias = true
                 textSize = with(density) { (prefs.fontSize + 3).dp.toPx() }
                 color = colors.text.toArgb()
+                typeface = titleTypeface
                 isFakeBoldText = true
             }
         }
         val gapPx = with(density) { 22.dp.toPx() }.toInt()
 
-        val titleH = remember(title, wPx, prefs.fontSize) {
+        val titleH = remember(title, wPx, prefs.fontSize, titleTypeface) {
             if (title.isBlank() || wPx <= 0) 0 else runCatching {
                 StaticLayout.Builder.obtain(title, 0, title.length, titlePaint, wPx.toInt())
                     .setIncludePad(false)
@@ -273,7 +309,7 @@ fun PagedChapter(
             }.getOrDefault(0)
         }
 
-        val pages = remember(bodyText, wPx, hPx, prefs.fontSize, prefs.lineHeight, prefs.indent, titleH) {
+        val pages = remember(bodyText, wPx, hPx, prefs.fontSize, prefs.lineHeight, prefs.indent, titleH, readerTypeface) {
             if (bodyText.isBlank() || wPx <= 0) listOf(PageSlice.Text("", true))
             else TextPaginator.paginateBlocks(
                 text = bodyText,
@@ -317,7 +353,7 @@ fun PagedChapter(
                         factory = { ctx -> PageView(ctx) },
                         update = { v ->
                             v.renderIfChanged(
-                                key = "$i|${page.content.hashCode()}|${prefs.fontSize}|${prefs.lineHeight}|${colors.text}|${page.showTitle}",
+                                key = "$i|${page.content.hashCode()}|${prefs.fontSize}|${prefs.lineHeight}|${colors.text}|${page.showTitle}|${themeStyle.id}",
                                 title = if (page.showTitle) title else "",
                                 titlePaint = titlePaint,
                                 body = page.content,

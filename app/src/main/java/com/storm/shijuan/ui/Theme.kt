@@ -13,19 +13,24 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.compositionLocalOf
+import androidx.compose.runtime.remember
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.text.TextStyle
+import androidx.compose.ui.text.font.DeviceFontFamilyName
+import androidx.compose.ui.text.font.Font
+import androidx.compose.ui.text.font.FontFamily
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.sp
 import androidx.core.view.WindowCompat
+import com.storm.shijuan.R
 
 // ── 主题风格枚举 ──
 enum class AppThemeStyle(val id: Int, val title: String, val subtitle: String) {
-    Classic(0, "经典书卷", "暖玉生香 · 国风典雅"),
-    MiuiX(1, "MiuiX 极简", "澎湃蔚蓝 · 现代纯粹");
+    Classic(0, "经典书卷", "国风暖玉 · Google Sans"),
+    MiuiX(1, "MiuiX 极简", "澎湃蔚蓝 · MiSans");
 
     companion object {
         fun fromId(id: Int): AppThemeStyle = entries.find { it.id == id } ?: Classic
@@ -151,29 +156,114 @@ private val MiuixDarkColors = darkColorScheme(
     onErrorContainer = Color(0xFFFFDAD6),
 )
 
-private val AppTypography = Typography(
-    headlineLarge = TextStyle(fontSize = 28.sp, fontWeight = FontWeight.SemiBold, letterSpacing = 0.sp),
-    headlineMedium = TextStyle(fontSize = 23.sp, fontWeight = FontWeight.SemiBold),
-    titleLarge = TextStyle(fontSize = 20.sp, fontWeight = FontWeight.SemiBold),
-    titleMedium = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium),
-    bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
-    bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 21.sp),
-    labelLarge = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.Medium),
-    labelMedium = TextStyle(fontSize = 12.sp),
+// ── 字体定义（Google Sans & MiSans 级联回退） ──
+val GoogleSansFontFamily = FontFamily(
+    Font(R.font.google_sans_regular, weight = FontWeight.Normal),
+    Font(R.font.google_sans_medium, weight = FontWeight.Medium),
+    Font(R.font.google_sans_bold, weight = FontWeight.Bold),
+    Font(DeviceFontFamilyName("google-sans"), weight = FontWeight.Normal),
+    Font(DeviceFontFamilyName("google-sans-medium"), weight = FontWeight.Medium),
+    Font(DeviceFontFamilyName("google-sans-bold"), weight = FontWeight.Bold),
+    Font(DeviceFontFamilyName("sans-serif"), weight = FontWeight.Normal),
 )
 
-// Keep the classic typography and shapes intact; MiuiX uses a larger, softer
-// hierarchy for Material components that have not yet been migrated.
-private val MiuixTypography = Typography(
-    headlineLarge = TextStyle(fontSize = 30.sp, fontWeight = FontWeight.Bold, letterSpacing = 0.sp),
-    headlineMedium = TextStyle(fontSize = 24.sp, fontWeight = FontWeight.Bold),
-    titleLarge = TextStyle(fontSize = 21.sp, fontWeight = FontWeight.SemiBold),
-    titleMedium = TextStyle(fontSize = 16.sp, fontWeight = FontWeight.Medium),
-    bodyLarge = TextStyle(fontSize = 16.sp, lineHeight = 24.sp),
-    bodyMedium = TextStyle(fontSize = 14.sp, lineHeight = 21.sp),
-    labelLarge = TextStyle(fontSize = 14.sp, fontWeight = FontWeight.SemiBold),
-    labelMedium = TextStyle(fontSize = 12.sp),
+val MiSansFontFamily = FontFamily(
+    Font(DeviceFontFamilyName("misans"), weight = FontWeight.Normal),
+    Font(DeviceFontFamilyName("misans-normal"), weight = FontWeight.Normal),
+    Font(DeviceFontFamilyName("misans-medium"), weight = FontWeight.Medium),
+    Font(DeviceFontFamilyName("misans-semibold"), weight = FontWeight.SemiBold),
+    Font(DeviceFontFamilyName("misans-bold"), weight = FontWeight.Bold),
+    Font(R.font.misans_latin, weight = FontWeight.Normal),
+    Font(R.font.misans_latin, weight = FontWeight.Medium),
+    Font(R.font.misans_latin, weight = FontWeight.Bold),
+    Font(DeviceFontFamilyName("sans-serif"), weight = FontWeight.Normal),
 )
+
+fun buildMiuixTextStyles(fontFamily: FontFamily): top.yukonga.miuix.kmp.theme.TextStyles {
+    val base = top.yukonga.miuix.kmp.theme.defaultTextStyles()
+    return base.copy(
+        main = base.main.copy(fontFamily = fontFamily),
+        paragraph = base.paragraph.copy(fontFamily = fontFamily),
+        body1 = base.body1.copy(fontFamily = fontFamily),
+        body2 = base.body2.copy(fontFamily = fontFamily),
+        button = base.button.copy(fontFamily = fontFamily),
+        footnote1 = base.footnote1.copy(fontFamily = fontFamily),
+        footnote2 = base.footnote2.copy(fontFamily = fontFamily),
+        headline1 = base.headline1.copy(fontFamily = fontFamily),
+        headline2 = base.headline2.copy(fontFamily = fontFamily),
+        subtitle = base.subtitle.copy(fontFamily = fontFamily),
+        title1 = base.title1.copy(fontFamily = fontFamily),
+        title2 = base.title2.copy(fontFamily = fontFamily),
+        title3 = base.title3.copy(fontFamily = fontFamily),
+        title4 = base.title4.copy(fontFamily = fontFamily),
+    )
+}
+
+private fun createTypography(fontFamily: FontFamily, isMiuix: Boolean): Typography {
+    return Typography(
+        headlineLarge = TextStyle(
+            fontFamily = fontFamily,
+            fontSize = if (isMiuix) 30.sp else 28.sp,
+            fontWeight = if (isMiuix) FontWeight.Bold else FontWeight.SemiBold,
+            letterSpacing = 0.sp
+        ),
+        headlineMedium = TextStyle(
+            fontFamily = fontFamily,
+            fontSize = if (isMiuix) 24.sp else 23.sp,
+            fontWeight = if (isMiuix) FontWeight.Bold else FontWeight.SemiBold
+        ),
+        headlineSmall = TextStyle(
+            fontFamily = fontFamily,
+            fontSize = 20.sp,
+            fontWeight = FontWeight.SemiBold
+        ),
+        titleLarge = TextStyle(
+            fontFamily = fontFamily,
+            fontSize = if (isMiuix) 21.sp else 20.sp,
+            fontWeight = FontWeight.SemiBold
+        ),
+        titleMedium = TextStyle(
+            fontFamily = fontFamily,
+            fontSize = 16.sp,
+            fontWeight = FontWeight.Medium
+        ),
+        titleSmall = TextStyle(
+            fontFamily = fontFamily,
+            fontSize = 14.sp,
+            fontWeight = FontWeight.Medium
+        ),
+        bodyLarge = TextStyle(
+            fontFamily = fontFamily,
+            fontSize = 16.sp,
+            lineHeight = 24.sp
+        ),
+        bodyMedium = TextStyle(
+            fontFamily = fontFamily,
+            fontSize = 14.sp,
+            lineHeight = 21.sp
+        ),
+        bodySmall = TextStyle(
+            fontFamily = fontFamily,
+            fontSize = 12.sp,
+            lineHeight = 16.sp
+        ),
+        labelLarge = TextStyle(
+            fontFamily = fontFamily,
+            fontSize = 14.sp,
+            fontWeight = if (isMiuix) FontWeight.SemiBold else FontWeight.Medium
+        ),
+        labelMedium = TextStyle(
+            fontFamily = fontFamily,
+            fontSize = 12.sp,
+            fontWeight = FontWeight.Medium
+        ),
+        labelSmall = TextStyle(
+            fontFamily = fontFamily,
+            fontSize = 11.sp,
+            fontWeight = FontWeight.Medium
+        ),
+    )
+}
 
 private val MiuixShapes = Shapes(
     extraSmall = RoundedCornerShape(8.dp),
@@ -194,6 +284,12 @@ fun ShijuanTheme(
         AppThemeStyle.Classic -> if (dark) ClassicDarkColors else ClassicLightColors
         AppThemeStyle.MiuiX -> if (dark) MiuixDarkColors else MiuixLightColors
     }
+    val currentFontFamily = if (themeStyle == AppThemeStyle.MiuiX) MiSansFontFamily else GoogleSansFontFamily
+    val miuixTextStyles = remember(currentFontFamily) { buildMiuixTextStyles(currentFontFamily) }
+    val typography = remember(currentFontFamily, themeStyle) {
+        createTypography(currentFontFamily, isMiuix = themeStyle == AppThemeStyle.MiuiX)
+    }
+
     val view = LocalView.current
     val context = LocalContext.current
     if (!view.isInEditMode) {
@@ -208,10 +304,13 @@ fun ShijuanTheme(
             window.navigationBarColor = Color.Transparent.toArgb()
         }
     }
-    CompositionLocalProvider(LocalAppThemeStyle provides themeStyle) {
+    CompositionLocalProvider(
+        LocalAppThemeStyle provides themeStyle,
+        androidx.compose.material3.LocalTextStyle provides androidx.compose.material3.LocalTextStyle.current.copy(fontFamily = currentFontFamily),
+    ) {
         MaterialTheme(
             colorScheme = colors,
-            typography = if (themeStyle == AppThemeStyle.MiuiX) MiuixTypography else AppTypography,
+            typography = typography,
             shapes = if (themeStyle == AppThemeStyle.MiuiX) MiuixShapes else Shapes(),
         ) {
             // Keep the content at the same composition location when switching styles,
@@ -220,6 +319,7 @@ fun ShijuanTheme(
             top.yukonga.miuix.kmp.theme.MiuixTheme(
                 colors = if (dark) top.yukonga.miuix.kmp.theme.darkColorScheme()
                 else top.yukonga.miuix.kmp.theme.lightColorScheme(),
+                textStyles = miuixTextStyles,
             ) {
                 CompositionLocalProvider(
                     androidx.compose.foundation.LocalIndication provides

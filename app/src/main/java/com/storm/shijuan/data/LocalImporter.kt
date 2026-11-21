@@ -205,12 +205,20 @@ object LocalImporter {
         baseDir: File,
         store: Store
     ): Book {
-        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytes() }
+        val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytesLimited(MAX_TXT_BYTES + 1) }
             ?: throw IllegalStateException("无法读取文件内容")
+        if (bytes.size > MAX_TXT_BYTES) {
+            throw IllegalStateException("TXT 文件过大（超过 ${MAX_TXT_BYTES / (1024 * 1024)}MB），暂不支持导入")
+        }
+        // 二进制内容（mobi/azw3/加密文件等）按 TXT 解码只会得到乱码，提前拒绝
+        val nulCount = bytes.take(4096).count { it == 0.toByte() }
+        if (nulCount > 16) {
+            throw IllegalStateException("文件不是纯文本小说（可能为 MOBI/AZW3 等格式，暂不支持）")
+        }
         val fullText = Exporter.decodeNovelBytes(bytes)
         val title = fileName.substringBeforeLast('.')
 
-        val chapterRegex = Regex("""(?m)^[ \t]*(第[0-9一二三四五六七八九十百千万]+[章回节卷集幕篇部][^\r\n]{0,35}|Chapter\s*\d+[^\r\n]{0,35}|(?:引子|序言|序章|楔子|尾声|后记|番外)[^\r\n]{0,35})[ \t]*$""")
+        val chapterRegex = Regex("""(?m)^[ \t]*[\[【（(]?[ \t]*(第[0-9零一二三四五六七八九十百千万两]+[章回节卷集幕篇部][^\r\n]{0,35}|Chapter\s*\d+[^\r\n]{0,35}|(?:引子|序言|序章|楔子|尾声|后记|番外)[^\r\n]{0,35})[\]】）)]?[ \t]*$""")
         val matches = chapterRegex.findAll(fullText).toList()
 
         val chaptersDir = File(baseDir, "chapters").apply { mkdirs() }
@@ -502,10 +510,10 @@ object LocalImporter {
         } ?: throw IllegalStateException("无法打开 EPUB 文件")
 
         val imageFiles = extractedDir.walkTopDown().filter { f ->
-            f.isFile && f.canonicalPath.startsWith(extractedDir.canonicalPath + File.separator)
             val n = f.name.lowercase()
-            n.endsWith(".jpg") || n.endsWith(".jpeg") || n.endsWith(".png") ||
-                n.endsWith(".webp") || n.endsWith(".gif")
+            f.isFile && f.canonicalPath.startsWith(extractedDir.canonicalPath + File.separator) &&
+                (n.endsWith(".jpg") || n.endsWith(".jpeg") || n.endsWith(".png") ||
+                    n.endsWith(".webp") || n.endsWith(".gif"))
         }.sortedWith { a, b -> naturalCompare(a.relativeTo(extractedDir).path, b.relativeTo(extractedDir).path) }.toList()
 
         if (imageFiles.isEmpty()) {
@@ -566,6 +574,10 @@ object LocalImporter {
         context.contentResolver.openInputStream(uri)?.use { input ->
             FileOutputStream(pdfFile).use { output -> input.copyTo(output) }
         } ?: throw IllegalStateException("无法读取 PDF 文件")
+        if (pdfFile.length() > MAX_PDF_BYTES) {
+            pdfFile.delete()
+            throw IllegalStateException("PDF 文件过大（超过 ${MAX_PDF_BYTES / (1024 * 1024)}MB），暂不支持导入")
+        }
 
         val pagesDir = File(baseDir, "pages").apply { mkdirs() }
         val renderedImages = mutableListOf<String>()
@@ -644,6 +656,10 @@ object LocalImporter {
         context.contentResolver.openInputStream(uri)?.use { input ->
             FileOutputStream(pdfFile).use { output -> input.copyTo(output) }
         } ?: throw IllegalStateException("无法读取 PDF 文件")
+        if (pdfFile.length() > MAX_PDF_BYTES) {
+            pdfFile.delete()
+            throw IllegalStateException("PDF 文件过大（超过 ${MAX_PDF_BYTES / (1024 * 1024)}MB），暂不支持导入")
+        }
 
         val pagesDir = File(baseDir, "pages").apply { mkdirs() }
         val chaptersDir = File(baseDir, "chapters").apply { mkdirs() }
@@ -830,6 +846,8 @@ object LocalImporter {
     }
 
     private const val MAX_ZIP_ENTRIES = 10_000
+    private const val MAX_TXT_BYTES = 64 * 1024 * 1024
+    private const val MAX_PDF_BYTES = 256L * 1024L * 1024L
     private const val MAX_INSPECT_HTML_BYTES = 4 * 1024 * 1024
     private const val MAX_OPF_BYTES = 4L * 1024L * 1024L
     private const val MAX_XHTML_BYTES = 16L * 1024L * 1024L

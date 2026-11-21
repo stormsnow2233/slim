@@ -422,7 +422,7 @@ private fun ThemeSettingsCard(
                 ThemeStyleCard(
                     modifier = Modifier.weight(1f),
                     title = "经典书卷",
-                    subtitle = "国风暖玉 · 赭石沉香",
+                    subtitle = "国风暖玉 · Google Sans",
                     paletteColors = listOf(Color(0xFFF8F3EA), Color(0xFF9C4A2F), Color(0xFF5C7A5A)),
                     selected = currentStyle == AppThemeStyle.Classic.id,
                     onClick = { onStyleChange(AppThemeStyle.Classic.id) }
@@ -430,7 +430,7 @@ private fun ThemeSettingsCard(
                 ThemeStyleCard(
                     modifier = Modifier.weight(1f),
                     title = "MiuiX 极简",
-                    subtitle = "澎湃蔚蓝 · 现代纯粹",
+                    subtitle = "澎湃蔚蓝 · MiSans",
                     paletteColors = listOf(Color(0xFFF7F7F7), Color(0xFF3482FF), Color(0xFF00C4B4)),
                     selected = currentStyle == AppThemeStyle.MiuiX.id,
                     onClick = { onStyleChange(AppThemeStyle.MiuiX.id) }
