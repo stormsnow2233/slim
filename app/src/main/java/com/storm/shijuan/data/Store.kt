@@ -749,7 +749,7 @@ class Store(val context: Context) {
     // ── 轻小说文库自定义反代 / Worker / CDN ──
     fun wenku8ProxyUrl(): String {
         val value = sp.getString("wenku8_proxy_url", null)?.trim().orEmpty()
-        return if (value.isBlank() || value.contains("wenku8-proxy.storm-snow.workers.dev") || value.contains("wenku8-proxy.us.ci")) "https://wenku8-proxy.pages.dev" else value
+        return if (value.isBlank() || value.contains("wenku8-proxy.storm-snow.workers.dev") || value.contains("wenku8-proxy.pages.dev")) "https://wenku8-proxy.us.ci" else value
     }
 
     fun setWenku8ProxyUrl(url: String) {
@@ -759,7 +759,7 @@ class Store(val context: Context) {
     // ── JMcomic 自定义反代 / Pages / Worker / CDN ──
     fun jmProxyUrl(): String {
         val value = sp.getString("jm_proxy_url", null)?.trim().orEmpty()
-        return if (value.isBlank() || value.contains("jm-proxy.storm-snow.workers.dev") || value.contains("jm-proxy.us.ci")) "https://jm-proxy.pages.dev" else value
+        return if (value.isBlank() || value.contains("jm-proxy.storm-snow.workers.dev") || value.contains("jm-proxy.pages.dev")) "https://jm-proxy.us.ci" else value
     }
 
     fun setJmProxyUrl(url: String) {
@@ -767,14 +767,20 @@ class Store(val context: Context) {
     }
 
     // ── Z-Library 自定义反代 / Pages / Worker ──
-    fun zlibProxyUrl(): String = sp.getString("zlib_proxy_url", "https://zlib-proxy-bs3.pages.dev")?.trim().orEmpty().ifBlank { "https://zlib-proxy-bs3.pages.dev" }
+    fun zlibProxyUrl(): String {
+        val value = sp.getString("zlib_proxy_url", null)?.trim().orEmpty()
+        return if (value.isBlank() || value.contains("zlib-proxy-bs3.pages.dev")) "https://zlib-proxy.us.ci" else value
+    }
 
     fun setZlibProxyUrl(url: String) {
         sp.edit().putString("zlib_proxy_url", url.trim()).apply()
     }
 
     // ── ESJ Zone 自定义反代 / Pages / Worker ──
-    fun esjProxyUrl(): String = sp.getString("esj_proxy_url", "https://esj-proxy.pages.dev")?.trim().orEmpty().ifBlank { "https://esj-proxy.pages.dev" }
+    fun esjProxyUrl(): String {
+        val value = sp.getString("esj_proxy_url", null)?.trim().orEmpty()
+        return if (value.isBlank() || value.contains("esj-proxy.pages.dev")) "https://esj-proxy.us.ci" else value
+    }
 
     fun setEsjProxyUrl(url: String) {
         sp.edit().putString("esj_proxy_url", url.trim()).apply()

@@ -89,7 +89,7 @@ object Wenku8Direct {
         }
 
         // 内置高速 Cloudflare Pages 加速节点（自定义代理仍优先）
-        urls.add("https://wenku8-proxy.pages.dev/down.php?type=utf8&node=1&id=$aid")
+        urls.add("https://wenku8-proxy.us.ci/down.php?type=utf8&node=1&id=$aid")
 
         // 官方 3 个下载节点作为安全回退兜底
         for (node in 1..3) {

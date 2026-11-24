@@ -180,8 +180,15 @@ object NovelContentCache {
         }
     }
 
-    /** 磁盘缓存容量自动淘汰：超过 150MB 时淘汰最旧文件至 120MB */
+    /** 磁盘缓存容量自动淘汰：超过 150MB 时淘汰最旧文件至 120MB。
+     *  高频写入时 listFiles 全目录扫描代价极高（批量导入数千章场景曾导致导入耗时数分钟），
+     *  因此节流：最多每 30 秒执行一次全量扫描。 */
+    private var lastTrimAtMs: Long = 0L
+
     private fun trimDiskUsageIfNeeded(dir: File) {
+        val now = System.currentTimeMillis()
+        if (now - lastTrimAtMs < 30_000L) return
+        lastTrimAtMs = now
         val files = dir.listFiles { f -> f.isFile && f.name.endsWith(".txt") } ?: return
         var currentBytes = files.sumOf { it.length() }
         if (currentBytes <= MAX_DISK_BYTES) return

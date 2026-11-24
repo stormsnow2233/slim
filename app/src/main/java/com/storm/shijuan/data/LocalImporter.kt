@@ -232,7 +232,6 @@ object LocalImporter {
                     val chFile = File(chaptersDir, "ch_0.txt")
                     chFile.writeText(preContent)
                     val chUrl = "file://" + chFile.absolutePath
-                    NovelContentCache.put("local", chUrl, preContent)
                     chapterList.add(Chapter(name = "序章 / 前言", url = chUrl, index = 0))
                 }
             }
@@ -248,7 +247,6 @@ object LocalImporter {
                 val chFile = File(chaptersDir, "ch_$chIdx.txt")
                 chFile.writeText(content)
                 val chUrl = "file://" + chFile.absolutePath
-                NovelContentCache.put("local", chUrl, content)
                 chapterList.add(Chapter(name = name, url = chUrl, index = chIdx))
             }
         } else {
@@ -263,7 +261,6 @@ object LocalImporter {
                 val chFile = File(chaptersDir, "ch_$chIdx.txt")
                 chFile.writeText(content)
                 val chUrl = "file://" + chFile.absolutePath
-                NovelContentCache.put("local", chUrl, content)
                 chapterList.add(Chapter(name = "第 $partIdx 部分", url = chUrl, index = chIdx))
                 partIdx++
                 chunk.clear()
@@ -280,7 +277,6 @@ object LocalImporter {
             val chFile = File(chaptersDir, "ch_0.txt")
             chFile.writeText(fullText)
             val chUrl = "file://" + chFile.absolutePath
-            NovelContentCache.put("local", chUrl, fullText)
             chapterList.add(Chapter(name = "正文", url = chUrl, index = 0))
         }
 
@@ -469,7 +465,6 @@ object LocalImporter {
                 val chFile = File(chaptersDir, "ch_$chIdx.txt")
                 chFile.writeText(chContent)
                 val chUrl = "file://" + chFile.absolutePath
-                NovelContentCache.put("local", chUrl, chContent)
                 chapterList.add(Chapter(name = chTitle, url = chUrl, index = chIdx))
             }
         }
@@ -685,7 +680,6 @@ object LocalImporter {
                             val chFile = File(chaptersDir, "ch_$i.txt")
                             chFile.writeText(chContent)
                             val chUrl = "file://" + chFile.absolutePath
-                            NovelContentCache.put("local", chUrl, chContent)
                             chapterList.add(Chapter(name = "第 ${i + 1} 页", url = chUrl, index = i))
                         } finally {
                             bmp.recycle()

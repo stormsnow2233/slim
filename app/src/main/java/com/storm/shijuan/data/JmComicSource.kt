@@ -125,7 +125,7 @@ class JmComicSource : ComicSource {
     override val name: String = "JMcomic"
 
     private val hosts = listOf(
-        "https://jm-proxy.pages.dev",
+        "https://jm-proxy.us.ci",
         "https://www.cdnhth.club",
     )
     @Volatile

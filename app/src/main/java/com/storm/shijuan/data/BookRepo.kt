@@ -1730,7 +1730,7 @@ object Zlib {
         "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) " +
             "Chrome/122.0.0.0 Mobile Safari/537.36"
 
-    const val DEFAULT_PROXY = "https://zlib-proxy-bs3.pages.dev"
+    const val DEFAULT_PROXY = "https://zlib-proxy.us.ci"
     private val backupBases = listOf(DEFAULT_PROXY, "https://singlelogin.rs", "https://z-library.sk")
 
     fun getBases(st: Store? = null): List<String> {

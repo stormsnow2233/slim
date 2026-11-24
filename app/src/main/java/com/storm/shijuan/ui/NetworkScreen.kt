@@ -90,7 +90,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                     Net.get("https://m.sfacg.com/", useCache = false, fast = true, timeoutMs = 8000L)
                 },
                 "Z-Library" to {
-                    val base = store.zlibProxyUrl().ifBlank { "https://zlib-proxy-bs3.pages.dev" }.trimEnd('/')
+                    val base = store.zlibProxyUrl().ifBlank { "https://zlib-proxy.us.ci" }.trimEnd('/')
                     Net.post(
                         "$base/eapi/book/search",
                         mapOf("message" to "ping", "limit" to "1"),
@@ -100,7 +100,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                     )
                 },
                 "ESJ Zone" to {
-                    val base = store.esjProxyUrl().ifBlank { "https://esj-proxy.pages.dev" }.trimEnd('/')
+                    val base = store.esjProxyUrl().ifBlank { "https://esj-proxy.us.ci" }.trimEnd('/')
                     Net.get("$base/", useCache = false, fast = true, timeoutMs = 8000L)
                 },
                 "漫画图片线路" to {
