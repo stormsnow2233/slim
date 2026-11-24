@@ -160,36 +160,50 @@ object LocalImporter {
         }.getOrNull() ?: EpubStat(0, 0)
     }
 
-    fun importNovel(context: Context, uri: Uri, fileName: String, store: Store): Result<Book> {
+    fun importNovel(
+        context: Context,
+        uri: Uri,
+        fileName: String,
+        store: Store,
+        onProgress: (Float, String) -> Unit = { _, _ -> }
+    ): Result<Book> {
         var baseDir: File? = null
         return runCatching {
+            onProgress(0.02f, "准备导入...")
             val bookId = "local_novel_" + System.currentTimeMillis() + "_" + (1000..9999).random()
             baseDir = File(context.filesDir, "imported/novels/$bookId").apply { mkdirs() }
             val importDir = baseDir!!
             val ext = fileName.substringAfterLast('.', "").lowercase()
 
             when (ext) {
-                "txt" -> importTxtAsNovel(context, uri, fileName, importDir, store)
-                "epub" -> importEpubAsNovel(context, uri, fileName, importDir, store)
-                "pdf" -> importPdfAsNovel(context, uri, fileName, importDir, store)
+                "txt" -> importTxtAsNovel(context, uri, fileName, importDir, store, onProgress)
+                "epub" -> importEpubAsNovel(context, uri, fileName, importDir, store, onProgress)
+                "pdf" -> importPdfAsNovel(context, uri, fileName, importDir, store, onProgress)
                 else -> {
-                    importTxtAsNovel(context, uri, fileName, importDir, store)
+                    importTxtAsNovel(context, uri, fileName, importDir, store, onProgress)
                 }
             }
         }.onFailure { baseDir?.deleteRecursively() }
     }
 
-    fun importComic(context: Context, uri: Uri, fileName: String, store: Store): Result<Comic> {
+    fun importComic(
+        context: Context,
+        uri: Uri,
+        fileName: String,
+        store: Store,
+        onProgress: (Float, String) -> Unit = { _, _ -> }
+    ): Result<Comic> {
         var baseDir: File? = null
         return runCatching {
+            onProgress(0.02f, "准备导入...")
             val comicId = "local_comic_" + System.currentTimeMillis() + "_" + (1000..9999).random()
             baseDir = File(context.filesDir, "imported/comics/$comicId").apply { mkdirs() }
             val importDir = baseDir!!
             val ext = fileName.substringAfterLast('.', "").lowercase()
 
             when (ext) {
-                "epub" -> importEpubAsComic(context, uri, fileName, importDir, store)
-                "pdf" -> importPdfAsComic(context, uri, fileName, importDir, store)
+                "epub" -> importEpubAsComic(context, uri, fileName, importDir, store, onProgress)
+                "pdf" -> importPdfAsComic(context, uri, fileName, importDir, store, onProgress)
                 "txt" -> throw IllegalStateException("TXT 文件不能作为漫画导入")
                 else -> throw IllegalStateException("不支持的漫画文件格式")
             }
@@ -203,79 +217,77 @@ object LocalImporter {
         uri: Uri,
         fileName: String,
         baseDir: File,
-        store: Store
+        store: Store,
+        onProgress: (Float, String) -> Unit = { _, _ -> }
     ): Book {
+        onProgress(0.05f, "正在读取文本数据...")
         val bytes = context.contentResolver.openInputStream(uri)?.use { it.readBytesLimited(MAX_TXT_BYTES + 1) }
             ?: throw IllegalStateException("无法读取文件内容")
         if (bytes.size > MAX_TXT_BYTES) {
             throw IllegalStateException("TXT 文件过大（超过 ${MAX_TXT_BYTES / (1024 * 1024)}MB），暂不支持导入")
         }
-        // 二进制内容（mobi/azw3/加密文件等）按 TXT 解码只会得到乱码，提前拒绝
         val nulCount = bytes.take(4096).count { it == 0.toByte() }
         if (nulCount > 16) {
             throw IllegalStateException("文件不是纯文本小说（可能为 MOBI/AZW3 等格式，暂不支持）")
         }
-        val fullText = Exporter.decodeNovelBytes(bytes)
+
+        onProgress(0.10f, "正在探测字符编码...")
+        val charset = Exporter.detectCharset(bytes)
         val title = fileName.substringBeforeLast('.')
-
-        val chapterRegex = Regex("""(?m)^[ \t]*[\[【（(]?[ \t]*(第[0-9零一二三四五六七八九十百千万两]+[章回节卷集幕篇部][^\r\n]{0,35}|Chapter\s*\d+[^\r\n]{0,35}|(?:引子|序言|序章|楔子|尾声|后记|番外)[^\r\n]{0,35})[\]】）)]?[ \t]*$""")
-        val matches = chapterRegex.findAll(fullText).toList()
-
         val chaptersDir = File(baseDir, "chapters").apply { mkdirs() }
         val chapterList = mutableListOf<Chapter>()
 
-        if (matches.size >= 2) {
-            val firstStart = matches[0].range.first
-            if (firstStart > 0) {
-                val preContent = fullText.substring(0, firstStart).trim()
-                if (preContent.isNotBlank()) {
-                    val chFile = File(chaptersDir, "ch_0.txt")
-                    chFile.writeText(preContent)
-                    val chUrl = "file://" + chFile.absolutePath
-                    chapterList.add(Chapter(name = "序章 / 前言", url = chUrl, index = 0))
+        onProgress(0.15f, "正在流式提取章节目录...")
+        val chapterLineRegex = Regex("""^[ \t]*[\[【（(]?[ \t]*(第[0-9零一二三四五六七八九十百千万两]+[章回节卷集幕篇部][^\r\n]{0,35}|Chapter\s*\d+[^\r\n]{0,35}|(?:引子|序言|序章|楔子|尾声|后记|番外)[^\r\n]{0,35})[\]】）)]?[ \t]*$""")
+
+        val reader = java.io.BufferedReader(java.io.InputStreamReader(java.io.ByteArrayInputStream(bytes), charset), 32 * 1024)
+        var currentChapterTitle: String? = null
+        val currentContent = StringBuilder(8192)
+        var introPreview = ""
+        val totalBytes = bytes.size.toLong().coerceAtLeast(1L)
+        var estimatedBytesRead = 0L
+        var lastReported = 0L
+
+        fun flushChapter(titleName: String) {
+            if (currentContent.isBlank()) return
+            val chIdx = chapterList.size
+            val chFile = File(chaptersDir, "ch_$chIdx.txt")
+            chFile.bufferedWriter(Charsets.UTF_8).use { it.write(currentContent.toString().trim()) }
+            val chUrl = "file://" + chFile.absolutePath
+            chapterList.add(Chapter(name = titleName, url = chUrl, index = chIdx))
+            currentContent.setLength(0)
+        }
+
+        reader.useLines { lines ->
+            for (line in lines) {
+                estimatedBytesRead += line.length + 2
+                if (chapterLineRegex.matches(line)) {
+                    val prevTitle = currentChapterTitle ?: if (chapterList.isEmpty()) "序章 / 前言" else "第 ${chapterList.size + 1} 节"
+                    flushChapter(prevTitle)
+                    currentChapterTitle = line.trim()
+
+                    val now = System.currentTimeMillis()
+                    if (now - lastReported > 80) {
+                        lastReported = now
+                        val ratio = (estimatedBytesRead.toFloat() / totalBytes).coerceIn(0f, 1f)
+                        val p = 0.15f + 0.75f * ratio
+                        onProgress(p, "已解析 ${chapterList.size} 章 (${(p * 100).toInt()}%)...")
+                    }
+                } else {
+                    currentContent.append(line).append('\n')
+                    if (introPreview.length < 200 && line.isNotBlank()) {
+                        introPreview += line.trim() + " "
+                    }
                 }
             }
-
-            for (i in matches.indices) {
-                val m = matches[i]
-                val name = m.value.trim()
-                val start = m.range.first
-                val end = if (i + 1 < matches.size) matches[i + 1].range.first else fullText.length
-                val content = fullText.substring(start, end).trim()
-
-                val chIdx = chapterList.size
-                val chFile = File(chaptersDir, "ch_$chIdx.txt")
-                chFile.writeText(content)
-                val chUrl = "file://" + chFile.absolutePath
-                chapterList.add(Chapter(name = name, url = chUrl, index = chIdx))
-            }
-        } else {
-            val lines = fullText.lines()
-            val chunk = StringBuilder()
-            var partIdx = 1
-
-            fun flush() {
-                if (chunk.isBlank()) return
-                val content = chunk.toString().trim()
-                val chIdx = chapterList.size
-                val chFile = File(chaptersDir, "ch_$chIdx.txt")
-                chFile.writeText(content)
-                val chUrl = "file://" + chFile.absolutePath
-                chapterList.add(Chapter(name = "第 $partIdx 部分", url = chUrl, index = chIdx))
-                partIdx++
-                chunk.clear()
-            }
-
-            for (line in lines) {
-                chunk.append(line).append('\n')
-                if (chunk.length >= 6000) flush()
-            }
-            flush()
         }
+
+        val finalTitle = currentChapterTitle ?: if (chapterList.isEmpty()) "正文" else "尾声"
+        flushChapter(finalTitle)
 
         if (chapterList.isEmpty()) {
             val chFile = File(chaptersDir, "ch_0.txt")
-            chFile.writeText(fullText)
+            chFile.writeText(String(bytes, charset))
             val chUrl = "file://" + chFile.absolutePath
             chapterList.add(Chapter(name = "正文", url = chUrl, index = 0))
         }
@@ -287,13 +299,16 @@ object LocalImporter {
             sourceName = "本地导入",
             url = "file://${baseDir.absolutePath}",
             cover = "",
-            intro = fullText.take(200).trim(),
+            intro = introPreview.take(200).trim(),
             latest = chapterList.lastOrNull()?.name ?: "",
             isImported = true,
         )
 
+        onProgress(0.92f, "正在生成目录数据 (${chapterList.size} 章)...")
         store.saveToc(book.url, chapterList)
+        onProgress(0.98f, "正在加入小说书架...")
         store.addToShelf(book)
+        onProgress(1.0f, "导入完成")
         return book
     }
 
@@ -304,15 +319,20 @@ object LocalImporter {
         uri: Uri,
         fileName: String,
         baseDir: File,
-        store: Store
+        store: Store,
+        onProgress: (Float, String) -> Unit = { _, _ -> }
     ): Book {
+        onProgress(0.05f, "正在解压 EPUB 电子书...")
         val extractedDir = File(baseDir, "extracted").apply { mkdirs() }
         val chaptersDir = File(baseDir, "chapters").apply { mkdirs() }
 
         context.contentResolver.openInputStream(uri)?.use { stream ->
-            unzip(stream, extractedDir)
+            unzip(stream, extractedDir) { p, stageText ->
+                onProgress(0.05f + 0.20f * p, stageText)
+            }
         } ?: throw IllegalStateException("无法打开 EPUB 文件")
 
+        onProgress(0.28f, "正在读取书籍目录与元数据...")
         val containerFile = File(extractedDir, "META-INF/container.xml")
         var opfPath = ""
         if (containerFile.exists()) {
@@ -368,8 +388,9 @@ object LocalImporter {
 
         val spineItems = opfDoc.select("spine > itemref").map { it.attr("idref") }.distinct().take(MAX_SPINE_ITEMS)
         val chapterList = mutableListOf<Chapter>()
+        val totalSpine = spineItems.size
 
-        for (idref in spineItems) {
+        for ((idx, idref) in spineItems.withIndex()) {
             val pair = manifest[idref] ?: continue
             val href = pair.first
             val xhtmlFile = resolveWithin(extractedDir, opfDir, href)
@@ -379,6 +400,9 @@ object LocalImporter {
             val doc = Jsoup.parse(xhtmlFile, "UTF-8")
             val chTitle = doc.selectFirst("h1, h2, h3, title")?.text()?.trim()
                 ?.ifBlank { null } ?: "第 ${chapterList.size + 1} 章"
+
+            val p = 0.30f + 0.60f * ((idx + 1).toFloat() / totalSpine.coerceAtLeast(1))
+            onProgress(p, "正在提取章节与插图 (${idx + 1}/$totalSpine)...")
 
             val body = doc.body() ?: continue
             val sb = StringBuilder()
@@ -485,8 +509,11 @@ object LocalImporter {
             isImported = true,
         )
 
+        onProgress(0.93f, "正在保存目录信息...")
         store.saveToc(book.url, chapterList)
+        onProgress(0.98f, "正在加入小说书架...")
         store.addToShelf(book)
+        onProgress(1.0f, "导入完成")
         return book
     }
 
@@ -497,13 +524,18 @@ object LocalImporter {
         uri: Uri,
         fileName: String,
         baseDir: File,
-        store: Store
+        store: Store,
+        onProgress: (Float, String) -> Unit = { _, _ -> }
     ): Comic {
+        onProgress(0.05f, "正在解压漫画图包...")
         val extractedDir = File(baseDir, "extracted").apply { mkdirs() }
         context.contentResolver.openInputStream(uri)?.use { stream ->
-            unzip(stream, extractedDir)
+            unzip(stream, extractedDir) { p, stageText ->
+                onProgress(0.05f + 0.30f * p, stageText)
+            }
         } ?: throw IllegalStateException("无法打开 EPUB 文件")
 
+        onProgress(0.40f, "正在检索图包图片...")
         val imageFiles = extractedDir.walkTopDown().filter { f ->
             val n = f.name.lowercase()
             f.isFile && f.canonicalPath.startsWith(extractedDir.canonicalPath + File.separator) &&
@@ -515,6 +547,7 @@ object LocalImporter {
             throw IllegalStateException("EPUB 中未找到图片内容")
         }
 
+        onProgress(0.65f, "正在整理并排序漫画图片 (${imageFiles.size} 张)...")
         val title = fileName.substringBeforeLast('.')
         val coverUrl = "file://" + imageFiles.first().absolutePath
 
@@ -527,6 +560,7 @@ object LocalImporter {
         val chunkSize = if (imageFiles.size > 80) 40 else imageFiles.size
         val chunks = imageFiles.chunked(chunkSize)
 
+        onProgress(0.85f, "正在构建漫画目录与分卷...")
         for (i in chunks.indices) {
             val chObj = JSONObject()
             chObj.put("name", if (chunks.size == 1) "全一卷" else "第 ${i + 1} 话")
@@ -552,7 +586,9 @@ object LocalImporter {
             status = "完结",
         )
 
+        onProgress(0.98f, "正在加入漫画书架...")
         store.addComicToShelf(comic)
+        onProgress(1.0f, "导入完成")
         return comic
     }
 
@@ -563,8 +599,10 @@ object LocalImporter {
         uri: Uri,
         fileName: String,
         baseDir: File,
-        store: Store
+        store: Store,
+        onProgress: (Float, String) -> Unit = { _, _ -> }
     ): Comic {
+        onProgress(0.05f, "正在读取 PDF 文件...")
         val pdfFile = File(baseDir, "document.pdf")
         context.contentResolver.openInputStream(uri)?.use { input ->
             FileOutputStream(pdfFile).use { output -> input.copyTo(output) }
@@ -581,6 +619,8 @@ object LocalImporter {
                 val pageCount = renderer.pageCount
                 if (pageCount <= 0) throw IllegalStateException("PDF 页面为空")
                 for (i in 0 until pageCount) {
+                    val p = 0.08f + 0.80f * ((i + 1).toFloat() / pageCount.coerceAtLeast(1))
+                    onProgress(p, "正在渲染漫画 (${i + 1}/$pageCount 页)...")
                     renderer.openPage(i).use { page ->
                         val scale = (1440f / page.width).coerceIn(1.0f, 2.0f)
                         val bmp = Bitmap.createBitmap((page.width * scale).toInt(), (page.height * scale).toInt(), Bitmap.Config.ARGB_8888)
@@ -612,6 +652,7 @@ object LocalImporter {
         val chunkSize = if (renderedImages.size > 80) 40 else renderedImages.size
         val chunks = renderedImages.chunked(chunkSize)
 
+        onProgress(0.92f, "正在构建分卷与目录...")
         for (i in chunks.indices) {
             val chObj = JSONObject()
             chObj.put("name", if (chunks.size == 1) "全一卷" else "第 ${i + 1} 话")
@@ -636,7 +677,9 @@ object LocalImporter {
             status = "完结",
         )
 
+        onProgress(0.98f, "正在加入漫画书架...")
         store.addComicToShelf(comic)
+        onProgress(1.0f, "导入完成")
         return comic
     }
 
@@ -645,8 +688,10 @@ object LocalImporter {
         uri: Uri,
         fileName: String,
         baseDir: File,
-        store: Store
+        store: Store,
+        onProgress: (Float, String) -> Unit = { _, _ -> }
     ): Book {
+        onProgress(0.05f, "正在读取 PDF 文件...")
         val pdfFile = File(baseDir, "document.pdf")
         context.contentResolver.openInputStream(uri)?.use { input ->
             FileOutputStream(pdfFile).use { output -> input.copyTo(output) }
@@ -666,6 +711,8 @@ object LocalImporter {
                 pageCount = renderer.pageCount
                 if (pageCount <= 0) throw IllegalStateException("PDF 页面为空")
                 for (i in 0 until pageCount) {
+                    val p = 0.08f + 0.80f * ((i + 1).toFloat() / pageCount.coerceAtLeast(1))
+                    onProgress(p, "正在逐页转换文档 (${i + 1}/$pageCount 页)...")
                     renderer.openPage(i).use { page ->
                         val scale = (1200f / page.width).coerceIn(1.0f, 1.8f)
                         val bmp = Bitmap.createBitmap((page.width * scale).toInt(), (page.height * scale).toInt(), Bitmap.Config.ARGB_8888)
@@ -702,8 +749,11 @@ object LocalImporter {
             isImported = true,
         )
 
+        onProgress(0.92f, "正在生成目录数据...")
         store.saveToc(book.url, chapterList)
+        onProgress(0.98f, "正在加入小说书架...")
         store.addToShelf(book)
+        onProgress(1.0f, "导入完成")
         return book
     }
 
@@ -760,7 +810,11 @@ object LocalImporter {
         return if (candidate.path.startsWith(root.path + File.separator)) candidate else null
     }
 
-    private fun unzip(inputStream: InputStream, targetDir: File) {
+    private fun unzip(
+        inputStream: InputStream,
+        targetDir: File,
+        onProgress: ((Float, String) -> Unit)? = null
+    ) {
         // EPUBs are untrusted archives: bound both metadata and expanded data to
         // prevent zip bombs and avoid leaving a partially imported book behind.
         val targetRoot = targetDir.canonicalFile
@@ -772,6 +826,10 @@ object LocalImporter {
                 while (entry != null) {
                     if (++entryCount > MAX_ZIP_ENTRIES) {
                         throw IllegalStateException("EPUB 条目数量超过限制")
+                    }
+                    if (entryCount % 10 == 0) {
+                        val progressRatio = (entryCount / 100f).coerceIn(0f, 1f)
+                        onProgress?.invoke(progressRatio, "正在解压文件 ($entryCount 项)...")
                     }
 
                     val rawName = entry.name.replace('\\', '/')

@@ -49,6 +49,7 @@ enum class AppThemeMode(val id: Int, val title: String) {
 }
 
 val LocalAppThemeStyle = compositionLocalOf { AppThemeStyle.Classic }
+val LocalAppThemeSeedColor = compositionLocalOf<Color?> { null }
 
 // ── 经典书卷色：暖米白 + 赭石 ──
 val Paper = Color(0xFFF8F3EA)
@@ -277,12 +278,43 @@ private val MiuixShapes = Shapes(
 fun ShijuanTheme(
     style: Int = 0,
     dark: Boolean = isSystemInDarkTheme(),
+    customSeedColor: Int? = null,
     content: @Composable () -> Unit
 ) {
     val themeStyle = AppThemeStyle.fromId(style)
-    val colors = when (themeStyle) {
-        AppThemeStyle.Classic -> if (dark) ClassicDarkColors else ClassicLightColors
-        AppThemeStyle.MiuiX -> if (dark) MiuixDarkColors else MiuixLightColors
+    val (colors, miuixColors) = remember(themeStyle, dark, customSeedColor) {
+        if (customSeedColor != null) {
+            val seed = Color(customSeedColor)
+            when (themeStyle) {
+                AppThemeStyle.Classic -> {
+                    val m3Scheme = ThemeColorGenerator.generateMaterialScheme(seed, dark)
+                    val baseMiuix = if (dark) top.yukonga.miuix.kmp.theme.darkColorScheme() else top.yukonga.miuix.kmp.theme.lightColorScheme()
+                    val mColors = baseMiuix.copy(
+                        primary = m3Scheme.primary,
+                        onPrimary = m3Scheme.onPrimary,
+                        primaryContainer = m3Scheme.primaryContainer,
+                        onPrimaryContainer = m3Scheme.onPrimaryContainer,
+                        surface = m3Scheme.surface,
+                        onSurface = m3Scheme.onSurface,
+                        background = m3Scheme.background,
+                        onBackground = m3Scheme.onBackground,
+                        dividerLine = m3Scheme.outlineVariant,
+                    )
+                    Pair(m3Scheme, mColors)
+                }
+                AppThemeStyle.MiuiX -> {
+                    ThemeColorGenerator.generateMiuixScheme(seed, dark)
+                }
+            }
+        } else {
+            val m3Scheme = when (themeStyle) {
+                AppThemeStyle.Classic -> if (dark) ClassicDarkColors else ClassicLightColors
+                AppThemeStyle.MiuiX -> if (dark) MiuixDarkColors else MiuixLightColors
+            }
+            val mColors = if (dark) top.yukonga.miuix.kmp.theme.darkColorScheme()
+                          else top.yukonga.miuix.kmp.theme.lightColorScheme()
+            Pair(m3Scheme, mColors)
+        }
     }
     val currentFontFamily = if (themeStyle == AppThemeStyle.MiuiX) MiSansFontFamily else GoogleSansFontFamily
     val miuixTextStyles = remember(currentFontFamily) { buildMiuixTextStyles(currentFontFamily) }
@@ -306,6 +338,7 @@ fun ShijuanTheme(
     }
     CompositionLocalProvider(
         LocalAppThemeStyle provides themeStyle,
+        LocalAppThemeSeedColor provides (customSeedColor?.let { Color(it) }),
         androidx.compose.material3.LocalTextStyle provides androidx.compose.material3.LocalTextStyle.current.copy(fontFamily = currentFontFamily),
     ) {
         MaterialTheme(
@@ -317,8 +350,7 @@ fun ShijuanTheme(
             // so remembered navigation and screen state are not discarded.
             val materialIndication = androidx.compose.foundation.LocalIndication.current
             top.yukonga.miuix.kmp.theme.MiuixTheme(
-                colors = if (dark) top.yukonga.miuix.kmp.theme.darkColorScheme()
-                else top.yukonga.miuix.kmp.theme.lightColorScheme(),
+                colors = miuixColors,
                 textStyles = miuixTextStyles,
             ) {
                 CompositionLocalProvider(

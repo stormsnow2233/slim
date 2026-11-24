@@ -53,12 +53,13 @@ class MainActivity : ComponentActivity() {
         setContent {
             val style = store.currentThemeStyle
             val mode = store.currentThemeMode
+            val customSeedColor = store.customThemeSeedColor
             val dark = when (mode) {
                 1 -> false
                 2 -> true
                 else -> isSystemInDarkTheme()
             }
-            ShijuanTheme(style = style, dark = dark) {
+            ShijuanTheme(style = style, dark = dark, customSeedColor = customSeedColor) {
                 Surface(color = MaterialTheme.colorScheme.background) {
                     ShijuanApp(store)
                 }
