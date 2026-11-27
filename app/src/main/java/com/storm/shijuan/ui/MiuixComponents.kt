@@ -231,13 +231,25 @@ fun MiuixSwitch(
 
 /**
  * MiuiX / CZeroX 标志性圆角分组卡片容器
+ * 支持方案三 Shu Ding 物理透镜折射液态玻璃 (Liquid Glass) 全局响应
  */
 @Composable
 fun MiuixCardGroup(
     modifier: Modifier = Modifier,
     content: @Composable ColumnScope.() -> Unit
 ) {
-    if (LocalAppThemeStyle.current == AppThemeStyle.MiuiX) {
+    val isLiquidGlass = LocalLiquidGlassEnabled.current
+    if (isLiquidGlass) {
+        LiquidGlassCard(
+            modifier = modifier.fillMaxWidth(),
+            shape = RoundedCornerShape(16.dp),
+        ) {
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                content = content
+            )
+        }
+    } else if (LocalAppThemeStyle.current == AppThemeStyle.MiuiX) {
         MiuixOfficialCard(
             modifier = modifier.fillMaxWidth(),
             cornerRadius = 16.dp,

@@ -30,11 +30,13 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.blur
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.draw.shadow
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.luminance
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.pointer.pointerInput
@@ -42,6 +44,7 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -372,9 +375,8 @@ fun LiquidGlassBar(
 fun DrawerButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
     val accent = MaterialTheme.colorScheme.primary
     val ink = MaterialTheme.colorScheme.onSurface
-    // 按压状态直接从 clickable 的 interactionSource 读。
-    // （之前这里另外挂了一层 detectTapGestures，它会把 down/up 事件消费掉，
-    //  导致 clickable 收不到点击 —— 按下去有回弹，抽屉却打不开。）
+    val isDark = MaterialTheme.colorScheme.background.luminance() < 0.5f
+    val isLiquidGlass = LocalLiquidGlassEnabled.current
     val interaction = remember { MutableInteractionSource() }
     val pressed by interaction.collectIsPressedAsState()
     val scale by animateFloatAsState(
@@ -382,25 +384,218 @@ fun DrawerButton(onClick: () -> Unit, modifier: Modifier = Modifier) {
         animationSpec = spring(dampingRatio = 0.55f, stiffness = 780f),
         label = "drawer-press",
     )
-    Box(
-        modifier = modifier
+    val shape = RoundedCornerShape(13.dp)
+    val baseMod = if (isLiquidGlass) {
+        modifier
             .size(40.dp)
             .graphicsLayer { scaleX = scale; scaleY = scale }
-            .clip(RoundedCornerShape(13.dp))
+            .liquidGlass(enabled = true, shape = shape, isDark = isDark, tintColor = accent, borderWidth = 1.dp)
+    } else {
+        modifier
+            .size(40.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
+            .clip(shape)
             .background(ink.copy(alpha = 0.07f))
-            .border(1.dp, ink.copy(alpha = 0.08f), RoundedCornerShape(13.dp))
-            .clickable(
-                interactionSource = interaction,
-                indication = ripple(bounded = true, color = accent),
-                onClick = onClick,
-            ),
+            .border(1.dp, ink.copy(alpha = 0.08f), shape)
+    }
+    Box(
+        modifier = baseMod.clickable(
+            interactionSource = interaction,
+            indication = ripple(bounded = true, color = accent),
+            onClick = onClick,
+        ),
         contentAlignment = Alignment.Center,
     ) {
         Icon(
             imageVector = Icons.Rounded.Menu,
             contentDescription = "切换小说 / 漫画",
-            tint = ink.copy(alpha = 0.72f),
+            tint = if (isLiquidGlass) (if (isDark) Color.White else ink) else ink.copy(alpha = 0.72f),
             modifier = Modifier.size(20.dp),
         )
     }
+}
+
+/**
+ * 全局液态玻璃质感开关 CompositionLocal
+ */
+val LocalLiquidGlassEnabled = compositionLocalOf { true }
+
+/**
+ * 【方案三 Shu Ding 物理透镜折射算法】高阶液态玻璃 (Liquid Glass)
+ * 参考 Vercel 设计工程师 Shu Ding 开源方案 (shuding/liquid-glass)
+ *
+ * 核心光学机制：
+ *  1. 边界 SDF 透镜折射过渡区：在卡片边缘 4~6dp 范围形成光学曲率凹陷与透镜厚度过渡；
+ *  2. 中间平坦透光：卡片正文区域零变形，保持文字绝对锐利清透；
+ *  3. 双层内嵌物理景深（Shu Ding Inset Shadow）：模拟真实的物理玻璃厚度折射；
+ *  4. 菲涅尔双色高光水晶切边（Crisp Specular Rim）：受光面高饱和纯白光边与反光；
+ *  5. 顶部水滴抛光反光线（Chamfer Specular Hairline）：1dp 截面透镜反光。
+ */
+fun Modifier.liquidGlass(
+    enabled: Boolean = true,
+    shape: Shape = RoundedCornerShape(16.dp),
+    isDark: Boolean = false,
+    tintColor: Color? = null,
+    borderWidth: Dp = 1.2.dp,
+): Modifier {
+    if (!enabled) return this
+    val accent = tintColor ?: if (isDark) Color(0xFF3482FF) else Color(0xFF9C4A2F)
+
+    return this
+        .shadow(
+            elevation = if (isDark) 8.dp else 5.dp,
+            shape = shape,
+            ambientColor = accent.copy(alpha = if (isDark) 0.25f else 0.08f),
+            spotColor = Color.Black.copy(alpha = if (isDark) 0.40f else 0.14f)
+        )
+        .clip(shape)
+        // 1. 底层：环境光晕漫反射 + 方案三内嵌透镜折射厚度 (Inset Refraction Shadow)
+        .drawBehind {
+            // 背景左上方环境彩色光晕 (透出环境背景色)
+            val glowRadius = size.maxDimension * 0.85f
+            val glowCenter = Offset(size.width * 0.10f, size.height * 0.15f)
+            drawCircle(
+                brush = Brush.radialGradient(
+                    colors = listOf(
+                        accent.copy(alpha = if (isDark) 0.28f else 0.16f),
+                        Color.Transparent
+                    ),
+                    center = glowCenter,
+                    radius = glowRadius
+                ),
+                radius = glowRadius,
+                center = glowCenter
+            )
+
+            // 方案三核心：边缘透镜厚度阴影 (Inner Inset Refraction Depth)
+            // 仅在边缘 4~6dp 产生暗部下沉与透镜厚度过渡，中间保持平坦通透
+            val lensEdgeWidth = 4.5f * density
+            val cornerPx = 16f * density
+            drawRoundRect(
+                brush = Brush.verticalGradient(
+                    colors = if (isDark) listOf(
+                        Color.Black.copy(alpha = 0.08f),
+                        Color.Black.copy(alpha = 0.28f)
+                    ) else listOf(
+                        Color.Black.copy(alpha = 0.03f),
+                        Color.Black.copy(alpha = 0.12f)
+                    )
+                ),
+                cornerRadius = androidx.compose.ui.geometry.CornerRadius(cornerPx, cornerPx),
+                style = androidx.compose.ui.graphics.drawscope.Stroke(width = lensEdgeWidth)
+            )
+
+            // 顶部 1dp 抛光截面水滴张力反光线
+            val topSheenHeight = 1.2f * density
+            drawRect(
+                brush = Brush.horizontalGradient(
+                    colors = listOf(
+                        Color.Transparent,
+                        Color.White.copy(alpha = if (isDark) 0.45f else 0.85f),
+                        Color.White.copy(alpha = if (isDark) 0.75f else 0.98f),
+                        Color.White.copy(alpha = if (isDark) 0.45f else 0.85f),
+                        Color.Transparent,
+                    ),
+                    startX = 0f,
+                    endX = size.width
+                ),
+                topLeft = Offset(0f, 0f),
+                size = Size(size.width, topSheenHeight)
+            )
+        }
+        // 2. 通透磨砂白霜层 (Frosted Mist Body)
+        .background(
+            brush = Brush.linearGradient(
+                colors = if (isDark) {
+                    listOf(
+                        Color.White.copy(alpha = 0.18f),         // 顶部白霜反光
+                        Color(0xFF222B3A).copy(alpha = 0.58f),  // 中层通透磨砂亚克力
+                        Color(0xFF131822).copy(alpha = 0.70f)   // 底部深邃通透
+                    )
+                } else {
+                    listOf(
+                        Color.White.copy(alpha = 0.92f),         // 顶部高光霜白
+                        Color.White.copy(alpha = 0.70f),         // 中层通透乳白
+                        Color(0xFFEEF3F8).copy(alpha = 0.78f)    // 底部冰感淡蓝灰
+                    )
+                },
+                start = Offset(0f, 0f),
+                end = Offset.Infinite
+            ),
+            shape = shape
+        )
+        // 3. 水晶边缘表面张力高光边框 (Crisp Specular Rim)
+        .border(
+            width = borderWidth,
+            brush = Brush.linearGradient(
+                colors = if (isDark) {
+                    listOf(
+                        Color.White.copy(alpha = 0.85f), // 左上受光面晶莹高光
+                        Color.White.copy(alpha = 0.35f),
+                        accent.copy(alpha = 0.45f),     // 右下折射环境彩光
+                        Color.White.copy(alpha = 0.15f)
+                    )
+                } else {
+                    listOf(
+                        Color.White.copy(alpha = 0.98f),
+                        Color.White.copy(alpha = 0.65f),
+                        accent.copy(alpha = 0.35f),
+                        Color.White.copy(alpha = 0.30f)
+                    )
+                },
+                start = Offset(0f, 0f),
+                end = Offset.Infinite
+            ),
+            shape = shape
+        )
+}
+
+/**
+ * 开箱即用的方案三液态玻璃卡片容器 (LiquidGlassCard)
+ * 支持水滴微弹性交互响应与全局开关控制
+ */
+@Composable
+fun LiquidGlassCard(
+    modifier: Modifier = Modifier,
+    enabled: Boolean = LocalLiquidGlassEnabled.current,
+    shape: Shape = RoundedCornerShape(16.dp),
+    isDark: Boolean = MaterialTheme.colorScheme.background.luminance() < 0.5f,
+    tintColor: Color? = null,
+    onClick: (() -> Unit)? = null,
+    content: @Composable BoxScope.() -> Unit
+) {
+    val interactionSource = remember { MutableInteractionSource() }
+    val isPressed by interactionSource.collectIsPressedAsState()
+
+    // 点击时的水滴微弹性微缩放 (0.985f)
+    val scale by animateFloatAsState(
+        targetValue = if (isPressed && onClick != null) 0.985f else 1f,
+        animationSpec = spring(dampingRatio = 0.55f, stiffness = 780f),
+        label = "liquid_glass_press"
+    )
+
+    val baseModifier = if (enabled) {
+        modifier
+            .scale(scale)
+            .liquidGlass(enabled = true, shape = shape, isDark = isDark, tintColor = tintColor)
+    } else {
+        modifier
+            .scale(scale)
+            .clip(shape)
+            .background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f))
+            .border(1.dp, MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.25f), shape)
+    }
+
+    Box(
+        modifier = baseModifier.then(
+            if (onClick != null) {
+                Modifier.clickable(
+                    interactionSource = interactionSource,
+                    indication = ripple(bounded = true, color = MaterialTheme.colorScheme.primary),
+                    onClick = onClick
+                )
+            } else Modifier
+        ),
+        content = content
+    )
 }

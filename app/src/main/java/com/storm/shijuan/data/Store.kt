@@ -830,6 +830,17 @@ class Store(val context: Context) {
         }
     }
 
+    // ── 液态玻璃质感 (Liquid Glass · 方案三透镜折射算法) 全局开关 ──
+    var isLiquidGlassEnabled: Boolean by mutableStateOf(
+        sp.getBoolean("liquid_glass_enabled", true)
+    )
+        private set
+
+    fun saveLiquidGlassEnabled(enabled: Boolean) {
+        isLiquidGlassEnabled = enabled
+        sp.edit().putBoolean("liquid_glass_enabled", enabled).apply()
+    }
+
     /** 清除离线缓存；保留书架、阅读进度、搜索历史和应用设置。 */
     fun clearAll() {
         clearNovelCaches()

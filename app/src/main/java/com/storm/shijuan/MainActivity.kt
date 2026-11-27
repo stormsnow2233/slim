@@ -59,7 +59,8 @@ class MainActivity : ComponentActivity() {
                 2 -> true
                 else -> isSystemInDarkTheme()
             }
-            ShijuanTheme(style = style, dark = dark, customSeedColor = customSeedColor) {
+            val isLiquidGlass = store.isLiquidGlassEnabled
+            ShijuanTheme(style = style, dark = dark, customSeedColor = customSeedColor, isLiquidGlass = isLiquidGlass) {
                 Surface(color = MaterialTheme.colorScheme.background) {
                     ShijuanApp(store)
                 }

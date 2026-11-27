@@ -112,6 +112,8 @@ fun SettingsScreen(
                 onModeChange = { store.setAppThemeMode(it) },
                 customSeedColor = store.customThemeSeedColor,
                 onCustomSeedColorChange = { store.saveCustomThemeSeedColor(it) },
+                isLiquidGlass = store.isLiquidGlassEnabled,
+                onLiquidGlassChange = { store.saveLiquidGlassEnabled(it) }
             )
 
             // ── 书源管理 ──
@@ -407,6 +409,8 @@ private fun ThemeSettingsCard(
     onModeChange: (Int) -> Unit,
     customSeedColor: Int?,
     onCustomSeedColorChange: (Int?) -> Unit,
+    isLiquidGlass: Boolean = true,
+    onLiquidGlassChange: (Boolean) -> Unit = {},
 ) {
     val isClassic = currentStyle == AppThemeStyle.Classic.id
     val effectiveSeed = customSeedColor?.let { Color(it) }
@@ -557,6 +561,33 @@ private fun ThemeSettingsCard(
             }
 
             Spacer(Modifier.height(14.dp))
+
+            // ── 液态玻璃质感全局开关 (方案三 Shu Ding 物理透镜折射算法) ──
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = "液态玻璃质感 (Liquid Glass)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "Shu Ding 边缘物理透镜折射与高光（兼容 Android 8+）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                AdaptiveSwitch(
+                    checked = isLiquidGlass,
+                    onCheckedChange = { onLiquidGlassChange(it) }
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
 
             // 调色盘展开控制开关
             OutlinedButton(

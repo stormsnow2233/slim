@@ -177,7 +177,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                 .padding(horizontal = 16.dp)
         ) {
             // ── 自定义代理卡片 ──
-            Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+            LiquidGlassCard(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -377,7 +377,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
             // ── 自定义 JM 镜像源（仅在开启 JM 源时展示） ──
             if (store.isJmEnabled()) {
                 Spacer(Modifier.height(12.dp))
-                Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+                LiquidGlassCard(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(16.dp)) {
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Column(Modifier.weight(1f)) {
@@ -463,7 +463,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
             Spacer(Modifier.height(12.dp))
 
             // ── 连通性体检 ──
-            Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+            LiquidGlassCard(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {

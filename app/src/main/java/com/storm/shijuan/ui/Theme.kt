@@ -279,6 +279,7 @@ fun ShijuanTheme(
     style: Int = 0,
     dark: Boolean = isSystemInDarkTheme(),
     customSeedColor: Int? = null,
+    isLiquidGlass: Boolean = true,
     content: @Composable () -> Unit
 ) {
     val themeStyle = AppThemeStyle.fromId(style)
@@ -339,6 +340,7 @@ fun ShijuanTheme(
     CompositionLocalProvider(
         LocalAppThemeStyle provides themeStyle,
         LocalAppThemeSeedColor provides (customSeedColor?.let { Color(it) }),
+        LocalLiquidGlassEnabled provides isLiquidGlass,
         androidx.compose.material3.LocalTextStyle provides androidx.compose.material3.LocalTextStyle.current.copy(fontFamily = currentFontFamily),
     ) {
         MaterialTheme(
