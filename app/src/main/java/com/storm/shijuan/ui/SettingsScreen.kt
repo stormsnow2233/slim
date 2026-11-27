@@ -63,39 +63,44 @@ fun SettingsScreen(
     var jmClickCount by remember { mutableIntStateOf(0) }
     var jmLastClickTime by remember { mutableLongStateOf(0L) }
     val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
+    val isLiquidGlass = LocalLiquidGlassEnabled.current
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            if (isMiuix) {
-                top.yukonga.miuix.kmp.basic.SmallTopAppBar(
-                    title = "设置",
-                    color = MaterialTheme.colorScheme.background,
+    LiquidGlassAtmosphere(
+        modifier = Modifier.fillMaxSize(),
+        enabled = isLiquidGlass,
+    ) {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                if (isMiuix) {
+                    top.yukonga.miuix.kmp.basic.SmallTopAppBar(
+                        title = "设置",
+                        color = Color.Transparent,
+                        navigationIcon = {
+                            IconButton(onClick = onBack) {
+                                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                            }
+                        },
+                    )
+                } else TopAppBar(
+                    title = {
+                        Text(
+                            "设置",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleLarge,
+                        )
+                    },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
                         }
                     },
-                )
-            } else TopAppBar(
-                title = {
-                    Text(
-                        "设置",
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleLarge,
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
                     )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
                 )
-            )
-        }
-    ) { innerPadding ->
+            }
+        ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -399,6 +404,7 @@ fun SettingsScreen(
             Spacer(Modifier.height(32.dp))
         }
     }
+}
 }
 
 @Composable

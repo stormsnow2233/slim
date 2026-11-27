@@ -80,6 +80,7 @@ fun ShelfScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
+    val isLiquidGlass = LocalLiquidGlassEnabled.current
 
     var pendingUri by remember { mutableStateOf<Uri?>(null) }
     var pendingDetection by remember { mutableStateOf<DetectionResult?>(null) }
@@ -174,7 +175,11 @@ fun ShelfScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 8.dp, bottom = 8.dp)
-                            .then(if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)).padding(horizontal = 14.dp, vertical = 10.dp) else Modifier),
+                            .then(
+                                if (isLiquidGlass) Modifier.liquidGlass(enabled = true, shape = RoundedCornerShape(16.dp), elevation = 6.dp).padding(horizontal = 14.dp, vertical = 10.dp)
+                                else if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)).padding(horizontal = 14.dp, vertical = 10.dp)
+                                else Modifier
+                            ),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
@@ -266,12 +271,12 @@ fun ShelfScreen(
                 // 小说书架书籍
                 if (shelf.isEmpty()) {
                     item(key = "novel_empty") {
-                        Surface(
+                        LiquidGlassCard(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp),
                             shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                            enabled = isLiquidGlass,
                         ) {
                             Column(
                                 modifier = Modifier.padding(16.dp),
@@ -301,7 +306,11 @@ fun ShelfScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 6.dp)
-                                .then(if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)).padding(10.dp) else Modifier),
+                                .then(
+                                    if (isLiquidGlass) Modifier.liquidGlass(enabled = true, shape = RoundedCornerShape(16.dp), elevation = 6.dp).padding(10.dp)
+                                    else if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)).padding(10.dp)
+                                    else Modifier
+                                ),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             for (item in chunk) {
@@ -380,7 +389,11 @@ fun ShelfScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(bottom = 8.dp)
-                            .then(if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)).padding(horizontal = 14.dp, vertical = 10.dp) else Modifier),
+                            .then(
+                                if (isLiquidGlass) Modifier.liquidGlass(enabled = true, shape = RoundedCornerShape(16.dp), elevation = 6.dp).padding(horizontal = 14.dp, vertical = 10.dp)
+                                else if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)).padding(horizontal = 14.dp, vertical = 10.dp)
+                                else Modifier
+                            ),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
@@ -469,12 +482,12 @@ fun ShelfScreen(
                 // 漫画书架书籍
                 if (cleanComicShelf.isEmpty()) {
                     item(key = "comic_empty") {
-                        Surface(
+                        LiquidGlassCard(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp),
                             shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                            enabled = isLiquidGlass,
                         ) {
                             Column(
                                 modifier = Modifier.padding(16.dp),
@@ -504,7 +517,11 @@ fun ShelfScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 6.dp)
-                                .then(if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)).padding(10.dp) else Modifier),
+                                .then(
+                                    if (isLiquidGlass) Modifier.liquidGlass(enabled = true, shape = RoundedCornerShape(16.dp), elevation = 6.dp).padding(10.dp)
+                                    else if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)).padding(10.dp)
+                                    else Modifier
+                                ),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             for (c in chunk) {

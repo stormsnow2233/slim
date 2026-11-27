@@ -31,6 +31,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.unit.dp
@@ -61,7 +62,7 @@ class MainActivity : ComponentActivity() {
             }
             val isLiquidGlass = store.isLiquidGlassEnabled
             ShijuanTheme(style = style, dark = dark, customSeedColor = customSeedColor, isLiquidGlass = isLiquidGlass) {
-                Surface(color = MaterialTheme.colorScheme.background) {
+                LiquidGlassAtmosphere(modifier = Modifier.fillMaxSize(), enabled = isLiquidGlass) {
                     ShijuanApp(store)
                 }
             }
@@ -282,9 +283,10 @@ fun ShijuanApp(store: Store) {
             }
 
             Box(Modifier.weight(1f)) {
+                val isLiquidGlass = LocalLiquidGlassEnabled.current
                 AnimatedContent(
                     targetState = route,
-                    modifier = Modifier.fillMaxSize().background(MaterialTheme.colorScheme.background),
+                    modifier = Modifier.fillMaxSize().background(if (isLiquidGlass) Color.Transparent else MaterialTheme.colorScheme.background),
                     transitionSpec = {
                         val initialDepth = routeDepth(initialState)
                         val targetDepth = routeDepth(targetState)
