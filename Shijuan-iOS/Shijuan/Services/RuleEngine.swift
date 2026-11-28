@@ -22,8 +22,13 @@ struct RuleEngine {
         throw RuleEngineError.badBase
     }
 
-    private func request(_ url: URL) async throws -> String {
+    private func request(_ url: URL, method: String = "GET", body: Data? = nil) async throws -> String {
         var req = URLRequest(url: url)
+        req.httpMethod = method
+        if let body {
+            req.httpBody = body
+            req.setValue("application/x-www-form-urlencoded", forHTTPHeaderField: "Content-Type")
+        }
         req.timeoutInterval = timeout
         req.setValue(Self.userAgents[0], forHTTPHeaderField: "User-Agent")
         let (data, response) = try await URLSession.shared.data(for: req)
@@ -163,11 +168,16 @@ struct RuleEngine {
 
     func search(keyword: String) async throws -> [RemoteBook] {
         guard let rule = source.search, let base = try? baseURL() else { return [] }
+        let encodedKeyword = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword
         let templated = rule.url
-            .replacingOccurrences(of: "{key}", with: keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword)
+            .replacingOccurrences(of: "{key}", with: encodedKeyword)
             .replacingOccurrences(of: "{page}", with: "1")
         guard let url = resolve(templated, relativeTo: base) else { throw RuleEngineError.badURL }
-        let html = try await request(url)
+        let bodyTemplate = rule.body
+            .replacingOccurrences(of: "{key}", with: encodedKeyword)
+            .replacingOccurrences(of: "{page}", with: "1")
+        let body = rule.method == "POST" && !bodyTemplate.isEmpty ? Data(bodyTemplate.utf8) : nil
+        let html = try await request(url, method: rule.method, body: body)
         let dom = MiniHTML.parse(html)
         let rows = rule.list.isEmpty ? [dom] : dom.select(rule.list)
         var results: [RemoteBook] = []
@@ -195,6 +205,8 @@ struct RuleEngine {
             : Self.evaluate(expression: rule.title, on: dom, base: base)
         let author = rule.author.isEmpty ? "" : Self.evaluate(expression: rule.author, on: dom, base: base)
         let intro = rule.intro.isEmpty ? "" : Self.evaluate(expression: rule.intro, on: dom, base: base)
+        let coverRaw = rule.cover.isEmpty ? "" : Self.evaluate(expression: rule.cover, on: dom, base: base)
+        let coverURL = coverRaw.isEmpty ? nil : resolve(coverRaw, relativeTo: bookURL)
         // TOC may live on the same page or a separate one via toc rule.
         var chapters = try await toc(from: dom, base: base, pageURL: bookURL)
         if chapters.isEmpty, let tocURL = dom.first("a") {
@@ -204,7 +216,8 @@ struct RuleEngine {
         return RemoteDetail(title: title.isEmpty ? "未命名" : title,
                             author: author.isEmpty ? "未知作者" : author,
                             intro: intro,
-                            chapters: chapters)
+                            chapters: chapters,
+                            coverURL: coverURL)
     }
 
     private func toc(from dom: MiniHTMLNode, base: URL, pageURL: URL) async throws -> [ChapterSummary] {

@@ -220,13 +220,16 @@ final class AppState: ObservableObject {
 
     func addRemoteBook(_ remote: RemoteBook) {
         guard !books.contains(where: { $0.title == remote.title && $0.author == remote.author }) else { return }
-        books.insert(Book(title: remote.title, author: remote.author, sourceURL: remote.url, sourceName: remote.sourceName), at: 0)
+        books.insert(Book(title: remote.title, author: remote.author, sourceURL: remote.url,
+                          sourceName: remote.sourceName, coverURL: remote.coverURL, intro: remote.intro), at: 0)
     }
 
     func mergeRemoteDetail(bookID: UUID, detail: RemoteDetail) {
         guard let index = books.firstIndex(where: { $0.id == bookID }) else { return }
         books[index].title = detail.title
         books[index].author = detail.author
+        books[index].intro = detail.intro
+        books[index].coverURL = detail.coverURL
         books[index].chapters = detail.chapters.map { Chapter(id: $0.id, title: $0.title, url: $0.url, isCached: $0.isCached) }
     }
 
@@ -339,10 +342,6 @@ final class AppState: ObservableObject {
 
     func cacheRemaining(bookID: UUID) async {
         guard let book = books.first(where: { $0.id == bookID }) else { return }
-        for chapter in book.chapters where !chapter.isCached && !chapter.content.isEmpty {
-            if Task.isCancelled { return }
-            updateChapter(bookID: bookID, chapterID: chapter.id, cached: true)
-        }
         let pending = books.first(where: { $0.id == bookID })?.chapters.filter {
             !$0.isCached && $0.url != nil
         } ?? []
@@ -470,7 +469,8 @@ final class AppState: ObservableObject {
             guard !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw ImportError.empty }
             let title = url.deletingPathExtension().lastPathComponent
             let chapters = splitImportedText(text)
-            books.insert(Book(title: title, author: "本地导入", progress: 0, isDownloaded: true, chapters: chapters), at: 0)
+            books.insert(Book(title: title, author: "本地导入", progress: 0, isDownloaded: true,
+                              chapters: chapters, isImported: true), at: 0)
             return
         }
         if ext == "epub" {
@@ -479,12 +479,13 @@ final class AppState: ObservableObject {
                 Chapter(id: idx, title: "第\(idx + 1)节", content: body, isCached: true)
             }
             books.insert(Book(title: url.deletingPathExtension().lastPathComponent,
-                              author: "本地导入", progress: 0, isDownloaded: true, chapters: chapters), at: 0)
+                              author: "本地导入", progress: 0, isDownloaded: true,
+                              chapters: chapters, isImported: true), at: 0)
             return
         }
         guard ext == "txt" || ext == "text" || ext.isEmpty else { throw ImportError.invalidFormat }
         let data = try Data(contentsOf: url)
-        let text = String(data: data, encoding: .utf8) ?? String(decoding: data, as: UTF8.self)
+        let text = decodeImportedText(data)
         let title = url.deletingPathExtension().lastPathComponent
         let regex = try NSRegularExpression(pattern: "(?m)^\\s*((第[0-9一二三四五六七八九十百千万]+[章回节卷集幕篇部][^\\r\\n]{0,40})|(Chapter\\s*\\d+[^\\r\\n]{0,40})|(序章|楔子|尾声|后记|番外)[^\\r\\n]{0,40})\\s*$")
         let ns = text as NSString
@@ -508,7 +509,19 @@ final class AppState: ObservableObject {
             }
         }
         guard !chapters.isEmpty else { throw ImportError.empty }
-        books.insert(Book(title: title, author: "本地导入", progress: 0, isDownloaded: true, chapters: chapters), at: 0)
+        books.insert(Book(title: title, author: "本地导入", progress: 0, isDownloaded: true,
+                          chapters: chapters, isImported: true), at: 0)
+    }
+
+    private func decodeImportedText(_ data: Data) -> String {
+        if let utf8 = String(data: data, encoding: .utf8) { return utf8 }
+        let encoding = CFStringConvertEncodingToNSStringEncoding(
+            CFStringConvertIANACharSetNameToEncoding("GB18030" as CFString)
+        )
+        if let decoded = String(data: data, encoding: String.Encoding(rawValue: encoding)) {
+            return decoded
+        }
+        return String(decoding: data, as: UTF8.self)
     }
 
     private func splitImportedText(_ text: String) -> [Chapter] {

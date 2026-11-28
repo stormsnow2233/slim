@@ -1,0 +1,67 @@
+name: iOS Build
+
+on:
+  push:
+    branches:
+      - master
+      - main
+    paths:
+      - "Shijuan-iOS/**"
+      - ".github/workflows/ios-build.yml"
+  pull_request:
+    branches:
+      - master
+      - main
+    paths:
+      - "Shijuan-iOS/**"
+      - ".github/workflows/ios-build.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ios-build-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: Build unsigned iOS IPA
+    runs-on: macos-15
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Show Xcode version
+        run: xcodebuild -version
+
+      - name: Build app
+        working-directory: Shijuan-iOS
+        run: |
+          xcodebuild \
+            -project Shijuan.xcodeproj \
+            -scheme Shijuan \
+            -sdk iphoneos \
+            -configuration Release \
+            -destination 'generic/platform=iOS' \
+            -derivedDataPath "$RUNNER_TEMP/DerivedData" \
+            CODE_SIGNING_ALLOWED=NO \
+            CODE_SIGNING_REQUIRED=NO \
+            build
+
+      - name: Package unsigned IPA
+        run: |
+          APP_PATH="$RUNNER_TEMP/DerivedData/Build/Products/Release-iphoneos/Shijuan.app"
+          IPA_ROOT="$RUNNER_TEMP/ipa"
+          test -d "$APP_PATH"
+          mkdir -p "$IPA_ROOT/Payload"
+          ditto "$APP_PATH" "$IPA_ROOT/Payload/Shijuan.app"
+          (cd "$IPA_ROOT" && /usr/bin/zip -qry "$RUNNER_TEMP/Shijuan-unsigned.ipa" Payload)
+
+      - name: Upload IPA artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Shijuan-iOS-unsigned-IPA
+          path: ${{ runner.temp }}/Shijuan-unsigned.ipa
+          if-no-files-found: error
+          retention-days: 14

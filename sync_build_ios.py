@@ -1,7 +1,12 @@
 import os, paramiko
 from pathlib import Path
-host='192.168.127.133'; user='admin'; password='adm1n5'; local=Path('Shijuan-iOS'); remote='/Users/admin/Shijuan-iOS'
-c=paramiko.SSHClient(); c.set_missing_host_key_policy(paramiko.AutoAddPolicy()); c.connect(host,username=user,password=password,timeout=15)
+host=os.environ.get('SHIJUAN_MAC_HOST')
+user=os.environ.get('SHIJUAN_MAC_USER')
+password=os.environ.get('SHIJUAN_MAC_PASSWORD')
+if not host or not user:
+    raise SystemExit('Set SHIJUAN_MAC_HOST and SHIJUAN_MAC_USER; configure SSH keys or SHIJUAN_MAC_PASSWORD.')
+local=Path('Shijuan-iOS'); remote=os.environ.get('SHIJUAN_MAC_PROJECT',f'/Users/{user}/Shijuan-iOS')
+c=paramiko.SSHClient(); c.load_system_host_keys(); c.connect(host,username=user,password=password,timeout=15)
 s=c.open_sftp()
 for p in local.rglob('*'):
     if not p.is_file() or 'Shijuan-unsigned.ipa' in str(p): continue

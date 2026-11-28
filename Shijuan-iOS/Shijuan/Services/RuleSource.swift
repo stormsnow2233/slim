@@ -15,7 +15,7 @@ struct RuleSource: Codable, Identifiable, Hashable {
     var content: RuleContent?
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, base, baseURL, mirrors, enabled, search, detail, toc, content
+        case id, name, base, baseURL, baseUrl, mirrors, enabled, search, searchUrl, detail, toc, content
     }
 
     init(id: String, name: String, baseURL: String, mirrors: [String] = [], enabled: Bool = true,
@@ -29,10 +29,17 @@ struct RuleSource: Codable, Identifiable, Hashable {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         id = (try? c.decode(String.self, forKey: .id)) ?? UUID().uuidString
         name = (try? c.decode(String.self, forKey: .name)) ?? id
-        baseURL = (try? c.decode(String.self, forKey: .base)) ?? (try? c.decode(String.self, forKey: .baseURL)) ?? ""
+        baseURL = (try? c.decode(String.self, forKey: .base)) ?? (try? c.decode(String.self, forKey: .baseURL))
+            ?? (try? c.decode(String.self, forKey: .baseUrl)) ?? ""
         mirrors = (try? c.decode([String].self, forKey: .mirrors)) ?? []
         enabled = (try? c.decode(Bool.self, forKey: .enabled)) ?? true
-        search = try? c.decode(RuleSearch.self, forKey: .search)
+        if let object = try? c.decode(RuleSearch.self, forKey: .search) {
+            search = object
+        } else if let url = try? c.decode(String.self, forKey: .searchUrl) {
+            search = RuleSearch(url: url)
+        } else {
+            search = try? c.decode(RuleSearch.self, forKey: .searchUrl)
+        }
         detail = try? c.decode(RuleDetail.self, forKey: .detail)
         toc = try? c.decode(RuleToc.self, forKey: .toc)
         content = try? c.decode(RuleContent.self, forKey: .content)
@@ -62,19 +69,31 @@ struct RuleSource: Codable, Identifiable, Hashable {
 
 struct RuleSearch: Codable, Hashable {
     var url: String            // template with {key}
+    var method: String = "GET"
+    var body: String = ""
     var list: String = ""      // selector; empty = root
     var fields: [String: String] = [:]  // logical field -> expression
-    private enum CodingKeys: String, CodingKey { case url, list, selector, fields }
-    init(url: String, list: String = "", fields: [String: String] = [:]) { self.url = url; self.list = list; self.fields = fields }
+    private enum CodingKeys: String, CodingKey { case url, method, body, list, selector, fields }
+    init(url: String, list: String = "", fields: [String: String] = [:], method: String = "GET", body: String = "") {
+        self.url = url
+        self.method = method
+        self.body = body
+        self.list = list
+        self.fields = fields
+    }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         url = (try? c.decode(String.self, forKey: .url)) ?? ""
+        method = (try? c.decode(String.self, forKey: .method))?.uppercased() ?? "GET"
+        body = (try? c.decode(String.self, forKey: .body)) ?? ""
         list = (try? c.decode(String.self, forKey: .list)) ?? (try? c.decode(String.self, forKey: .selector)) ?? ""
         fields = (try? c.decode([String: String].self, forKey: .fields)) ?? [:]
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(url, forKey: .url)
+        try c.encode(method, forKey: .method)
+        try c.encode(body, forKey: .body)
         try c.encode(list, forKey: .list)
         try c.encode(fields, forKey: .fields)
     }
@@ -84,19 +103,27 @@ struct RuleDetail: Codable, Hashable {
     var title: String = ""
     var author: String = ""
     var intro: String = ""
-    private enum CodingKeys: String, CodingKey { case title, name, author, intro, description }
-    init(title: String = "", author: String = "", intro: String = "") { self.title = title; self.author = author; self.intro = intro }
+    var cover: String = ""
+    private enum CodingKeys: String, CodingKey { case title, name, author, intro, description, cover, coverURL }
+    init(title: String = "", author: String = "", intro: String = "", cover: String = "") {
+        self.title = title
+        self.author = author
+        self.intro = intro
+        self.cover = cover
+    }
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         title = (try? c.decode(String.self, forKey: .title)) ?? (try? c.decode(String.self, forKey: .name)) ?? ""
         author = (try? c.decode(String.self, forKey: .author)) ?? ""
         intro = (try? c.decode(String.self, forKey: .intro)) ?? (try? c.decode(String.self, forKey: .description)) ?? ""
+        cover = (try? c.decode(String.self, forKey: .cover)) ?? (try? c.decode(String.self, forKey: .coverURL)) ?? ""
     }
     func encode(to encoder: Encoder) throws {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(title, forKey: .title)
         try c.encode(author, forKey: .author)
         try c.encode(intro, forKey: .intro)
+        try c.encode(cover, forKey: .cover)
     }
 }
 

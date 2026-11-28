@@ -21,14 +21,16 @@ struct RemoteDetail: Codable {
     var author: String
     var intro: String
     var chapters: [ChapterSummary]
+    var coverURL: URL?
 
-    private enum CodingKeys: String, CodingKey { case title, name, author, intro, description, chapters, toc, data }
+    private enum CodingKeys: String, CodingKey { case title, name, author, intro, description, chapters, toc, data, cover, coverURL }
 
-    init(title: String, author: String, intro: String = "", chapters: [ChapterSummary] = []) {
+    init(title: String, author: String, intro: String = "", chapters: [ChapterSummary] = [], coverURL: URL? = nil) {
         self.title = title
         self.author = author
         self.intro = intro
         self.chapters = chapters
+        self.coverURL = coverURL
     }
 
     init(from decoder: Decoder) throws {
@@ -42,6 +44,8 @@ struct RemoteDetail: Codable {
         title = (try? c.decode(String.self, forKey: .title)) ?? (try? c.decode(String.self, forKey: .name)) ?? "未命名"
         author = (try? c.decode(String.self, forKey: .author)) ?? "未知作者"
         intro = (try? c.decode(String.self, forKey: .intro)) ?? (try? c.decode(String.self, forKey: .description)) ?? ""
+        let cover = (try? c.decode(String.self, forKey: .coverURL)) ?? (try? c.decode(String.self, forKey: .cover))
+        coverURL = cover.flatMap(URL.init(string:))
         chapters = (try? c.decode([ChapterSummary].self, forKey: .chapters))
             ?? (try? c.decode([ChapterSummary].self, forKey: .toc)) ?? []
     }
@@ -52,6 +56,7 @@ struct RemoteDetail: Codable {
         try c.encode(author, forKey: .author)
         try c.encode(intro, forKey: .intro)
         try c.encode(chapters, forKey: .chapters)
+        try c.encodeIfPresent(coverURL?.absoluteString, forKey: .coverURL)
     }
 }
 

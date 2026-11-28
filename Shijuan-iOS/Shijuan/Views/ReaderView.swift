@@ -32,6 +32,7 @@ struct ReaderView: View {
         .task(id: "\(bookID.uuidString)-\(chapterID)") {
             updateProgress()
             bodyText = state.chapterContent(bookID: bookID, chapterID: chapterID)
+            if bodyText.isEmpty { bodyText = chapter?.content ?? "" }
             if bodyText.isEmpty, chapter?.url != nil {
                 await state.loadChapterWithCloudflareRetry(bookID: bookID, chapterID: chapterID)
                 bodyText = state.chapterContent(bookID: bookID, chapterID: chapterID)
@@ -63,6 +64,7 @@ struct ReaderView: View {
         guard let book, let index = book.chapters.firstIndex(where: { $0.id == chapterID }), !book.chapters.isEmpty else { return }
         var updated = book
         updated.progress = Double(index + 1) / Double(book.chapters.count)
+        updated.currentChapterID = chapterID
         state.updateBook(updated)
     }
 }

@@ -9,8 +9,12 @@ struct Book: Identifiable, Hashable, Codable {
     var chapters: [Chapter] = []
     var sourceURL: URL? = nil
     var sourceName: String = ""
+    var coverURL: URL? = nil
+    var intro: String = ""
+    var isImported: Bool = false
+    var currentChapterID: Int? = nil
 
-    init(id: UUID = UUID(), title: String, author: String, progress: Double = 0, isDownloaded: Bool = false, chapters: [Chapter] = [], sourceURL: URL? = nil, sourceName: String = "") {
+    init(id: UUID = UUID(), title: String, author: String, progress: Double = 0, isDownloaded: Bool = false, chapters: [Chapter] = [], sourceURL: URL? = nil, sourceName: String = "", coverURL: URL? = nil, intro: String = "", isImported: Bool = false, currentChapterID: Int? = nil) {
         self.id = id
         self.title = title
         self.author = author
@@ -19,5 +23,9 @@ struct Book: Identifiable, Hashable, Codable {
         self.chapters = chapters
         self.sourceURL = sourceURL
         self.sourceName = sourceName
+        self.coverURL = coverURL
+        self.intro = intro
+        self.isImported = isImported
+        self.currentChapterID = currentChapterID
     }
 }
