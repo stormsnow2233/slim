@@ -100,6 +100,13 @@ private struct ShelfView: View {
                             }
                             .padding(.vertical, 6)
                         }
+                        .swipeActions {
+                            Button(role: .destructive) {
+                                state.deleteBook(book)
+                            } label: {
+                                Label("删除", systemImage: "trash")
+                            }
+                        }
                     }
                 }
             }
@@ -110,7 +117,10 @@ private struct ShelfView: View {
                     Menu {
                         ForEach(state.books) { book in
                             Button(book.title) {
-                                let text = book.chapters.map { "\($0.title)\n\($0.content)" }.joined(separator: "\n\n")
+                                let text = book.chapters.map { chapter in
+                                    let body = state.chapterContent(bookID: book.id, chapterID: chapter.id)
+                                    return "\(chapter.title)\n\(body)"
+                                }.joined(separator: "\n\n")
                                 exportDocument = TextExportDocument(text: text)
                                 showingExporter = true
                             }
@@ -280,8 +290,8 @@ private struct SettingsView: View {
                 }
                 Section("关于") {
                     LabeledContent("应用", value: "拾卷 iOS")
-                    LabeledContent("版本", value: "0.2.0 MVP")
-                    Text("当前版本支持 TXT 导入、书架持久化、章节阅读和本地缓存标记。")
+                    LabeledContent("版本", value: "0.2.0")
+                    Text("支持 TXT/PDF/EPUB 导入、规则书源、在线阅读、漫画和章节缓存。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }

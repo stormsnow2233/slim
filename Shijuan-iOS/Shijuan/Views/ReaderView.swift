@@ -29,14 +29,12 @@ struct ReaderView: View {
                 .padding()
         }
         .background(readerBackground.ignoresSafeArea())
-        .onAppear {
+        .task(id: "\(bookID.uuidString)-\(chapterID)") {
             updateProgress()
             bodyText = state.chapterContent(bookID: bookID, chapterID: chapterID)
             if bodyText.isEmpty, chapter?.url != nil {
-                Task {
-                    await state.loadChapter(bookID: bookID, chapterID: chapterID)
-                    bodyText = state.chapterContent(bookID: bookID, chapterID: chapterID)
-                }
+                await state.loadChapterWithCloudflareRetry(bookID: bookID, chapterID: chapterID)
+                bodyText = state.chapterContent(bookID: bookID, chapterID: chapterID)
             }
         }
         .navigationTitle(chapter?.title ?? "阅读")

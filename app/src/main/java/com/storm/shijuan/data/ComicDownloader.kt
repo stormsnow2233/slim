@@ -218,6 +218,19 @@ object ComicDownloader {
 
     fun isRunning(comic: Comic): Boolean = taskOf(comic)?.state == STATE_RUNNING
 
+    /** 按用户选择的章节创建一次缓存任务；这里的“分卷”是可勾选的章节集合，不改变源站目录。 */
+    fun startSelected(comic: Comic, chapters: List<ComicChapter>) {
+        if (chapters.isNotEmpty()) start(comic, chapters, force = true)
+    }
+
+    /** 只下载最新一话；已完成时返回 false。 */
+    fun startLatestIfMissing(comic: Comic, chapters: List<ComicChapter>): Boolean {
+        val latest = chapters.lastOrNull() ?: return false
+        if (isChapterComplete(comic, latest.index)) return false
+        start(comic, listOf(latest), force = true)
+        return true
+    }
+
     /** 本地已缓存的话数（用来在详情页标「已缓存」） */
     fun cachedChapters(comic: Comic): Set<Int> {
         val root = dirOf(comic)

@@ -22,6 +22,7 @@ import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.items
 import androidx.compose.foundation.lazy.grid.itemsIndexed
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardActions
@@ -179,12 +180,14 @@ fun ComicScreen(
     }
 
     // 搜索触发：用 searchToken 驱动（支持毫秒级流式响应，谁快谁先上）
+    val gridState = rememberLazyGridState()
     LaunchedEffect(searchToken) {
         val kw = query.trim()
         if (searchToken == 0) return@LaunchedEffect
         if (kw.isEmpty()) return@LaunchedEffect
         loading = true
         error = ""
+        gridState.scrollToItem(0)
         hits = emptyList()
         list = emptyList()
         fromRank = false
@@ -355,6 +358,7 @@ fun ComicScreen(
             contentPadding = PaddingValues(start = 16.dp, end = 16.dp, top = 6.dp, bottom = 28.dp),
             horizontalArrangement = Arrangement.spacedBy(12.dp),
             verticalArrangement = Arrangement.spacedBy(16.dp),
+            state = gridState,
             modifier = Modifier.fillMaxSize(),
         ) {
             if (records.isNotEmpty()) {
@@ -681,6 +685,9 @@ fun ComicDetailScreen(
     var offlineNote by remember(comic.url) { mutableStateOf("") }
     var tick by remember { mutableStateOf(0) }
     var shelfTick by remember { mutableStateOf(0) }
+    var cacheDialog by remember { mutableStateOf(false) }
+    var chapterPicker by remember { mutableStateOf(false) }
+    var selectedChapters by remember { mutableStateOf<Set<Int>>(emptySet()) }
     var orderAscending by remember(comic.url) { mutableStateOf(true) }
     val ctx = LocalContext.current
 
@@ -848,7 +855,7 @@ fun ComicDetailScreen(
                                         STATE_RUNNING -> ComicDownloader.pause(dlTask.key)
                                         STATE_PAUSED, STATE_ERROR -> ComicDownloader.resume(dlTask.key)
                                         STATE_DONE -> onRead(full, chapters, 0, 0)
-                                        else -> ComicDownloader.start(full, chapters)
+                                        else -> cacheDialog = true
                                     }
                                 },
                                 enabled = chapters.isNotEmpty() && !loading && Offline.isOnline(ctx),
@@ -928,6 +935,14 @@ fun ComicDetailScreen(
                         modifier = Modifier.padding(horizontal = 20.dp, vertical = 2.dp),
                     )
                 }
+            }
+            item {
+                if (cacheDialog) AlertDialog(onDismissRequest = { cacheDialog = false }, title = { Text("选择缓存方式") }, text = { Text("分卷下载可勾选章节，全卷下载全部章节，更新下载只下载最新一话。") }, confirmButton = { Column {
+                    TextButton(onClick = { cacheDialog = false; ComicDownloader.start(full, chapters) }) { Text("全卷下载") }
+                    TextButton(onClick = { cacheDialog = false; selectedChapters = emptySet(); chapterPicker = true }) { Text("分卷下载") }
+                    TextButton(onClick = { cacheDialog = false; if (!ComicDownloader.startLatestIfMissing(full, chapters)) android.widget.Toast.makeText(ctx, "最新一话已经缓存，没有更新", android.widget.Toast.LENGTH_SHORT).show() }) { Text("更新下载") }
+                } })
+                if (chapterPicker) AlertDialog(onDismissRequest = { chapterPicker = false }, title = { Text("选择章节") }, text = { LazyColumn(Modifier.heightIn(max = 480.dp)) { items(chapters) { ch -> Row(verticalAlignment = Alignment.CenterVertically, modifier = Modifier.fillMaxWidth().clickable { selectedChapters = if (ch.index in selectedChapters) selectedChapters - ch.index else selectedChapters + ch.index }) { Checkbox(ch.index in selectedChapters, { checked -> selectedChapters = if (checked) selectedChapters + ch.index else selectedChapters - ch.index }); Text(ch.name) } } } }, confirmButton = { TextButton(onClick = { chapterPicker = false; ComicDownloader.startSelected(full, chapters.filter { it.index in selectedChapters }) }) { Text("开始下载") } }, dismissButton = { TextButton(onClick = { chapterPicker = false }) { Text("取消") } })
             }
             if (error.isNotBlank()) {
                 item {
