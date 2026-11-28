@@ -75,6 +75,7 @@ enum class Section(val label: String, val desc: String, val icon: ImageVector) {
     Shelf("书架", "综合书架 · 本地导入 · 畅读", Icons.Rounded.CollectionsBookmark),
     Novel("小说", "多源搜索 · 极速聚合 · 18+ 源", Icons.Rounded.Book),
     Comic("漫画", "动漫屋 · 漫画人 · 极速聚合", Icons.Rounded.PhotoLibrary),
+    JM("JM源", "JMcomic 禁漫 · 单源独享", Icons.Rounded.AutoAwesome),
 }
 
 sealed class Route {
@@ -135,6 +136,7 @@ fun ShijuanApp(store: Store) {
     val comicSearchState = remember { ComicSearchState() }
     val shelf = remember(store.shelfTick) { store.shelf() }
     var enabled by remember { mutableStateOf(store.enabledSources()) }
+    var isJmEnabled by remember { mutableStateOf(store.isJmEnabled()) }
     val records = remember(store.shelfTick) { store.records() }
     val comicShelf = remember(store.comicTick) { store.comicShelf() }
     val comicRecords = remember(store.comicTick) { store.comicRecords() }
@@ -235,6 +237,7 @@ fun ShijuanApp(store: Store) {
         drawerContent = {
             SectionDrawer(
                 current = section,
+                showJm = isJmEnabled,
                 onPick = { s ->
                     section = s
                     route = Route.Main
@@ -356,6 +359,11 @@ fun ShijuanApp(store: Store) {
                                     onOpenCache = { route = Route.Cache() },
                                     state = comicSearchState,
                                 )
+                                Section.JM -> JmComicScreen(
+                                    store = store,
+                                    onOpen = { route = Route.ComicDetail(it) },
+                                    onOpenDrawer = openDrawer,
+                                )
                             }
                         }
 
@@ -386,6 +394,12 @@ fun ShijuanApp(store: Store) {
                             onOpenNetwork = { route = Route.Network(fromSettings = true) },
                             onOpenCache = { route = Route.Cache(fromSettings = true) },
                             onOpenSources = { route = Route.Sources(fromSettings = true) },
+                            jmEnabled = isJmEnabled,
+                            onJmEnabledChanged = { enabled ->
+                                store.setJmEnabled(enabled)
+                                isJmEnabled = enabled
+                                if (!enabled && section == Section.JM) section = Section.Shelf
+                            },
                             onShowUpdate = { activeUpdateInfo = it },
                         )
 
@@ -501,12 +515,13 @@ private fun OfflineBar(onRetry: () -> Unit) {
 @Composable
 private fun SectionDrawer(
     current: Section,
+    showJm: Boolean = false,
     onPick: (Section) -> Unit,
     onOpenCache: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
 ) {
     val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
-    val sections = Section.entries
+    val sections = if (showJm) Section.entries else Section.entries.filter { it != Section.JM }
     ModalDrawerSheet(
         drawerShape = RoundedCornerShape(topEnd = 26.dp, bottomEnd = 26.dp),
         modifier = Modifier.width(312.dp),

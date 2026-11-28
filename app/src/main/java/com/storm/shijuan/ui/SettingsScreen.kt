@@ -30,7 +30,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.semantics.LiveRegionMode
 import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.liveRegion
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
@@ -44,6 +46,7 @@ import com.storm.shijuan.data.Net
 import com.storm.shijuan.data.ReleaseInfo
 import com.storm.shijuan.data.Store
 import com.storm.shijuan.data.UpdateManager
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.io.File
 import kotlin.math.roundToInt
@@ -56,6 +59,8 @@ fun SettingsScreen(
     onOpenNetwork: () -> Unit,
     onOpenCache: () -> Unit,
     onOpenSources: () -> Unit,
+    jmEnabled: Boolean,
+    onJmEnabledChanged: (Boolean) -> Unit,
     onShowUpdate: (ReleaseInfo) -> Unit,
 ) {
     val ctx = LocalContext.current
@@ -64,9 +69,11 @@ fun SettingsScreen(
     var autoCheck by remember { mutableStateOf(store.autoCheckUpdate()) }
     var comicMode by remember { mutableStateOf(store.comicMode()) }
     var comicZoom by remember { mutableStateOf(store.comicZoom()) }
-
     var checking by remember { mutableStateOf(false) }
     var checkStatusText by remember { mutableStateOf("") }
+    var jmClickCount by remember { mutableIntStateOf(0) }
+    var jmLastClickTime by remember { mutableLongStateOf(0L) }
+    var jmUnlockMessage by remember { mutableStateOf<String?>(null) }
 
     val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
     val isLiquidGlass = LocalLiquidGlassEnabled.current
@@ -77,6 +84,24 @@ fun SettingsScreen(
     ) {
         Scaffold(
             containerColor = Color.Transparent,
+            snackbarHost = {
+                jmUnlockMessage?.let { message ->
+                    LaunchedEffect(message) {
+                        delay(2_000L)
+                        if (jmUnlockMessage == message) jmUnlockMessage = null
+                    }
+                    Text(
+                        text = message,
+                        modifier = Modifier
+                            .padding(start = 16.dp, end = 16.dp, bottom = 24.dp)
+                            .background(MaterialTheme.colorScheme.inverseSurface, CircleShape)
+                            .padding(horizontal = 16.dp, vertical = 10.dp)
+                            .semantics { liveRegion = LiveRegionMode.Polite },
+                        color = MaterialTheme.colorScheme.inverseOnSurface,
+                        style = MaterialTheme.typography.bodyMedium,
+                    )
+                }
+            },
             topBar = {
                 if (isMiuix) {
                     top.yukonga.miuix.kmp.basic.SmallTopAppBar(
@@ -137,6 +162,19 @@ fun SettingsScreen(
                     icon = Icons.Rounded.Layers,
                     onClick = onOpenSources,
                 )
+                if (jmEnabled) {
+                    MiuixDivider(hasIcon = true)
+                    MiuixSwitchPreference(
+                        title = "JM源",
+                        subtitle = "关闭后隐藏侧边栏入口和此开关",
+                        icon = Icons.Rounded.AutoAwesome,
+                        checked = jmEnabled,
+                        onCheckedChange = { enabled ->
+                            jmUnlockMessage = null
+                            onJmEnabledChanged(enabled)
+                        },
+                    )
+                }
             }
 
             // ── 小说阅读偏好 ──
@@ -319,6 +357,17 @@ fun SettingsScreen(
                     },
                     icon = Icons.Rounded.Update,
                     onClick = {
+                        if (!jmEnabled) {
+                            val now = System.currentTimeMillis()
+                            jmClickCount = if (now - jmLastClickTime <= 1800L) jmClickCount + 1 else 1
+                            jmLastClickTime = now
+                            if (jmClickCount >= 10) {
+                                jmClickCount = 0
+                                onJmEnabledChanged(true)
+                                Toast.makeText(ctx, "JM 源已解锁", Toast.LENGTH_SHORT).show()
+                                return@MiuixPreferenceItem
+                            }
+                        }
                         if (checking) return@MiuixPreferenceItem
                         checking = true
                         checkStatusText = "正在检查更新…"
@@ -355,6 +404,21 @@ fun SettingsScreen(
                     title = "拾卷 Shijuan",
                     subtitle = "纯原生轻小说与漫画阅读器，找书快，排版舒服，完全开源无广告。",
                     icon = Icons.Rounded.AutoStories,
+                    onClick = {
+                        if (jmEnabled) return@MiuixPreferenceItem
+                        val now = System.currentTimeMillis()
+                        jmClickCount = if (now - jmLastClickTime < 2500L) jmClickCount + 1 else 1
+                        jmLastClickTime = now
+                        jmUnlockMessage = when {
+                            jmClickCount >= 10 -> {
+                                jmClickCount = 0
+                                onJmEnabledChanged(true)
+                                "JM入口已开启"
+                            }
+                            jmClickCount >= 5 -> "再点 ${10 - jmClickCount} 次开启神秘入口"
+                            else -> null
+                        }
+                    },
                 )
                 MiuixDivider(hasIcon = true)
                 MiuixPreferenceItem(

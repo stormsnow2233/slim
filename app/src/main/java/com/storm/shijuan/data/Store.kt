@@ -740,6 +740,13 @@ class Store(val context: Context) {
 
     fun loadSourceMetrics(): String? = sp.getString("source_health_metrics_v2", null)
 
+    // ── JM 入口启用控制（彩蛋解锁） ──
+    fun isJmEnabled(): Boolean = sp.getBoolean("jm_enabled", false)
+
+    fun setJmEnabled(enabled: Boolean) {
+        sp.edit().putBoolean("jm_enabled", enabled).apply()
+    }
+
     // ── 轻小说文库自定义反代 / Worker / CDN ──
     fun wenku8ProxyUrl(): String {
         val value = sp.getString("wenku8_proxy_url", null)?.trim().orEmpty()
