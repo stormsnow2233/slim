@@ -201,6 +201,7 @@ enum ComicCatalog {
     private static func decrypt(_ base64: String) -> String? {
         guard let input = Data(base64Encoded: base64, options: .ignoreUnknownCharacters), !input.isEmpty else { return nil }
         var output = Data(count: input.count + kCCBlockSizeAES128)
+        let outputCapacity = output.count
         var moved = 0
         let options = CCOptions(kCCOptionPKCS7Padding | kCCOptionECBMode)
         let status = key.withUnsafeBytes { keyBytes in
@@ -209,7 +210,7 @@ enum ComicCatalog {
                     CCCrypt(CCOperation(kCCDecrypt), CCAlgorithm(kCCAlgorithmAES), options,
                             keyBytes.baseAddress, key.count, nil,
                             inputBytes.baseAddress, input.count,
-                            outputBytes.baseAddress, output.count, &moved)
+                            outputBytes.baseAddress, outputCapacity, &moved)
                 }
             }
         }
