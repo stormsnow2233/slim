@@ -276,13 +276,6 @@ class Store(val context: Context) {
         return list
     }
 
-    // Keep the existing preference key so upgrades retain the user's catalog visibility choice.
-    fun isComicCatalogEnabled(): Boolean = sp.getBoolean("jm_enabled", true)
-
-    fun setComicCatalogEnabled(enabled: Boolean) {
-        sp.edit().putBoolean("jm_enabled", enabled).apply()
-    }
-
     // ── 漫画热门榜单本地缓存（秒开） ──
     fun cachedComicHits(): List<ComicHit> {
         val s = sp.getString("comic_hot_hits_v2", null) ?: sp.getString("comic_hot_hits_v1", null) ?: return emptyList()

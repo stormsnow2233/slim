@@ -57,7 +57,6 @@ fun SettingsScreen(
     onOpenCache: () -> Unit,
     onOpenSources: () -> Unit,
     onShowUpdate: (ReleaseInfo) -> Unit,
-    onCatalogEnabledChanged: (Boolean) -> Unit = {},
 ) {
     val ctx = LocalContext.current
     val scope = rememberCoroutineScope()
@@ -69,7 +68,6 @@ fun SettingsScreen(
     var checking by remember { mutableStateOf(false) }
     var checkStatusText by remember { mutableStateOf("") }
 
-    var catalogEnabled by remember { mutableStateOf(store.isComicCatalogEnabled()) }
     val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
     val isLiquidGlass = LocalLiquidGlassEnabled.current
 
@@ -266,23 +264,6 @@ fun SettingsScreen(
                     onCheckedChange = { zoom ->
                         comicZoom = zoom
                         store.setComicZoom(zoom)
-                    }
-                )
-                MiuixDivider(hasIcon = true)
-                MiuixSwitchPreference(
-                    title = "漫画目录入口",
-                    subtitle = "在侧边栏显示 AniList 漫画推荐与搜索",
-                    icon = Icons.Rounded.AutoAwesome,
-                    checked = catalogEnabled,
-                    onCheckedChange = { checked ->
-                        store.setComicCatalogEnabled(checked)
-                        catalogEnabled = checked
-                        onCatalogEnabledChanged(checked)
-                        Toast.makeText(
-                            ctx,
-                            if (checked) "漫画目录入口已开启" else "漫画目录入口已关闭",
-                            Toast.LENGTH_SHORT,
-                        ).show()
                     }
                 )
             }
