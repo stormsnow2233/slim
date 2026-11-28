@@ -6,8 +6,8 @@
 <key>CFBundleName</key><string>Shijuan</string>
 <key>CFBundleExecutable</key><string>Shijuan</string>
 <key>CFBundlePackageType</key><string>APPL</string>
-<key>CFBundleShortVersionString</key><string>1.0</string>
-<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>1.1</string>
+<key>CFBundleVersion</key><string>3</string>
 <key>UIBackgroundModes</key><array><string>processing</string></array>
 <key>BGTaskSchedulerPermittedIdentifiers</key><array><string>com.storm.shijuan.ios.cache</string></array>
 <key>UILaunchScreen</key><dict/>
