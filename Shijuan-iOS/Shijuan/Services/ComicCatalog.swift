@@ -97,7 +97,8 @@ enum ComicCatalog {
                 return ComicChapter(id: numericID, name: name, url: id)
             }
         }
-        return [ComicChapter(id: aid, name: string(object["name"]) ?? "全一话", url: "\(aid)")]
+        guard let chapterID = Int(aid) else { throw CatalogError.invalidID }
+        return [ComicChapter(id: chapterID, name: string(object["name"]) ?? "全一话", url: aid)]
     }
 
     static func pages(chapter: ComicChapter, base: URL) async throws -> ComicPages {
