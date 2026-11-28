@@ -1,0 +1,279 @@
+[
+  {
+    "id": "biqugese",
+    "name": "笔趣书阁",
+    "base": "https://www.biqugese.com",
+    "mirrors": [],
+    "enabled": true,
+    "search": {
+      "url": "/search/result.html?searchkey={key}",
+      "method": "GET",
+      "body": "",
+      "list": "ul.librarylist > li",
+      "fields": {
+        "title": "a.novelname@text",
+        "url": "a.novelname@href",
+        "author": ".info a[href*=\"/author/\"]@text",
+        "intro": "p.intro@text",
+        "cover": ".pt-ll-l img@src"
+      }
+    },
+    "detail": {
+      "title": "h1@text",
+      "author": ".novelinfo a[href*=\"/author/\"]@text",
+      "intro": ".intro@text",
+      "cover": ".novelinfo-r img@src"
+    },
+    "toc": {
+      "list": "ul.dirlist li a",
+      "name": "@text",
+      "url": "@href"
+    },
+    "content": {
+      "body": ".readbox .content@html"
+    }
+  },
+  {
+    "id": "deqixs",
+    "name": "得奇小说",
+    "base": "https://www.deqixs.org",
+    "mirrors": [
+      "https://www.deqixs.cc"
+    ],
+    "enabled": true,
+    "search": {
+      "url": "/modules/article/search.php",
+      "method": "POST",
+      "body": "searchkey={key}",
+      "list": "div.item",
+      "fields": {
+        "title": "h3 a@text",
+        "url": "h3 a@href",
+        "author": "ul li:matches(作者)@text",
+        "intro": "p@text",
+        "cover": ".item img@src"
+      }
+    },
+    "detail": {
+      "title": "h1@text",
+      "author": "ul li:matches(作者)@text",
+      "intro": ".des@text",
+      "cover": ".item img@src"
+    },
+    "toc": {
+      "list": "div.dir a",
+      "name": "@text",
+      "url": "@href"
+    },
+    "content": {
+      "body": "div.con@html"
+    }
+  },
+  {
+    "id": "sudugu",
+    "name": "速读谷",
+    "base": "https://www.sudugu.cc",
+    "mirrors": [
+      "https://www.sudugu.com",
+      "https://sudugu.cc"
+    ],
+    "enabled": true,
+    "search": {
+      "url": "/modules/article/search.php",
+      "method": "POST",
+      "body": "searchkey={key}&action=login&searchtype=all&submit=",
+      "list": "div.item, .bookbox",
+      "fields": {
+        "title": "h3 a@text || a@text",
+        "url": "h3 a@href || a@href",
+        "author": "ul li:matches(作者)@text || .author@text",
+        "intro": "p@text || .intro@text || .update@text"
+      }
+    },
+    "detail": {
+      "title": "h1@text",
+      "author": ".author@text",
+      "intro": ".intro@text",
+      "cover": ""
+    },
+    "toc": {
+      "list": "#list a",
+      "name": "@text",
+      "url": "@href"
+    },
+    "content": {
+      "body": ".con@html"
+    }
+  },
+  {
+    "id": "17k",
+    "name": "17K小说网",
+    "base": "https://www.17k.com",
+    "mirrors": [],
+    "enabled": false,
+    "search": {
+      "url": "https://search.17k.com/search.xhtml?c.q={key}",
+      "method": "GET",
+      "body": "",
+      "list": "div.textlist",
+      "fields": {
+        "title": ".textmiddle dt a@text",
+        "url": ".textmiddle dt a@href",
+        "author": ".textmiddle .ls a@text",
+        "intro": ".textmiddle li p@text",
+        "cover": ".textleft img@src"
+      }
+    },
+    "detail": {
+      "title": "h1@text",
+      "author": "div.author a@text",
+      "intro": ".intro@text",
+      "cover": "#bookCover img@src"
+    },
+    "toc": {
+      "list": "a[href*=/chapter/]",
+      "name": "@text",
+      "url": "@href"
+    },
+    "content": {
+      "body": ".readArea div.p@html || .readArea@html"
+    }
+  },
+  {
+    "id": "wenku8",
+    "name": "轻小说文库",
+    "base": "https://www.wenku8.net",
+    "mirrors": [
+      "https://www.wenku8.cc"
+    ],
+    "enabled": true,
+    "search": {
+      "url": "/modules/article/search.php?searchkey={key}&searchtype=articlename",
+      "method": "GET",
+      "body": "searchtype=articlename&searchkey={key}&charset=gbk",
+      "list": "div[style*='width:373px'], div[style*='width: 373px'], #content table td > div, table td > div[style*='width'], table.grid tr, .grid tr",
+      "fields": {
+        "title": "div:nth-of-type(2) b a@title || div:nth-of-type(2) a@title || b a@title || b a@text || td:nth-child(1) a@text || td:nth-child(2) a@text",
+        "url": "div:nth-of-type(2) b a@href || div:nth-of-type(2) a@href || b a@href || div a[href*=/book/]@href || td:nth-child(1) a@href || td:nth-child(2) a@href",
+        "author": "div:nth-of-type(2) p:contains(作)@text || p:contains(作)@text || td:nth-child(3)@text",
+        "intro": "div:nth-of-type(2) p:contains(简)@text || div:nth-of-type(2) p:contains(介)@text || p:contains(简)@text",
+        "cover": "div:nth-of-type(1) img@src || img@src"
+      }
+    },
+    "detail": {
+      "title": "h1@text || #title@text || title@text",
+      "author": "#info a@text || .author@text || td:contains(小说作者)@text",
+      "intro": "#intro@text || .intro@text || td:contains(内容简介)@text",
+      "cover": "img[src*=image]@src || #fmimg img@src || .cover img@src"
+    },
+    "toc": {
+      "list": "table.css td.ccss a, table.css td a, td.ccss a, .chapter_list a",
+      "name": "@text",
+      "url": "@href"
+    },
+    "content": {
+      "body": "div#content@html || #content@html || #acontent@html"
+    }
+  },
+  {
+    "id": "sfacg",
+    "name": "SF轻小说",
+    "base": "https://m.sfacg.com",
+    "mirrors": [],
+    "enabled": true,
+    "search": {
+      "url": "/API/HTML5.ashx?op=search&keyword={key}",
+      "method": "GET",
+      "body": "",
+      "list": "",
+      "fields": {
+        "title": "@text",
+        "url": "a@href"
+      }
+    },
+    "detail": {
+      "title": ".book_newtitle@text",
+      "author": ".book_info3@text##\\s*/[\\s\\S]*##",
+      "intro": ".book_bk_qs1@text",
+      "cover": ".book_info img@src"
+    },
+    "toc": {
+      "list": "ul.mulu_list a",
+      "name": "@text",
+      "url": "@href"
+    },
+    "content": {
+      "body": "div.yuedu.Content_Frame > div@html || .Content_Frame > div@html || .yuedu [style*=\"text-indent\"]@html || [style*=\"text-indent\"]@html || .yuedu@html || #content@html"
+    }
+  },
+  {
+    "id": "esjzone",
+    "name": "ESJ Zone",
+    "base": "https://esj-proxy.pages.dev",
+    "mirrors": [
+      "https://www.esjzone.one",
+      "https://esjzone.net",
+      "https://www.esjzone.cc"
+    ],
+    "enabled": true,
+    "search": {
+      "url": "/list/?k={key}",
+      "method": "GET",
+      "body": "",
+      "list": ".card-body",
+      "fields": {
+        "title": "h5.card-title a@text || h4.card-title a@text || .card-title a@text",
+        "url": "h5.card-title a@href || h4.card-title a@href || .card-title a@href",
+        "author": ".card-author a@text || .card-author@text"
+      }
+    },
+    "detail": {
+      "title": "h2@text",
+      "author": ".book-detail li:contains(作者)@text##作者：## || .book-detail li:nth-child(1)@text##作者：## || .book-detail li@text",
+      "intro": ".description@text",
+      "cover": ".product-gallery img@src || .book-detail img@src"
+    },
+    "toc": {
+      "list": "#chapterList a[href*='/forum/'] || #chapterList a || .chapter-list a",
+      "name": "@text",
+      "url": "@href"
+    },
+    "content": {
+      "body": ".forum-content@html || .reading-content@html"
+    }
+  },
+  {
+    "id": "lnovel",
+    "name": "轻小说百科",
+    "base": "https://lnovel.tw",
+    "mirrors": [
+      "https://lnovel.org"
+    ],
+    "enabled": true,
+    "search": {
+      "url": "/books?q%5Bname_cont%5D={key}",
+      "method": "GET",
+      "body": "",
+      "list": "a[href*='/books-'], div.book-item, .card",
+      "fields": {
+        "title": "@text || h5@text || h4@text || .title@text",
+        "url": "@href",
+        "cover": "img@src"
+      }
+    },
+    "detail": {
+      "title": "h1@text || meta[property='og:title']@content || title@text",
+      "author": "a[href*='authors_id_eq']@text || a[href*='author']@text || dt:contains(作者) + dd@text || meta[name='author']@content",
+      "intro": "div.card-body p.my-2@text || meta[name='description']@content || .card-text@text",
+      "cover": "img[src*='webpic']@src || .card img[src*='/uploads/']@src || meta[property='og:image']@content || img@src"
+    },
+    "toc": {
+      "list": "a[href*='/chapters-']",
+      "name": "@text",
+      "url": "@href"
+    },
+    "content": {
+      "body": "article@html || .reading-content@html || #content@html"
+    }
+  }
+]

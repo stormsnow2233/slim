@@ -12,16 +12,6 @@ struct RuleEngine {
         "Mozilla/5.0 (Linux; Android 13; Pixel 7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0 Mobile Safari/537.36"
     ]
 
-    private func baseURL() throws -> URL {
-        for b in source.bases {
-            if let url = URL(string: b.trimmingCharacters(in: .whitespaces)),
-               url.scheme == "http" || url.scheme == "https", url.host != nil {
-                return url
-            }
-        }
-        throw RuleEngineError.badBase
-    }
-
     private func request(_ url: URL, method: String = "GET", body: Data? = nil) async throws -> String {
         var req = URLRequest(url: url)
         req.httpMethod = method
@@ -159,7 +149,7 @@ struct RuleEngine {
     private static func render(_ node: MiniHTMLNode) -> String {
         if node.tag == "#text" { return node.textContent }
         if node.tag == "#document" { return node.children.map { render($0) }.joined() }
-        let attrs = node.attributes.map { " \($0.key)=\"\($0.value)" }.joined()
+        let attrs = node.attributes.map { " \($0.key)=\"\($0.value)\"" }.joined()
         let inner = node.children.map { render($0) }.joined()
         return "<\(node.tag)\(attrs)>\(inner)</\(node.tag)>"
     }
@@ -167,37 +157,93 @@ struct RuleEngine {
     // MARK: - Operations
 
     func search(keyword: String) async throws -> [RemoteBook] {
-        guard let rule = source.search, let base = try? baseURL() else { return [] }
-        let encodedKeyword = keyword.addingPercentEncoding(withAllowedCharacters: .urlQueryAllowed) ?? keyword
+        guard let rule = source.search else { return [] }
+        let bases = source.bases.compactMap { raw -> URL? in
+            guard let url = URL(string: raw.trimmingCharacters(in: .whitespaces)),
+                  url.scheme == "http" || url.scheme == "https",
+                  url.host != nil else { return nil }
+            return url
+        }
+        guard !bases.isEmpty else { throw RuleEngineError.badBase }
+        let queryAllowed = CharacterSet.urlQueryAllowed.subtracting(CharacterSet(charactersIn: "&=+#%"))
+        let encodedKeyword = keyword.addingPercentEncoding(withAllowedCharacters: queryAllowed) ?? keyword
         let templated = rule.url
             .replacingOccurrences(of: "{key}", with: encodedKeyword)
             .replacingOccurrences(of: "{page}", with: "1")
-        guard let url = resolve(templated, relativeTo: base) else { throw RuleEngineError.badURL }
         let bodyTemplate = rule.body
             .replacingOccurrences(of: "{key}", with: encodedKeyword)
             .replacingOccurrences(of: "{page}", with: "1")
         let body = rule.method == "POST" && !bodyTemplate.isEmpty ? Data(bodyTemplate.utf8) : nil
-        let html = try await request(url, method: rule.method, body: body)
-        let dom = MiniHTML.parse(html)
-        let rows = rule.list.isEmpty ? [dom] : dom.select(rule.list)
-        var results: [RemoteBook] = []
-        for row in rows.prefix(100) {
-            let title = Self.evaluate(expression: rule.fields["title"] ?? "@text", on: row, base: base)
-            let rawURL = Self.evaluate(expression: rule.fields["url"] ?? "a@href", on: row, base: base)
-            guard let bookURL = resolve(rawURL, relativeTo: base), !title.isEmpty else { continue }
-            let author = rule.fields["author"].map { Self.evaluate(expression: $0, on: row, base: base) } ?? ""
-            let intro = rule.fields["intro"].map { Self.evaluate(expression: $0, on: row, base: base) } ?? ""
-            let coverRaw = rule.fields["cover"].map { Self.evaluate(expression: $0, on: row, base: base) } ?? ""
-            results.append(RemoteBook(title: title, author: author.isEmpty ? "未知作者" : author,
-                                      url: bookURL, sourceName: source.name,
-                                      coverURL: coverRaw.isEmpty ? nil : resolve(coverRaw, relativeTo: base),
-                                      intro: intro))
+        var attemptedURLs = Set<String>()
+        var lastError: Error?
+        for base in bases {
+            guard let url = resolve(templated, relativeTo: base) else { throw RuleEngineError.badURL }
+            guard attemptedURLs.insert(url.absoluteString).inserted else { continue }
+            do {
+                let response = try await request(url, method: rule.method, body: body)
+                let results: [RemoteBook]
+                if source.id == "sfacg" {
+                    results = try sfacgSearchResults(from: response, base: base)
+                } else {
+                    let dom = MiniHTML.parse(response)
+                    let rows = rule.list.isEmpty ? [dom] : dom.select(rule.list)
+                    results = rows.prefix(100).compactMap { row in
+                        let title = Self.evaluate(expression: rule.fields["title"] ?? "@text", on: row, base: base)
+                        let rawURL = Self.evaluate(expression: rule.fields["url"] ?? "a@href", on: row, base: base)
+                        guard let bookURL = resolve(rawURL, relativeTo: base), !title.isEmpty else { return nil }
+                        let author = rule.fields["author"].map { Self.evaluate(expression: $0, on: row, base: base) } ?? ""
+                        let intro = rule.fields["intro"].map { Self.evaluate(expression: $0, on: row, base: base) } ?? ""
+                        let coverRaw = rule.fields["cover"].map { Self.evaluate(expression: $0, on: row, base: base) } ?? ""
+                        return RemoteBook(title: title, author: author.isEmpty ? "未知作者" : author,
+                                          url: bookURL, sourceName: source.name,
+                                          coverURL: coverRaw.isEmpty ? nil : resolve(coverRaw, relativeTo: base),
+                                          intro: intro)
+                    }
+                }
+                if !results.isEmpty { return results }
+            } catch {
+                lastError = error
+            }
         }
-        return results
+        if let lastError { throw lastError }
+        return []
+    }
+
+    private func sfacgSearchResults(from response: String, base: URL) throws -> [RemoteBook] {
+        guard let data = response.data(using: .utf8),
+              let payload = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let rawNovels = payload["Novels"] else {
+            throw RuleEngineError.invalidResponse
+        }
+        guard let novels = rawNovels as? [[String: Any]] else { return [] }
+        return novels.compactMap { novel in
+            guard let title = novel["NovelName"] as? String,
+                  let idValue = novel["NovelID"],
+                  !(idValue is NSNull),
+                  let url = URL(string: "/i/\(idValue)/", relativeTo: base)?.absoluteURL else {
+                return nil
+            }
+            let rawCover = novel["NovelCover"] as? String ?? ""
+            let coverURL: URL?
+            if rawCover.isEmpty {
+                coverURL = nil
+            } else if let absolute = URL(string: rawCover), absolute.scheme != nil {
+                coverURL = absolute
+            } else {
+                coverURL = URL(string: "https://rs.sfacg.com/web/novel/images/NovelCover/Big/\(rawCover)")
+            }
+            return RemoteBook(
+                title: title,
+                author: novel["AuthorName"] as? String ?? "未知作者",
+                url: url,
+                sourceName: source.name,
+                coverURL: coverURL
+            )
+        }
     }
 
     func detail(bookURL: URL) async throws -> RemoteDetail {
-        let base = try baseURL()
+        let base = bookURL
         let html = try await request(bookURL)
         let dom = MiniHTML.parse(html)
         let rule = source.detail ?? RuleDetail()
@@ -259,7 +305,7 @@ struct RuleEngine {
     }
 
     func content(chapterURL: URL) async throws -> String {
-        let base = try baseURL()
+        let base = chapterURL
         let rule = source.content
         let html = try await request(chapterURL)
         var text: String

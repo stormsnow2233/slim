@@ -5,13 +5,6 @@ import UserNotifications
 
 @MainActor
 final class AppState: ObservableObject {
-    enum ThemeMode: String, CaseIterable, Identifiable, Codable {
-        case classic = "经典"
-        case miuix = "MiuiX"
-        var id: Self { self }
-    }
-
-    @Published var theme: ThemeMode { didSet { persist() } }
     @Published var books: [Book] { didSet { persist() } }
     @Published var searchText = ""
     @Published private(set) var remoteResults: [Book] = []
@@ -22,15 +15,27 @@ final class AppState: ObservableObject {
     @Published var ruleSources: [RuleSource] { didSet { persistRuleSources() } }
 
     private let storageKey = "shijuan.ios.books.v2"
-    private let themeKey = "shijuan.ios.theme"
     private let proxyKey = "shijuan.ios.proxy.v1"
     private let sourcesKey = "shijuan.ios.sources.v1"
     private let ruleSourcesKey = "shijuan.ios.ruleSources.v1"
 
+    private static func loadBuiltinRuleSources() -> [RuleSource] {
+        guard let url = Bundle.main.url(forResource: "builtin_rules", withExtension: "json") else {
+            NSLog("Bundled novel source rules are missing.")
+            return []
+        }
+        do {
+            return try JSONDecoder().decode([RuleSource].self, from: Data(contentsOf: url))
+        } catch {
+            NSLog("Bundled novel source rules could not be decoded: %@", error.localizedDescription)
+            return []
+        }
+    }
+
     init() {
-        theme = ThemeMode(rawValue: UserDefaults.standard.string(forKey: themeKey) ?? "") ?? .miuix
         if let data = UserDefaults.standard.data(forKey: proxyKey),
-           let savedProxy = try? JSONDecoder().decode(ProxyConfiguration.self, from: data) {
+           var savedProxy = try? JSONDecoder().decode(ProxyConfiguration.self, from: data) {
+            savedProxy.migrateDeprecatedDefaults()
             proxy = savedProxy
         } else {
             proxy = ProxyConfiguration()
@@ -41,11 +46,16 @@ final class AppState: ObservableObject {
         } else {
             sources = []
         }
+        let builtinRuleSources = Self.loadBuiltinRuleSources()
         if let data = UserDefaults.standard.data(forKey: ruleSourcesKey),
            let savedRuleSources = try? JSONDecoder().decode([RuleSource].self, from: data) {
-            ruleSources = savedRuleSources
+            let builtinIDs = Set(builtinRuleSources.map(\.id))
+            let mergedBuiltins = builtinRuleSources.map { builtin in
+                savedRuleSources.first(where: { $0.id == builtin.id }) ?? builtin
+            }
+            ruleSources = mergedBuiltins + savedRuleSources.filter { !builtinIDs.contains($0.id) }
         } else {
-            ruleSources = []
+            ruleSources = builtinRuleSources
         }
         if let data = UserDefaults.standard.data(forKey: storageKey),
            let saved = try? JSONDecoder().decode([Book].self, from: data) {
@@ -71,39 +81,56 @@ final class AppState: ObservableObject {
         guard !keyword.isEmpty else { remoteResults = []; return }
         isSearching = true
         searchError = nil
-        let configuredURLs = sources.filter(\.enabled).map(\.baseURL)
-        let fallback = proxy.isValidCustomURL ? proxy.customBaseURL : proxy.wenku8BaseURL.absoluteString
-        let fallbackURL = URL(string: fallback)
-        let urls = configuredURLs + (configuredURLs.isEmpty ? [fallbackURL].compactMap { $0 } : [])
+        remoteResults = Wenku8Catalog.search(keyword: keyword).map { remote in
+            Book(title: remote.title, author: remote.author, sourceURL: remote.url,
+                 sourceName: remote.sourceName, coverURL: remote.coverURL, intro: remote.intro)
+        }
+        let urls = sources.filter(\.enabled).map(\.baseURL)
         let activeRuleSources = ruleSources.filter(\.enabled)
-        guard !urls.isEmpty || !activeRuleSources.isEmpty else { isSearching = false; searchError = "没有可用书源"; return }
+        guard !urls.isEmpty || !activeRuleSources.isEmpty else {
+            if remoteResults.isEmpty { searchError = "本地文库索引没有匹配结果；可在设置中导入规则书源。" }
+            isSearching = false
+            return
+        }
         Task {
-            do {
-                let results = await withTaskGroup(of: [RemoteBook].self, returning: [[RemoteBook]].self) { group in
-                    for url in urls {
-                        group.addTask {
-                            (try? await RemoteCatalog(proxyBaseURL: url).search(keyword: keyword)) ?? []
-                        }
+            let outcomes = await withTaskGroup(of: ([RemoteBook], String?).self, returning: [([RemoteBook], String?)].self) { group in
+                for url in urls {
+                    group.addTask {
+                        do { return (try await RemoteCatalog(proxyBaseURL: url).search(keyword: keyword), nil) }
+                        catch { return ([], error.localizedDescription) }
                     }
-                    for source in activeRuleSources {
-                        group.addTask {
-                            (try? await RuleEngine(source: source).search(keyword: keyword).map { remote in
+                }
+                for source in activeRuleSources {
+                    group.addTask {
+                        do {
+                            let books = try await RuleEngine(source: source).search(keyword: keyword).map { remote in
                                 RemoteBook(title: remote.title, author: remote.author, url: remote.url,
                                            sourceName: remote.sourceName, coverURL: remote.coverURL, intro: remote.intro)
-                            }) ?? []
+                            }
+                            return (books, nil)
+                        } catch {
+                            return ([], "\(source.name)：\(error.localizedDescription)")
                         }
                     }
-                    var all: [[RemoteBook]] = []
-                    for await result in group { all.append(result) }
-                    return all
                 }
-                var seen = Set<String>()
-                remoteResults = results.flatMap { $0 }.compactMap { item in
-                    let key = "\(item.title)|\(item.author)"
-                    guard seen.insert(key).inserted else { return nil }
-                    return Book(title: item.title, author: item.author, progress: 0, isDownloaded: false, chapters: [], sourceURL: item.url, sourceName: item.sourceName)
-                }
-                if remoteResults.isEmpty { searchError = "没有找到结果" }
+                var values: [([RemoteBook], String?)] = []
+                for await value in group { values.append(value) }
+                return values
+            }
+            var seen = Set(remoteResults.map { "\($0.title.lowercased())|\($0.author.lowercased())" })
+            let onlineResults = outcomes.flatMap { $0.0 }.compactMap { item -> Book? in
+                let key = "\(item.title.lowercased())|\(item.author.lowercased())"
+                guard seen.insert(key).inserted else { return nil }
+                return Book(title: item.title, author: item.author, progress: 0,
+                            isDownloaded: false, chapters: [], sourceURL: item.url,
+                            sourceName: item.sourceName, coverURL: item.coverURL, intro: item.intro)
+            }
+            remoteResults.append(contentsOf: onlineResults)
+            let errors = outcomes.compactMap { $0.1 }
+            if remoteResults.isEmpty {
+                searchError = errors.first ?? "没有找到结果"
+            } else if let error = errors.first {
+                searchError = "部分书源加载失败：\(error)"
             }
             isSearching = false
         }
@@ -112,7 +139,6 @@ final class AppState: ObservableObject {
     func persist() {
         guard let data = try? JSONEncoder().encode(books) else { return }
         UserDefaults.standard.set(data, forKey: storageKey)
-        UserDefaults.standard.set(theme.rawValue, forKey: themeKey)
         persistProxy()
     }
 
@@ -226,11 +252,12 @@ final class AppState: ObservableObject {
 
     func mergeRemoteDetail(bookID: UUID, detail: RemoteDetail) {
         guard let index = books.firstIndex(where: { $0.id == bookID }) else { return }
-        books[index].title = detail.title
-        books[index].author = detail.author
-        books[index].intro = detail.intro
-        books[index].coverURL = detail.coverURL
+        if !detail.title.isEmpty { books[index].title = detail.title }
+        if !detail.author.isEmpty { books[index].author = detail.author }
+        if !detail.intro.isEmpty { books[index].intro = detail.intro }
+        if let coverURL = detail.coverURL { books[index].coverURL = coverURL }
         books[index].chapters = detail.chapters.map { Chapter(id: $0.id, title: $0.title, url: $0.url, isCached: $0.isCached) }
+        books[index].isDownloaded = !detail.chapters.isEmpty && detail.chapters.allSatisfy(\.isCached)
     }
 
     // MARK: - File-backed chapter bodies
@@ -251,15 +278,47 @@ final class AppState: ObservableObject {
     func loadRemoteDetail(bookID: UUID) async {
         guard let book = books.first(where: { $0.id == bookID }),
               let sourceURL = book.sourceURL else { return }
+        if book.sourceName == Wenku8Catalog.sourceName {
+            guard let aid = Wenku8Catalog.bookID(from: sourceURL) else {
+                searchError = "无法识别文库书籍编号"
+                return
+            }
+            do { try await loadWenku8Book(bookID: bookID, aid: aid) }
+            catch { searchError = "加载文库目录失败：\(error.localizedDescription)" }
+            return
+        }
         do {
             let remote = RemoteBook(title: book.title, author: book.author, url: sourceURL,
                                     sourceName: book.sourceName)
-            let base = proxy.isValidCustomURL ? URL(string: proxy.customBaseURL)! : proxy.wenku8BaseURL
+            let base = catalogBase(for: book)
             let detail = try await RemoteCatalog(proxyBaseURL: base).detail(for: remote)
             mergeRemoteDetail(bookID: bookID, detail: detail)
         } catch {
             searchError = "加载目录失败：\(error.localizedDescription)"
         }
+    }
+
+    private func loadWenku8Book(bookID: UUID, aid: Int) async throws {
+        guard let book = books.first(where: { $0.id == bookID }) else { return }
+        let bodies = try await Wenku8Catalog.downloadChapters(bookID: aid)
+        let summaries = bodies.enumerated().map { index, body in
+            ChapterSummary(id: index, title: body.title,
+                           url: URL(string: "wenku8://\(aid)/chapter/\(index)")!,
+                           isCached: true)
+        }
+        for (index, body) in bodies.enumerated() {
+            ContentStore.shared.save(body.content, bookID: bookID, chapterID: index)
+        }
+        mergeRemoteDetail(bookID: bookID,
+                          detail: RemoteDetail(title: book.title, author: book.author,
+                                               intro: book.intro, chapters: summaries,
+                                               coverURL: book.coverURL))
+    }
+
+    private func catalogBase(for book: Book) -> URL {
+        if let source = sources.first(where: { $0.name == book.sourceName }) { return source.baseURL }
+        if proxy.isValidCustomURL, let url = URL(string: proxy.customBaseURL) { return url }
+        return proxy.wenku8BaseURL
     }
 
     /// Loads one chapter: first through the rule engine when applicable,
@@ -271,9 +330,9 @@ final class AppState: ObservableObject {
         do {
             let content: String
             if let ruleSource = ruleSources.first(where: { $0.name == book.sourceName }) {
-                content = (try? await RuleEngine(source: ruleSource).content(chapterURL: url)) ?? ""
+                content = try await RuleEngine(source: ruleSource).content(chapterURL: url)
             } else {
-                let base = proxy.isValidCustomURL ? URL(string: proxy.customBaseURL)! : proxy.wenku8BaseURL
+                let base = catalogBase(for: book)
                 content = try await RemoteCatalog(proxyBaseURL: base).content(for: ChapterSummary(id: chapter.id, title: chapter.title, url: url))
             }
             guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
@@ -320,9 +379,9 @@ final class AppState: ObservableObject {
               let url = chapter.url else { return }
         let content: String
         if let ruleSource = ruleSources.first(where: { $0.name == book.sourceName }) {
-            content = (try? await RuleEngine(source: ruleSource).content(chapterURL: url)) ?? ""
+            content = try await RuleEngine(source: ruleSource).content(chapterURL: url)
         } else {
-            let base = proxy.isValidCustomURL ? URL(string: proxy.customBaseURL)! : proxy.wenku8BaseURL
+            let base = catalogBase(for: book)
             content = try await RemoteCatalog(proxyBaseURL: base).content(for: ChapterSummary(id: chapter.id, title: chapter.title, url: url))
         }
         guard !content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {

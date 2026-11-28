@@ -20,19 +20,46 @@ struct ContentView: View {
     @State private var exportDocument: TextExportDocument?
     @State private var showingExporter = false
     @State private var didRequestNotifications = false
+    @State private var selectedTab = HomeTab.shelf
 
     var body: some View {
-        TabView {
+        TabView(selection: $selectedTab) {
             ShelfView(showingImporter: $showingImporter, importError: $importError, exportDocument: $exportDocument, showingExporter: $showingExporter)
-                .tabItem { Label("书架", systemImage: "books.vertical") }
+                .tag(HomeTab.shelf)
             SearchView()
-                .tabItem { Label("搜索", systemImage: "magnifyingglass") }
+                .tag(HomeTab.search)
             ComicSearchView()
-                .tabItem { Label("漫画", systemImage: "photo.on.rectangle.angled") }
+                .tag(HomeTab.comics)
             SettingsView()
-                .tabItem { Label("设置", systemImage: "gearshape") }
+                .tag(HomeTab.settings)
         }
-        .preferredColorScheme(state.theme == .miuix ? .light : nil)
+        .tabViewStyle(.page(indexDisplayMode: .never))
+        .safeAreaInset(edge: .bottom, spacing: 0) {
+            HStack(spacing: 0) {
+                ForEach(HomeTab.allCases) { tab in
+                    Button {
+                        withAnimation(.easeInOut(duration: 0.18)) { selectedTab = tab }
+                    } label: {
+                        VStack(spacing: 4) {
+                            Image(systemName: tab.icon)
+                                .font(.system(size: 18, weight: selectedTab == tab ? .semibold : .regular))
+                            Text(tab.title)
+                                .font(.system(size: 10, weight: selectedTab == tab ? .semibold : .regular))
+                        }
+                        .foregroundStyle(selectedTab == tab ? Color.accentColor : Color.secondary)
+                        .frame(maxWidth: .infinity)
+                        .contentShape(Rectangle())
+                    }
+                    .buttonStyle(.plain)
+                    .accessibilityLabel(tab.title)
+                    .accessibilityAddTraits(selectedTab == tab ? .isSelected : [])
+                }
+            }
+            .padding(.top, 8)
+            .padding(.bottom, 5)
+            .background(.regularMaterial)
+            .overlay(alignment: .top) { Divider() }
+        }
         .background(CloudflareSolverHost())
         .task {
             guard !didRequestNotifications else { return }
@@ -48,6 +75,28 @@ struct ContentView: View {
         .alert("导入失败", isPresented: Binding(get: { importError != nil }, set: { if !$0 { importError = nil } })) {
             Button("好", role: .cancel) { importError = nil }
         } message: { Text(importError ?? "未知错误") }
+    }
+}
+
+private enum HomeTab: String, CaseIterable, Identifiable {
+    case shelf, search, comics, settings
+
+    var id: Self { self }
+    var title: String {
+        switch self {
+        case .shelf: return "书架"
+        case .search: return "搜索"
+        case .comics: return "漫画"
+        case .settings: return "设置"
+        }
+    }
+    var icon: String {
+        switch self {
+        case .shelf: return "books.vertical"
+        case .search: return "magnifyingglass"
+        case .comics: return "photo.on.rectangle.angled"
+        case .settings: return "gearshape"
+        }
     }
 }
 
@@ -138,7 +187,8 @@ private struct RemoteBookRow: View {
     var body: some View {
         Button {
             guard let url = book.sourceURL else { return }
-            state.addRemoteBook(RemoteBook(title: book.title, author: book.author, url: url, sourceName: book.sourceName))
+            state.addRemoteBook(RemoteBook(title: book.title, author: book.author, url: url,
+                                           sourceName: book.sourceName, coverURL: book.coverURL, intro: book.intro))
         } label: {
             VStack(alignment: .leading) {
                 Text(book.title).font(.headline)
@@ -164,15 +214,19 @@ private struct SearchView: View {
                         }
                     }
                 }
-                Section("在线书源") {
+                Section("搜索结果") {
                     if state.isSearching { ProgressView("正在搜索…") }
                     ForEach(state.remoteResults) { book in
                         RemoteBookRow(book: book)
                     }
                     if let error = state.searchError { Text(error).foregroundStyle(.red) }
+                    if !state.isSearching && state.remoteResults.isEmpty && state.searchError == nil {
+                        Text("输入书名或作者后搜索").foregroundStyle(.secondary)
+                    }
                 }
             }
             .searchable(text: $state.searchText, prompt: "搜索书名或作者")
+            .onSubmit(of: .search) { state.searchRemote() }
             .navigationTitle("搜索")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
@@ -231,12 +285,10 @@ private struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section("主题") {
-                    Picker("界面风格", selection: $state.theme) {
-                        ForEach(AppState.ThemeMode.allCases) { mode in
-                            Text(mode.rawValue).tag(mode)
-                        }
-                    }
+                Section("外观") {
+                    Text("采用 iOS 原生界面，并跟随系统明暗模式。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
                 Section("书源代理") {
                     TextField("自定义代理地址（可选）", text: $state.proxy.customBaseURL)

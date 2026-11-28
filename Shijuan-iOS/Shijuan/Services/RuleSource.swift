@@ -153,11 +153,12 @@ struct RuleContent: Codable, Hashable {
 }
 
 enum RuleEngineError: LocalizedError {
-    case badBase, badURL
+    case badBase, badURL, invalidResponse
     var errorDescription: String? {
         switch self {
         case .badBase: return "书源 base 地址无效"
         case .badURL: return "书源请求地址无效"
+        case .invalidResponse: return "书源返回的数据格式无效"
         }
     }
 }

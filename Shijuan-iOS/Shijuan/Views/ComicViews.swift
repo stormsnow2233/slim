@@ -1,4 +1,5 @@
 import SwiftUI
+import UIKit
 
 struct ComicSearchView: View {
     @EnvironmentObject private var state: AppState
@@ -14,9 +15,24 @@ struct ComicSearchView: View {
                 if let error { Text(error).foregroundStyle(.red) }
                 ForEach(results) { comic in
                     NavigationLink { ComicDetailView(comic: comic) } label: {
-                        VStack(alignment: .leading) {
-                            Text(comic.name).font(.headline)
-                            Text(comic.author).font(.subheadline).foregroundStyle(.secondary)
+                        HStack(spacing: 12) {
+                            if !comic.cover.isEmpty {
+                                ComicImageView(
+                                    url: comic.cover,
+                                    referer: comic.apiBase.map { $0.hasSuffix("/") ? $0 : $0 + "/" }
+                                        ?? (state.proxy.jmBaseURL.absoluteString + "/")
+                                )
+                                    .frame(width: 64, height: 88)
+                                    .clipShape(RoundedRectangle(cornerRadius: 8))
+                            }
+                            VStack(alignment: .leading, spacing: 5) {
+                                Text(comic.name).font(.headline)
+                                Text(comic.author.isEmpty ? comic.sourceName : comic.author)
+                                    .font(.subheadline).foregroundStyle(.secondary)
+                                if !comic.intro.isEmpty {
+                                    Text(comic.intro).font(.caption).foregroundStyle(.secondary).lineLimit(2)
+                                }
+                            }
                         }
                     }
                 }
@@ -55,7 +71,10 @@ struct ComicDetailView: View {
     @State private var isLoading = false
     @State private var error: String?
 
-    private var jmBase: URL { state.proxy.jmBaseURL }
+    private var jmBase: URL {
+        guard let apiBase = comic.apiBase, let url = URL(string: apiBase) else { return state.proxy.jmBaseURL }
+        return url
+    }
 
     var body: some View {
         List {
@@ -103,19 +122,7 @@ struct ComicReaderView: View {
             if let pages {
                 LazyVStack(spacing: 4) {
                     ForEach(Array(pages.images.enumerated()), id: \.offset) { _, imageURL in
-                        if let url = URL(string: imageURL) {
-                            AsyncImage(url: url) { phase in
-                                switch phase {
-                                case .success(let image):
-                                    image.resizable().scaledToFit()
-                                case .failure:
-                                    Text("图片加载失败").font(.caption).foregroundStyle(.secondary)
-                                        .frame(maxWidth: .infinity).padding()
-                                default:
-                                    ProgressView().frame(maxWidth: .infinity).padding()
-                                }
-                            }
-                        }
+                        ComicImageView(url: imageURL, referer: pages.referer)
                     }
                 }
             } else if let error {
@@ -130,6 +137,52 @@ struct ComicReaderView: View {
             if pages == nil {
                 do { pages = try await ComicCatalog.pages(chapter: chapter, base: base) }
                 catch let pagesError { error = "加载图片失败：\(pagesError.localizedDescription)" }
+            }
+        }
+    }
+}
+
+private struct ComicImageView: View {
+    let url: String
+    let referer: String
+    @State private var image: UIImage?
+    @State private var failed = false
+
+    var body: some View {
+        Group {
+            if let image {
+                Image(uiImage: image).resizable().scaledToFit()
+            } else if failed {
+                Text("图片加载失败").font(.caption).foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, maxHeight: .infinity)
+            } else {
+                ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
+            }
+        }
+        .task(id: url) {
+            image = nil
+            failed = false
+            guard let imageURL = URL(string: url) else {
+                failed = true
+                return
+            }
+            var request = URLRequest(url: imageURL)
+            request.timeoutInterval = 25
+            request.setValue("Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
+                             forHTTPHeaderField: "User-Agent")
+            request.setValue(referer, forHTTPHeaderField: "Referer")
+            request.setValue("1", forHTTPHeaderField: "X-JM")
+            do {
+                let (data, response) = try await URLSession.shared.data(for: request)
+                guard let http = response as? HTTPURLResponse,
+                      (200..<300).contains(http.statusCode),
+                      let loadedImage = UIImage(data: data) else {
+                    failed = true
+                    return
+                }
+                image = JmImageDescrambler.descramble(loadedImage, imageURL: imageURL)
+            } catch {
+                failed = true
             }
         }
     }

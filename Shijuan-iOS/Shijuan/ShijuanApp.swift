@@ -20,7 +20,7 @@ struct ShijuanApp: App {
         WindowGroup {
             ContentView()
                 .environmentObject(state)
-                .tint(state.theme == .miuix ? Color(red: 0.25, green: 0.55, blue: 0.95) : .accentColor)
+                .tint(.accentColor)
                 .onReceive(NotificationCenter.default.publisher(for: UIApplication.didEnterBackgroundNotification)) { _ in
                     state.scheduleCacheRefresh()
                 }

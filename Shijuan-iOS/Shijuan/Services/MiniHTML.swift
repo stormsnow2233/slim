@@ -1,8 +1,13 @@
 import Foundation
 
 /// Tiny HTML DOM + CSS-subset selector engine used by RuleEngine.
-/// Supports: tag, .class, #id, descendant space, child >, [attr], [attr=v].
+/// Supports common CSS selectors, combinators, attribute operators, and text/nth-child pseudos.
 final class MiniHTMLNode {
+    private enum Relation: Equatable {
+        case descendant
+        case child
+    }
+
     var tag: String
     var attributes: [String: String] = [:]
     var children: [MiniHTMLNode] = []
@@ -37,33 +42,119 @@ final class MiniHTMLNode {
     }
 
     static func matches(_ node: MiniHTMLNode, selector: String) -> Bool {
-        let parts = selector.split(separator: ">", omittingEmptySubsequences: true)
-            .map { $0.trimmingCharacters(in: .whitespaces) }
-        if parts.isEmpty { return matchesSimple(node, selector: selector) }
-        return matchesChain(node, parts: parts)
+        splitSelectorGroups(selector).contains { matchesChain(node, selector: $0) }
     }
 
-    private static func matchesChain(_ node: MiniHTMLNode, parts: [String]) -> Bool {
-        guard matchesSimple(node, selector: parts.last!) else { return false }
-        var current = node
-        // ">" chain: each part must match an ancestor (descendant combination via " " already split).
-        for part in parts.dropLast().reversed() {
-            var found = false
-            // Treat inner " " within a part as descendant requirement handled by simple match;
-            // full descendant logic:
-            let spaceParts = part.split(separator: " ").map { String($0) }
-            for sp in spaceParts.reversed() {
-                var ancestor = current.parent
-                found = false
-                while let a = ancestor {
-                    if matchesSimple(a, selector: sp) {
-                        current = a; found = true; break
-                    }
-                    ancestor = a.parent
-                }
-                if !found { return false }
+    private static func splitSelectorGroups(_ selector: String) -> [String] {
+        var groups: [String] = []
+        var current = ""
+        var bracketDepth = 0
+        var parenthesisDepth = 0
+        var quote: Character?
+
+        for character in selector {
+            if let activeQuote = quote {
+                current.append(character)
+                if character == activeQuote { quote = nil }
+                continue
             }
-            if !found { return false }
+            if (character == "\"" || character == "'") && (bracketDepth > 0 || parenthesisDepth > 0) {
+                quote = character
+                current.append(character)
+            } else if character == "[" {
+                bracketDepth += 1
+                current.append(character)
+            } else if character == "]" {
+                bracketDepth = max(0, bracketDepth - 1)
+                current.append(character)
+            } else if character == "(" {
+                parenthesisDepth += 1
+                current.append(character)
+            } else if character == ")" {
+                parenthesisDepth = max(0, parenthesisDepth - 1)
+                current.append(character)
+            } else if character == "," && bracketDepth == 0 && parenthesisDepth == 0 {
+                groups.append(current.trimmingCharacters(in: .whitespacesAndNewlines))
+                current = ""
+            } else {
+                current.append(character)
+            }
+        }
+        groups.append(current.trimmingCharacters(in: .whitespacesAndNewlines))
+        return groups.filter { !$0.isEmpty }
+    }
+
+    private static func matchesChain(_ node: MiniHTMLNode, selector: String) -> Bool {
+        var parts: [String] = []
+        var relations: [Relation] = []
+        var currentPart = ""
+        var pendingRelation: Relation?
+        var bracketDepth = 0
+        var parenthesisDepth = 0
+        var quote: Character?
+
+        func appendPart() {
+            let part = currentPart.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !part.isEmpty else { return }
+            if !parts.isEmpty { relations.append(pendingRelation ?? .descendant) }
+            parts.append(part)
+            currentPart = ""
+            pendingRelation = nil
+        }
+
+        for character in selector {
+            if let activeQuote = quote {
+                currentPart.append(character)
+                if character == activeQuote { quote = nil }
+                continue
+            }
+            if (character == "\"" || character == "'") && (bracketDepth > 0 || parenthesisDepth > 0) {
+                quote = character
+                currentPart.append(character)
+            } else if character == "[" {
+                bracketDepth += 1
+                currentPart.append(character)
+            } else if character == "]" {
+                bracketDepth = max(0, bracketDepth - 1)
+                currentPart.append(character)
+            } else if character == "(" {
+                parenthesisDepth += 1
+                currentPart.append(character)
+            } else if character == ")" {
+                parenthesisDepth = max(0, parenthesisDepth - 1)
+                currentPart.append(character)
+            } else if bracketDepth == 0 && parenthesisDepth == 0 && character == ">" {
+                appendPart()
+                pendingRelation = .child
+            } else if bracketDepth == 0 && parenthesisDepth == 0 && character.isWhitespace {
+                appendPart()
+                if !parts.isEmpty && pendingRelation == nil { pendingRelation = .descendant }
+            } else {
+                currentPart.append(character)
+            }
+        }
+        appendPart()
+        guard let last = parts.last, matchesSimple(node, selector: last) else { return false }
+        guard parts.count > 1 else { return true }
+
+        var current = node
+        for index in stride(from: parts.count - 2, through: 0, by: -1) {
+            if relations[index] == .child {
+                guard let parent = current.parent, matchesSimple(parent, selector: parts[index]) else { return false }
+                current = parent
+            } else {
+                var ancestor = current.parent
+                var match: MiniHTMLNode?
+                while let candidate = ancestor {
+                    if matchesSimple(candidate, selector: parts[index]) {
+                        match = candidate
+                        break
+                    }
+                    ancestor = candidate.parent
+                }
+                guard let match else { return false }
+                current = match
+            }
         }
         return true
     }
@@ -72,9 +163,53 @@ final class MiniHTMLNode {
         let trimmed = selector.trimmingCharacters(in: .whitespaces)
         guard !trimmed.isEmpty else { return true }
         var ok = true
+        var baseSelector = trimmed
+        var textPredicates: [(String, String)] = []
+        var childIndex: (ofType: Bool, index: Int)?
+
+        if let pseudoRegex = try? NSRegularExpression(pattern: #":(contains|matches)\(([^()]*)\)"#) {
+            let ns = baseSelector as NSString
+            let range = NSRange(location: 0, length: ns.length)
+            for match in pseudoRegex.matches(in: baseSelector, range: range) {
+                textPredicates.append((ns.substring(with: match.range(at: 1)), ns.substring(with: match.range(at: 2))))
+            }
+            baseSelector = pseudoRegex.stringByReplacingMatches(
+                in: baseSelector,
+                range: range,
+                withTemplate: ""
+            )
+        }
+        if let nthRegex = try? NSRegularExpression(pattern: #":(nth-child|nth-of-type)\((\d+)\)"#),
+           let match = nthRegex.firstMatch(in: baseSelector, range: NSRange(location: 0, length: (baseSelector as NSString).length)),
+           let kindRange = Range(match.range(at: 1), in: baseSelector),
+           let indexRange = Range(match.range(at: 2), in: baseSelector),
+           let index = Int(baseSelector[indexRange]) {
+            childIndex = (ofType: baseSelector[kindRange] == "nth-of-type", index: index)
+            baseSelector = nthRegex.stringByReplacingMatches(
+                in: baseSelector,
+                range: NSRange(location: 0, length: (baseSelector as NSString).length),
+                withTemplate: ""
+            )
+        }
+        let text = node.allText
+        for (kind, pattern) in textPredicates {
+            if kind == "contains" {
+                ok = ok && text.localizedCaseInsensitiveContains(pattern)
+            } else if let regex = try? NSRegularExpression(pattern: pattern),
+                      regex.firstMatch(in: text, range: NSRange(location: 0, length: (text as NSString).length)) == nil {
+                ok = false
+            }
+        }
+        if let childIndex {
+            let siblings = node.parent?.children.filter { $0.tag != "#text" } ?? []
+            let peers = childIndex.ofType ? siblings.filter { $0.tag == node.tag } : siblings
+            guard let position = peers.firstIndex(where: { $0 === node }),
+                  position + 1 == childIndex.index else { return false }
+        }
+
         let regex = try? NSRegularExpression(pattern: #"([.#]?[\w-]+|\[[^\]]+\])"#)
-        let ns = trimmed as NSString
-        let tokens = regex?.matches(in: trimmed, range: NSRange(location: 0, length: ns.length)) ?? []
+        let ns = baseSelector as NSString
+        let tokens = regex?.matches(in: baseSelector, range: NSRange(location: 0, length: ns.length)) ?? []
         for m in tokens {
             let token = ns.substring(with: m.range)
             if token.hasPrefix(".") {
@@ -84,13 +219,25 @@ final class MiniHTMLNode {
                 ok = ok && node.attributes["id"] == String(token.dropFirst())
             } else if token.hasPrefix("[") {
                 let inner = String(token.dropFirst().dropLast())
-                let kv = inner.split(separator: "=", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-                guard let attr = kv.first else { ok = false; break }
-                if kv.count == 1 {
-                    ok = ok && node.attributes[attr.lowercased()] != nil
+                let operators = ["*=", "^=", "$=", "~=", "|=", "="]
+                if let operation = operators.first(where: { inner.contains($0) }),
+                   let range = inner.range(of: operation) {
+                    let attr = inner[..<range.lowerBound].trimmingCharacters(in: .whitespaces).lowercased()
+                    let expected = inner[range.upperBound...]
+                        .trimmingCharacters(in: .whitespacesAndNewlines)
+                        .trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
+                    guard let actual = node.attributes[attr] else { ok = false; break }
+                    switch operation {
+                    case "*=": ok = ok && actual.contains(expected)
+                    case "^=": ok = ok && actual.hasPrefix(expected)
+                    case "$=": ok = ok && actual.hasSuffix(expected)
+                    case "~=": ok = ok && actual.split(whereSeparator: { $0.isWhitespace }).contains { String($0) == expected }
+                    case "|=": ok = ok && (actual == expected || actual.hasPrefix(expected + "-"))
+                    default: ok = ok && actual == expected
+                    }
                 } else {
-                    let value = kv[1].trimmingCharacters(in: CharacterSet(charactersIn: "\"'"))
-                    ok = ok && node.attributes[attr.lowercased()] == value
+                    let attr = inner.trimmingCharacters(in: .whitespaces).lowercased()
+                    ok = ok && node.attributes[attr] != nil
                 }
             } else {
                 ok = ok && node.tag == token.lowercased()
@@ -143,11 +290,11 @@ enum MiniHTML {
                 || ["br", "img", "meta", "link", "input", "hr", "area", "col", "embed", "source", "wbr"].contains(tag)
 
             if closing {
-                // Pop until matching tag (tolerate mismatches).
-                if let idx = stack.lastIndex(where: { $0.tag == tag }) {
-                    stack.removeSubrange((idx + 1)...)
-                }
                 flushText()
+                // Pop through the matching tag; malformed nesting is tolerated.
+                if let idx = stack.lastIndex(where: { $0.tag == tag }), idx > 0 {
+                    stack.removeSubrange(idx..<stack.count)
+                }
             } else {
                 flushText()
                 let node = MiniHTMLNode(tag: tag)
