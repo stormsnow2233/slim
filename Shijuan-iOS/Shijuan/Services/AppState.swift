@@ -256,7 +256,18 @@ final class AppState: ObservableObject {
         if !detail.author.isEmpty { books[index].author = detail.author }
         if !detail.intro.isEmpty { books[index].intro = detail.intro }
         if let coverURL = detail.coverURL { books[index].coverURL = coverURL }
-        books[index].chapters = detail.chapters.map { Chapter(id: $0.id, title: $0.title, url: $0.url, isCached: $0.isCached) }
+        var usedChapterIDs = Set<Int>()
+        books[index].chapters = detail.chapters.enumerated().map { offset, summary in
+            var chapterID = summary.id
+            if usedChapterIDs.contains(chapterID) {
+                chapterID = offset
+                while usedChapterIDs.contains(chapterID) {
+                    chapterID += 1
+                }
+            }
+            usedChapterIDs.insert(chapterID)
+            return Chapter(id: chapterID, title: summary.title, url: summary.url, isCached: summary.isCached)
+        }
         books[index].isDownloaded = !detail.chapters.isEmpty && detail.chapters.allSatisfy(\.isCached)
     }
 

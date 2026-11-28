@@ -15,13 +15,13 @@
 - HTML/JSON/纯文本正文兼容与清洗
 - 阅读字号、行距、夜间背景和进度保存
 - 章节缓存、后台 BGProcessingTask 调度及通知
-- 漫画搜索/详情/竖向阅读（JM 代理，ComicCatalog/ComicViews）
+- 漫画柜、包子漫画、动漫屋、漫画人、极速漫画的应用内源站浏览入口
 - 规则书源引擎 MVP（RuleSource/MiniHTML/RuleEngine，JSON 导入、启停）
 - 文件化章节正文存储（Application Support/ChapterContents）与缓存暂停/恢复
 - Cloudflare 清算（最小实现）：403/503 时隐形 WKWebView 解算并注入 cookies
 - Wenku8/JM/自定义代理配置
 
-当前仍不是 Android 全功能等价版本：完整 Android Sources/Rules 规则引擎、可靠持续后台下载/暂停恢复（BGTask 仅机会调度）和真机验证仍待实现。EPUB 导入为无第三方依赖的最小实现（ZIP 中心目录 + Compression 解压 + XMLParser 解析 OPF/spine），不支持 DRM 加密书籍。
+当前仍不是 Android 全功能等价版本：漫画源目前通过应用内网页浏览，原生章节解析/图片阅读、完整 Android Sources/Rules 规则引擎、可靠持续后台下载/暂停恢复（BGTask 仅机会调度）和真机验证仍待实现。EPUB 导入为无第三方依赖的最小实现（ZIP 中心目录 + Compression 解压 + XMLParser 解析 OPF/spine），不支持 DRM 加密书籍。
 
 ## 最近完善
 

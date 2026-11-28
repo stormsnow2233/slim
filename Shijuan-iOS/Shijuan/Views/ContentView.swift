@@ -344,7 +344,7 @@ private struct SettingsView: View {
                 Section("关于") {
                     LabeledContent("应用", value: "拾卷 iOS")
                     LabeledContent("版本", value: "0.2.0")
-                    Text("支持 TXT/PDF/EPUB 导入、规则书源、在线阅读与 AniList 漫画目录。")
+                    Text("支持 TXT/PDF/EPUB 导入、规则书源、在线阅读与漫画源站浏览。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
