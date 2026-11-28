@@ -191,8 +191,7 @@ fun ComicScreen(
         hits = emptyList()
         list = emptyList()
         fromRank = false
-        val isJmKeyword = kw.startsWith("jm", ignoreCase = true) || kw.startsWith("车牌") || (kw.all { it.isDigit() } && kw.length in 4..8)
-        val allSources = ComicRepo.sources.map { it.id } + (if (store.isJmEnabled() && isJmKeyword) listOf("jm") else emptyList())
+        val allSources = ComicRepo.sources.map { it.id }
         withContext(Dispatchers.IO) {
             ComicRepo.searchAll(kw, allSources) { hit ->
                 // 增量流式渲染：任一源出结果立刻呈现在屏幕上，无需等待其它慢源

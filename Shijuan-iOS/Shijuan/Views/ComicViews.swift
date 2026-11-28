@@ -2,149 +2,139 @@ import SwiftUI
 import UIKit
 
 struct ComicSearchView: View {
-    @EnvironmentObject private var state: AppState
     @State private var keyword = ""
     @State private var results: [Comic] = []
+    @State private var isShowingSearchResults = false
     @State private var isSearching = false
     @State private var error: String?
 
     var body: some View {
         NavigationStack {
             List {
-                if isSearching { ProgressView("正在搜索…") }
+                if isSearching { ProgressView("正在加载…") }
                 if let error { Text(error).foregroundStyle(.red) }
-                ForEach(results) { comic in
-                    NavigationLink { ComicDetailView(comic: comic) } label: {
-                        HStack(spacing: 12) {
-                            if !comic.cover.isEmpty {
-                                ComicImageView(
-                                    url: comic.cover,
-                                    referer: comic.apiBase.map { $0.hasSuffix("/") ? $0 : $0 + "/" }
-                                        ?? (state.proxy.jmBaseURL.absoluteString + "/")
-                                )
-                                    .frame(width: 64, height: 88)
-                                    .clipShape(RoundedRectangle(cornerRadius: 8))
-                            }
-                            VStack(alignment: .leading, spacing: 5) {
-                                Text(comic.name).font(.headline)
-                                Text(comic.author.isEmpty ? comic.sourceName : comic.author)
-                                    .font(.subheadline).foregroundStyle(.secondary)
-                                if !comic.intro.isEmpty {
-                                    Text(comic.intro).font(.caption).foregroundStyle(.secondary).lineLimit(2)
-                                }
-                            }
-                        }
+                if !isShowingSearchResults && !results.isEmpty {
+                    Section("热门推荐") {
+                        comicRows
+                    }
+                } else {
+                    Section("搜索结果") {
+                        comicRows
                     }
                 }
-                if !isSearching && error == nil && results.isEmpty && !keyword.isEmpty {
-                    Text("没有找到结果").foregroundStyle(.secondary)
+                if !isSearching && error == nil && results.isEmpty {
+                    Text(isShowingSearchResults ? "没有找到结果" : "暂时没有推荐内容")
+                        .foregroundStyle(.secondary)
+                }
+                Section {
+                    Text("作品信息来自 AniList。此目录仅提供作品元数据与条目链接，不提供章节阅读。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
             }
             .searchable(text: $keyword, prompt: "搜索漫画")
             .navigationTitle("漫画")
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
-                    Button("搜索") {
-                        let query = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
-                        guard !query.isEmpty else { return }
-                        isSearching = true
-                        error = nil
-                        Task {
-                            do {
-                                results = try await ComicCatalog.search(keyword: query, base: state.proxy.jmBaseURL)
-                            } catch {
-                                self.error = "搜索失败：\(error.localizedDescription)"
-                            }
-                            isSearching = false
+                    Button(keyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty ? "刷新" : "搜索") {
+                        Task { await loadCatalog() }
+                    }
+                    .disabled(isSearching)
+                }
+            }
+            .task {
+                if results.isEmpty { await loadCatalog() }
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var comicRows: some View {
+        ForEach(results) { comic in
+            NavigationLink { ComicDetailView(comic: comic) } label: {
+                HStack(spacing: 12) {
+                    if !comic.cover.isEmpty {
+                        ComicImageView(url: comic.cover)
+                            .frame(width: 64, height: 88)
+                            .clipShape(RoundedRectangle(cornerRadius: 8))
+                    }
+                    VStack(alignment: .leading, spacing: 5) {
+                        Text(comic.name).font(.headline)
+                        Text(comic.sourceName)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                        if !comic.intro.isEmpty {
+                            Text(comic.intro)
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                                .lineLimit(2)
                         }
-                    }.disabled(keyword.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty || isSearching)
+                    }
                 }
             }
         }
+    }
+
+    @MainActor
+    private func loadCatalog() async {
+        let query = keyword.trimmingCharacters(in: .whitespacesAndNewlines)
+        isSearching = true
+        error = nil
+        isShowingSearchResults = !query.isEmpty
+        results = []
+        do {
+            results = query.isEmpty
+                ? try await AniListComicCatalog.recommendations()
+                : try await AniListComicCatalog.search(keyword: query)
+        } catch {
+            self.error = "加载失败：\(error.localizedDescription)"
+        }
+        isSearching = false
     }
 }
 
 struct ComicDetailView: View {
-    @EnvironmentObject private var state: AppState
     let comic: Comic
-    @State private var chapters: [ComicChapter] = []
-    @State private var isLoading = false
-    @State private var error: String?
-
-    private var jmBase: URL {
-        guard let apiBase = comic.apiBase, let url = URL(string: apiBase) else { return state.proxy.jmBaseURL }
-        return url
-    }
 
     var body: some View {
         List {
             Section {
-                VStack(alignment: .leading, spacing: 6) {
-                    Text(comic.name).font(.title2.bold())
-                    if !comic.author.isEmpty { Text(comic.author).foregroundStyle(.secondary) }
-                    if !comic.intro.isEmpty { Text(comic.intro).font(.caption).foregroundStyle(.secondary) }
-                }
-            }
-            Section("章节") {
-                if isLoading { ProgressView("正在加载章节…") }
-                if let error { Text(error).foregroundStyle(.red) }
-                ForEach(chapters) { chapter in
-                    NavigationLink { ComicReaderView(chapter: chapter, base: jmBase) } label: {
-                        Text(chapter.name)
+                HStack(alignment: .top, spacing: 14) {
+                    if !comic.cover.isEmpty {
+                        ComicImageView(url: comic.cover)
+                            .frame(width: 96, height: 132)
+                            .clipShape(RoundedRectangle(cornerRadius: 10))
+                    }
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text(comic.name).font(.title3.bold())
+                        Text(comic.sourceName)
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
                     }
                 }
+                .padding(.vertical, 4)
+                if !comic.intro.isEmpty {
+                    Text(comic.intro)
+                        .font(.body)
+                        .textSelection(.enabled)
+                }
+            }
+            Section {
+                if let url = URL(string: comic.url) {
+                    Link("在 AniList 打开作品条目", destination: url)
+                }
+                Text("AniList 提供作品目录与元数据；章节及阅读请使用作品授权发行渠道。")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
         }
         .navigationTitle(comic.name)
         .navigationBarTitleDisplayMode(.inline)
-        .task {
-            guard chapters.isEmpty else { return }
-            isLoading = true
-            error = nil
-            do {
-                chapters = try await ComicCatalog.chapters(comic: comic, base: jmBase)
-            } catch let chaptersError {
-                error = "加载章节失败：\(chaptersError.localizedDescription)"
-            }
-            isLoading = false
-        }
-    }
-}
-
-struct ComicReaderView: View {
-    let chapter: ComicChapter
-    let base: URL
-    @State private var pages: ComicPages?
-    @State private var error: String?
-
-    var body: some View {
-        ScrollView {
-            if let pages {
-                LazyVStack(spacing: 4) {
-                    ForEach(Array(pages.images.enumerated()), id: \.offset) { _, imageURL in
-                        ComicImageView(url: imageURL, referer: pages.referer)
-                    }
-                }
-            } else if let error {
-                Text(error).foregroundStyle(.red).padding()
-            } else {
-                ProgressView("正在加载图片…").padding()
-            }
-        }
-        .navigationTitle(chapter.name)
-        .navigationBarTitleDisplayMode(.inline)
-        .task {
-            if pages == nil {
-                do { pages = try await ComicCatalog.pages(chapter: chapter, base: base) }
-                catch let pagesError { error = "加载图片失败：\(pagesError.localizedDescription)" }
-            }
-        }
     }
 }
 
 private struct ComicImageView: View {
     let url: String
-    let referer: String
     @State private var image: UIImage?
     @State private var failed = false
 
@@ -153,7 +143,8 @@ private struct ComicImageView: View {
             if let image {
                 Image(uiImage: image).resizable().scaledToFit()
             } else if failed {
-                Text("图片加载失败").font(.caption).foregroundStyle(.secondary)
+                Image(systemName: "photo")
+                    .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, maxHeight: .infinity)
             } else {
                 ProgressView().frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -168,10 +159,6 @@ private struct ComicImageView: View {
             }
             var request = URLRequest(url: imageURL)
             request.timeoutInterval = 25
-            request.setValue("Mozilla/5.0 (Linux; Android 13; Pixel 5) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Mobile Safari/537.36",
-                             forHTTPHeaderField: "User-Agent")
-            request.setValue(referer, forHTTPHeaderField: "Referer")
-            request.setValue("1", forHTTPHeaderField: "X-JM")
             do {
                 let (data, response) = try await URLSession.shared.data(for: request)
                 guard let http = response as? HTTPURLResponse,
@@ -180,7 +167,7 @@ private struct ComicImageView: View {
                     failed = true
                     return
                 }
-                image = JmImageDescrambler.descramble(loadedImage, imageURL: imageURL)
+                image = loadedImage
             } catch {
                 failed = true
             }

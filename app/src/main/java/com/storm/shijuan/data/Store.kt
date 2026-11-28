@@ -276,10 +276,10 @@ class Store(val context: Context) {
         return list
     }
 
-    // ── JM 入口启用控制（彩蛋解锁） ──
-    fun isJmEnabled(): Boolean = sp.getBoolean("jm_enabled", false)
+    // Keep the existing preference key so upgrades retain the user's catalog visibility choice.
+    fun isComicCatalogEnabled(): Boolean = sp.getBoolean("jm_enabled", true)
 
-    fun setJmEnabled(enabled: Boolean) {
+    fun setComicCatalogEnabled(enabled: Boolean) {
         sp.edit().putBoolean("jm_enabled", enabled).apply()
     }
 

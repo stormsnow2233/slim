@@ -53,9 +53,6 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
     var clashResult by remember { mutableStateOf<ClashDetector.Result?>(null) }
     var clashDetecting by remember { mutableStateOf(false) }
 
-    var jmMirror by remember { mutableStateOf(store.jmProxyUrl()) }
-    var isJmDirect by remember { mutableStateOf(store.isJmDirectEnabled()) }
-    var savedJm by remember { mutableStateOf(false) }
 
     fun detectClash() {
         if (clashDetecting) return
@@ -370,92 +367,6 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                             fontSize = 11.sp,
                             color = MaterialTheme.colorScheme.onSurfaceVariant,
                         )
-                    }
-                }
-            }
-
-            // ── 自定义 JM 镜像源（仅在开启 JM 源时展示） ──
-            if (store.isJmEnabled()) {
-                Spacer(Modifier.height(12.dp))
-                LiquidGlassCard(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
-                    Column(Modifier.padding(16.dp)) {
-                        Row(verticalAlignment = Alignment.CenterVertically) {
-                            Column(Modifier.weight(1f)) {
-                                Text("自定义 JM 镜像源", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
-                                Spacer(Modifier.height(2.dp))
-                                Text(
-                                    if (isJmDirect) "已开启直连 · 跳过镜像代理" else "JMcomic 漫画线路反代与镜像加速",
-                                    fontSize = 12.sp,
-                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                )
-                            }
-                            AdaptiveSwitch(
-                                checked = isJmDirect,
-                                onCheckedChange = { direct ->
-                                    isJmDirect = direct
-                                    store.setJmDirectEnabled(direct)
-                                    savedJm = true
-                                }
-                            )
-                        }
-
-                        Spacer(Modifier.height(8.dp))
-                        Text(
-                            text = if (isJmDirect) "当前状态：已关闭镜像源（官方直连模式）" else "当前状态：使用镜像源加速（推荐）",
-                            fontSize = 12.sp,
-                            color = if (isJmDirect) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
-                            fontWeight = FontWeight.Medium
-                        )
-
-                        Spacer(Modifier.height(10.dp))
-                        OutlinedTextField(
-                            value = jmMirror,
-                            onValueChange = {
-                                jmMirror = it
-                                savedJm = false
-                            },
-                            modifier = Modifier.fillMaxWidth(),
-                            label = { Text("JM 镜像源地址", fontSize = 12.sp) },
-                            placeholder = { Text(Store.DEFAULT_JM_MIRROR, fontSize = 13.sp) },
-                            singleLine = true,
-                            enabled = !isJmDirect,
-                            shape = RoundedCornerShape(12.dp),
-                        )
-
-                        Spacer(Modifier.height(10.dp))
-                        Row(
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically,
-                            modifier = Modifier.fillMaxWidth()
-                        ) {
-                            AssistChip(
-                                onClick = {
-                                    jmMirror = Store.DEFAULT_JM_MIRROR
-                                    store.setJmProxyUrl(Store.DEFAULT_JM_MIRROR)
-                                    savedJm = true
-                                },
-                                label = { Text("重置为默认", fontSize = 12.sp) },
-                            )
-                            Spacer(Modifier.weight(1f))
-                            Button(
-                                onClick = {
-                                    store.setJmProxyUrl(jmMirror.trim())
-                                    savedJm = true
-                                },
-                                enabled = !isJmDirect,
-                                shape = RoundedCornerShape(10.dp),
-                            ) {
-                                Text(if (savedJm) "已保存" else "保存镜像源")
-                            }
-                        }
-                        if (savedJm) {
-                            Spacer(Modifier.height(6.dp))
-                            Text(
-                                "JM 镜像源配置已更新",
-                                fontSize = 11.sp,
-                                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                            )
-                        }
                     }
                 }
             }

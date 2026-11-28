@@ -38,7 +38,10 @@ struct ContentView: View {
             HStack(spacing: 0) {
                 ForEach(HomeTab.allCases) { tab in
                     Button {
-                        withAnimation(.easeInOut(duration: 0.18)) { selectedTab = tab }
+                        guard selectedTab != tab else { return }
+                        var transaction = Transaction()
+                        transaction.disablesAnimations = true
+                        withTransaction(transaction) { selectedTab = tab }
                     } label: {
                         VStack(spacing: 4) {
                             Image(systemName: tab.icon)
@@ -281,8 +284,6 @@ private struct AddRuleSourceRow: View {
 
 private struct SettingsView: View {
     @EnvironmentObject private var state: AppState
-    @State private var jmProxyAddress = ""
-    @State private var jmProxyError: String?
 
     var body: some View {
         NavigationStack {
@@ -297,17 +298,6 @@ private struct SettingsView: View {
                         .textInputAutocapitalization(.never)
                         .autocorrectionDisabled()
                     Text("Wenku8：\(state.proxy.wenku8BaseURL.host ?? "未配置")")
-                        .font(.caption).foregroundStyle(.secondary)
-                    TextField("JM 漫画代理地址", text: $jmProxyAddress)
-                        .textInputAutocapitalization(.never)
-                        .autocorrectionDisabled()
-                        .keyboardType(.URL)
-                        .onSubmit(saveJMProxy)
-                    Button("应用 JM 代理地址", action: saveJMProxy)
-                    if let jmProxyError {
-                        Text(jmProxyError).font(.caption).foregroundStyle(.red)
-                    }
-                    Text("JM：\(state.proxy.jmBaseURL.host ?? "未配置")")
                         .font(.caption).foregroundStyle(.secondary)
                 }
                 Section("自定义书源") {
@@ -354,25 +344,11 @@ private struct SettingsView: View {
                 Section("关于") {
                     LabeledContent("应用", value: "拾卷 iOS")
                     LabeledContent("版本", value: "0.2.0")
-                    Text("支持 TXT/PDF/EPUB 导入、规则书源、在线阅读、漫画和章节缓存。")
+                    Text("支持 TXT/PDF/EPUB 导入、规则书源、在线阅读与 AniList 漫画目录。")
                         .font(.caption).foregroundStyle(.secondary)
                 }
             }
-            .onAppear { jmProxyAddress = state.proxy.jmBaseURL.absoluteString }
             .navigationTitle("设置")
         }
-    }
-
-    private func saveJMProxy() {
-        let value = jmProxyAddress.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard let url = URL(string: value),
-              ["http", "https"].contains(url.scheme?.lowercased() ?? ""),
-              url.host != nil else {
-            jmProxyError = "请输入有效的 HTTP 或 HTTPS 代理地址。"
-            return
-        }
-        state.proxy.jmBaseURL = url
-        jmProxyAddress = url.absoluteString
-        jmProxyError = nil
     }
 }

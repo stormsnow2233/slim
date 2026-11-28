@@ -75,7 +75,7 @@ enum class Section(val label: String, val desc: String, val icon: ImageVector) {
     Shelf("书架", "综合书架 · 本地导入 · 畅读", Icons.Rounded.CollectionsBookmark),
     Novel("小说", "多源搜索 · 极速聚合 · 18+ 源", Icons.Rounded.Book),
     Comic("漫画", "动漫屋 · 漫画人 · 极速聚合", Icons.Rounded.PhotoLibrary),
-    JM("JM源", "JMcomic 禁漫 · 单源独享", Icons.Rounded.AutoAwesome),
+    Catalog("漫画目录", "AniList 热门作品与搜索", Icons.Rounded.AutoAwesome),
 }
 
 sealed class Route {
@@ -139,7 +139,7 @@ fun ShijuanApp(store: Store) {
     val records = remember(store.shelfTick) { store.records() }
     val comicShelf = remember(store.comicTick) { store.comicShelf() }
     val comicRecords = remember(store.comicTick) { store.comicRecords() }
-    var isJmEnabled by remember { mutableStateOf(store.isJmEnabled()) }
+    var catalogEnabled by remember { mutableStateOf(store.isComicCatalogEnabled()) }
 
     // 离线：书架上只留本地有正文缓存的，最近读的也一样；JM 漫画永不在书架显示
     val shelfShown = remember(online, shelf) {
@@ -178,8 +178,8 @@ fun ShijuanApp(store: Store) {
 
     LaunchedEffect(drawerState.isOpen) {
         if (drawerState.isOpen) {
-            isJmEnabled = store.isJmEnabled()
-            if (!isJmEnabled && section == Section.JM) {
+            catalogEnabled = store.isComicCatalogEnabled()
+            if (!catalogEnabled && section == Section.Catalog) {
                 section = Section.Shelf
             }
         }
@@ -201,8 +201,8 @@ fun ShijuanApp(store: Store) {
                 else -> Route.Main
             }
             if (prev is Route.Settings) {
-                isJmEnabled = store.isJmEnabled()
-                if (!isJmEnabled && section == Section.JM) {
+                catalogEnabled = store.isComicCatalogEnabled()
+                if (!catalogEnabled && section == Section.Catalog) {
                     section = Section.Shelf
                 }
             }
@@ -253,7 +253,7 @@ fun ShijuanApp(store: Store) {
         drawerContent = {
             SectionDrawer(
                 current = section,
-                showJm = isJmEnabled,
+                showCatalog = catalogEnabled,
                 onPick = { s ->
                     section = s
                     route = Route.Main
@@ -375,12 +375,9 @@ fun ShijuanApp(store: Store) {
                                     onOpenCache = { route = Route.Cache() },
                                     state = comicSearchState,
                                 )
-                                Section.JM -> JmComicScreen(
-                                    store = store,
-                                    onOpen = { route = Route.ComicDetail(it) },
+                                Section.Catalog -> AniListComicScreen(
                                     onOpenDrawer = openDrawer,
                                     offline = !online,
-                                    onOpenCache = { route = Route.Cache() },
                                 )
                             }
                         }
@@ -407,8 +404,8 @@ fun ShijuanApp(store: Store) {
                         is Route.Settings -> SettingsScreen(
                             store = store,
                             onBack = {
-                                isJmEnabled = store.isJmEnabled()
-                                if (!isJmEnabled && section == Section.JM) {
+                                catalogEnabled = store.isComicCatalogEnabled()
+                                if (!catalogEnabled && section == Section.Catalog) {
                                     section = Section.Shelf
                                 }
                                 route = Route.Main
@@ -417,9 +414,9 @@ fun ShijuanApp(store: Store) {
                             onOpenCache = { route = Route.Cache(fromSettings = true) },
                             onOpenSources = { route = Route.Sources(fromSettings = true) },
                             onShowUpdate = { activeUpdateInfo = it },
-                            onJmEnabledChanged = { enabled ->
-                                isJmEnabled = enabled
-                                if (!enabled && section == Section.JM) {
+                            onCatalogEnabledChanged = { enabled ->
+                                catalogEnabled = enabled
+                                if (!enabled && section == Section.Catalog) {
                                     section = Section.Shelf
                                 }
                             },
@@ -537,14 +534,14 @@ private fun OfflineBar(onRetry: () -> Unit) {
 @Composable
 private fun SectionDrawer(
     current: Section,
-    showJm: Boolean = false,
+    showCatalog: Boolean = false,
     onPick: (Section) -> Unit,
     onOpenCache: () -> Unit = {},
     onOpenSettings: () -> Unit = {},
 ) {
     val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
-    val sections = remember(showJm) {
-        if (showJm) Section.entries else Section.entries.filter { it != Section.JM }
+    val sections = remember(showCatalog) {
+        if (showCatalog) Section.entries else Section.entries.filter { it != Section.Catalog }
     }
     ModalDrawerSheet(
         drawerShape = RoundedCornerShape(topEnd = 26.dp, bottomEnd = 26.dp),
