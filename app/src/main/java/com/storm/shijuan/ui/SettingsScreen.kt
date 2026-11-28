@@ -3,6 +3,13 @@ package com.storm.shijuan.ui
 import android.content.Intent
 import android.net.Uri
 import android.widget.Toast
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.animateColorAsState
+import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.expandVertically
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,7 +28,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
@@ -421,6 +431,8 @@ private fun ThemeSettingsCard(
     val isClassic = currentStyle == AppThemeStyle.Classic.id
     val effectiveSeed = customSeedColor?.let { Color(it) }
         ?: if (isClassic) Color(0xFF9C4A2F) else Color(0xFF3482FF)
+    val selectedPreset = ThemePresets.list.firstOrNull { it.color.toArgb() == effectiveSeed.toArgb() }
+    val effectiveHex = remember(effectiveSeed) { ThemeColorGenerator.colorToHex(effectiveSeed) }
 
     var showCustomPicker by remember { mutableStateOf(false) }
 
@@ -539,14 +551,21 @@ private fun ThemeSettingsCard(
             ) {
                 ThemePresets.list.forEach { preset ->
                     val isSelected = effectiveSeed.toArgb() == preset.color.toArgb()
+                    val scale by animateFloatAsState(if (isSelected) 1.12f else 1f, label = "presetScale")
+                    val borderColor by animateColorAsState(
+                        if (isSelected) MaterialTheme.colorScheme.onSurface else Color.Black.copy(alpha = 0.12f),
+                        label = "presetBorder"
+                    )
                     Box(
                         modifier = Modifier
                             .size(34.dp)
+                            .graphicsLayer(scaleX = scale, scaleY = scale)
                             .clip(CircleShape)
+                            .semantics { contentDescription = preset.name }
                             .background(preset.color)
                             .border(
                                 width = if (isSelected) 3.dp else 1.dp,
-                                color = if (isSelected) MaterialTheme.colorScheme.onSurface else Color.Black.copy(alpha = 0.12f),
+                                color = borderColor,
                                 shape = CircleShape
                             )
                             .clickable {
@@ -607,7 +626,12 @@ private fun ThemeSettingsCard(
             }
 
             // 自定义调色盘面板
-            if (showCustomPicker) {
+            AnimatedVisibility(
+                visible = showCustomPicker,
+                enter = expandVertically() + fadeIn(),
+                exit = shrinkVertically() + fadeOut()
+            ) {
+                Column {
                 Spacer(Modifier.height(14.dp))
                 Surface(
                     shape = RoundedCornerShape(14.dp),
@@ -618,6 +642,26 @@ private fun ThemeSettingsCard(
                         modifier = Modifier.padding(14.dp),
                         horizontalAlignment = Alignment.CenterHorizontally
                     ) {
+                        Surface(
+                            modifier = Modifier.fillMaxWidth(),
+                            shape = RoundedCornerShape(50),
+                            color = effectiveSeed.copy(alpha = 0.14f),
+                            border = BorderStroke(1.dp, effectiveSeed.copy(alpha = 0.45f))
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                Box(Modifier.size(18.dp).clip(CircleShape).background(effectiveSeed))
+                                Spacer(Modifier.width(8.dp))
+                                Text(effectiveHex, fontWeight = FontWeight.Bold, fontSize = 13.sp)
+                                selectedPreset?.let {
+                                    Spacer(Modifier.width(8.dp))
+                                    Text("· ${it.name}", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                }
+                            }
+                        }
+                        Spacer(Modifier.height(10.dp))
                         // 1. Canva 可画交互色轮
                         Text(
                             text = "Canva 交互色轮 (触控拖拽选择色相与饱和度)",
@@ -721,6 +765,10 @@ private fun ThemeSettingsCard(
                             OutlinedTextField(
                                 value = hexInput,
                                 onValueChange = { hexInput = it },
+                                 isError = hexInput.isNotBlank() && ThemeColorGenerator.parseHexColorOrNull(hexInput) == null,
+                                 supportingText = if (hexInput.isNotBlank() && ThemeColorGenerator.parseHexColorOrNull(hexInput) == null) {
+                                     { Text("请输入有效的 Hex 颜色，例如 #3482FF") }
+                                 } else null,
                                 label = { Text("颜色代码 (Hex)") },
                                 placeholder = { Text("#3482FF") },
                                 singleLine = true,
@@ -729,6 +777,7 @@ private fun ThemeSettingsCard(
                             )
                             Spacer(Modifier.width(10.dp))
                             Button(
+                                 enabled = ThemeColorGenerator.parseHexColorOrNull(hexInput) != null,
                                 onClick = {
                                     val parsed = ThemeColorGenerator.parseHexColorOrNull(hexInput)
                                     if (parsed != null) {
@@ -741,6 +790,7 @@ private fun ThemeSettingsCard(
                             }
                         }
                     }
+                }
                 }
             }
 
@@ -847,8 +897,8 @@ private fun ThemeStyleCard(
     selected: Boolean,
     onClick: () -> Unit,
 ) {
-    val borderColor = if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant
-    val containerBg = if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f)
+    val borderColor by animateColorAsState(if (selected) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.outlineVariant, label = "styleBorder")
+    val containerBg by animateColorAsState(if (selected) MaterialTheme.colorScheme.primary.copy(alpha = 0.06f) else MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.35f), label = "styleBackground")
 
     Surface(
         modifier = modifier
