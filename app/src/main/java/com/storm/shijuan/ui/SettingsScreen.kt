@@ -59,6 +59,7 @@ fun SettingsScreen(
     onOpenNetwork: () -> Unit,
     onOpenCache: () -> Unit,
     onOpenSources: () -> Unit,
+    onOpenTheme: () -> Unit = {},
     jmEnabled: Boolean,
     onJmEnabledChanged: (Boolean) -> Unit,
     onShowUpdate: (ReleaseInfo) -> Unit,
@@ -141,16 +142,38 @@ fun SettingsScreen(
         ) {
             // ── 外观与主题 ──
             MiuixSectionHeader("外观与主题")
-            ThemeSettingsCard(
-                currentStyle = store.currentThemeStyle,
-                onStyleChange = { store.setAppThemeStyle(it) },
-                currentMode = store.currentThemeMode,
-                onModeChange = { store.setAppThemeMode(it) },
-                customSeedColor = store.customThemeSeedColor,
-                onCustomSeedColorChange = { store.saveCustomThemeSeedColor(it) },
-                isLiquidGlass = store.isLiquidGlassEnabled,
-                onLiquidGlassChange = { store.saveLiquidGlassEnabled(it) }
-            )
+            MiuixCardGroup {
+                MiuixPreferenceItem(
+                    title = "主题",
+                    subtitle = "调色盘、衍生颜色、显示模式与液态玻璃",
+                    icon = Icons.Rounded.Palette,
+                    onClick = onOpenTheme,
+                )
+            }
+            MiuixCardGroup {
+                Column(Modifier.padding(16.dp)) {
+                    Text("主题风格", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+                    Spacer(Modifier.height(10.dp))
+                    Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(12.dp)) {
+                        ThemeStyleCard(
+                            modifier = Modifier.weight(1f),
+                            title = "经典书卷",
+                            subtitle = "国风暖玉 · Google Sans",
+                            paletteColors = listOf(Color(0xFFF8F3EA), Color(0xFF9C4A2F), Color(0xFF5C7A5A)),
+                            selected = store.currentThemeStyle == AppThemeStyle.Classic.id,
+                            onClick = { store.setAppThemeStyle(AppThemeStyle.Classic.id) },
+                        )
+                        ThemeStyleCard(
+                            modifier = Modifier.weight(1f),
+                            title = "MiuiX 极简",
+                            subtitle = "澎湃蔚蓝 · MiSans",
+                            paletteColors = listOf(Color(0xFFF7F7F7), Color(0xFF3482FF), Color(0xFF00C4B4)),
+                            selected = store.currentThemeStyle != AppThemeStyle.Classic.id,
+                            onClick = { store.setAppThemeStyle(AppThemeStyle.MiuiX.id) },
+                        )
+                    }
+                }
+            }
 
             // ── 书源管理 ──
             MiuixSectionHeader("书源与内容")
@@ -438,6 +461,31 @@ fun SettingsScreen(
 }
 }
 
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+fun ThemeSettingsScreen(store: Store, onBack: () -> Unit) {
+    val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
+    Scaffold(
+        topBar = {
+            if (isMiuix) top.yukonga.miuix.kmp.basic.SmallTopAppBar(title = "主题", navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回") } })
+            else TopAppBar(title = { Text("主题") }, navigationIcon = { IconButton(onClick = onBack) { Icon(Icons.AutoMirrored.Rounded.ArrowBack, "返回") } })
+        },
+    ) { padding ->
+        Column(Modifier.fillMaxSize().padding(padding).verticalScroll(rememberScrollState()).padding(16.dp)) {
+            ThemeSettingsCard(
+                currentStyle = store.currentThemeStyle,
+                onStyleChange = { store.setAppThemeStyle(it) },
+                currentMode = store.currentThemeMode,
+                onModeChange = { store.setAppThemeMode(it) },
+                customSeedColor = store.customThemeSeedColor,
+                onCustomSeedColorChange = { store.saveCustomThemeSeedColor(it) },
+                isLiquidGlass = store.isLiquidGlassEnabled,
+                onLiquidGlassChange = { store.saveLiquidGlassEnabled(it) },
+            )
+        }
+    }
+}
+
 @Composable
 private fun ThemeSettingsCard(
     currentStyle: Int,
@@ -472,42 +520,6 @@ private fun ThemeSettingsCard(
 
     MiuixCardGroup {
         Column(modifier = Modifier.padding(16.dp)) {
-            Text(
-                text = "主题风格",
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.SemiBold
-            )
-            Text(
-                text = "选择心仪的应用配色方案与组件视觉质感",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(Modifier.height(14.dp))
-
-            // 主题风格卡片（经典书卷 VS MiuiX极简）
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
-            ) {
-                ThemeStyleCard(
-                    modifier = Modifier.weight(1f),
-                    title = "经典书卷",
-                    subtitle = "国风暖玉 · Google Sans",
-                    paletteColors = listOf(Color(0xFFF8F3EA), Color(0xFF9C4A2F), Color(0xFF5C7A5A)),
-                    selected = isClassic,
-                    onClick = { onStyleChange(AppThemeStyle.Classic.id) }
-                )
-                ThemeStyleCard(
-                    modifier = Modifier.weight(1f),
-                    title = "MiuiX 极简",
-                    subtitle = "澎湃蔚蓝 · MiSans",
-                    paletteColors = listOf(Color(0xFFF7F7F7), Color(0xFF3482FF), Color(0xFF00C4B4)),
-                    selected = !isClassic,
-                    onClick = { onStyleChange(AppThemeStyle.MiuiX.id) }
-                )
-            }
-
-            Spacer(Modifier.height(16.dp))
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
             Spacer(Modifier.height(14.dp))
 

@@ -832,7 +832,7 @@ class Store(val context: Context) {
 
     // ── 液态玻璃质感 (Liquid Glass · 方案三透镜折射算法) 全局开关 ──
     var isLiquidGlassEnabled: Boolean by mutableStateOf(
-        sp.getBoolean("liquid_glass_enabled", true)
+        sp.getBoolean("liquid_glass_enabled", false)
     )
         private set
 

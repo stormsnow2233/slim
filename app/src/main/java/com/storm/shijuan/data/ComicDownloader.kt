@@ -15,6 +15,8 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.coroutineScope
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
 import kotlinx.coroutines.sync.Semaphore
 import kotlinx.coroutines.sync.withPermit
 import org.json.JSONArray
@@ -558,12 +560,13 @@ object ComicDownloader {
         val reqHeaders = ComicRepo.imageHeaders(comic) + pages.headers
         val referer = pages.referer.ifBlank { reqHeaders["Referer"].orEmpty() }
 
-        val semaphore = Semaphore(4)
+        // 长篇任务通过更高的页并发摊薄每话解析/连接开销；OkHttp 单主机上限为 8，保持有界避免触发源站限流。
+        val semaphore = Semaphore(8)
         val okCounter = AtomicInteger(0)
 
         coroutineScope {
-            pages.images.forEachIndexed { idx, url ->
-                launch {
+            pages.images.mapIndexed { idx, url ->
+                async {
                     semaphore.withPermit {
                         if (cancelled[taskKey] == true) return@withPermit
                         while (paused[taskKey] == true) {
@@ -597,7 +600,7 @@ object ComicDownloader {
                         }
                     }
                 }
-            }
+            }.awaitAll()
         }
 
         val ok = okCounter.get()

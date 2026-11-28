@@ -56,7 +56,7 @@ import kotlin.math.roundToInt
 /**
  * 全局液态玻璃开关 CompositionLocal
  */
-val LocalLiquidGlassEnabled = compositionLocalOf { true }
+val LocalLiquidGlassEnabled = compositionLocalOf { false }
 
 /**
  * 极光流体环境微光场 (LiquidGlassAtmosphere)

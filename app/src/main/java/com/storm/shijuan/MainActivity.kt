@@ -83,6 +83,7 @@ sealed class Route {
     data object Search : Route()
     data class Sources(val fromSettings: Boolean = false) : Route()
     data object Settings : Route()
+    data object Theme : Route()
     data class Cache(val fromSettings: Boolean = false) : Route()
     data class Network(val fromSettings: Boolean = true) : Route()
     /** 自定义书源编辑；id 为 null 表示新建 */
@@ -103,6 +104,7 @@ private fun routeDepth(r: Route): Int = when (r) {
     is Route.Main -> 0
     is Route.Search -> 1
     is Route.Settings -> 1
+    is Route.Theme -> 2
     is Route.Detail -> 1
     is Route.ComicDetail -> if (r.fromCache) 3 else 1
     is Route.Cache -> if (r.fromSettings) 2 else 1
@@ -386,6 +388,8 @@ fun ShijuanApp(store: Store) {
                             onEditSource = { src -> route = Route.CustomSourceEdit(src.id, fromSettings = r.fromSettings) },
                         )
 
+                        is Route.Theme -> ThemeSettingsScreen(store = store, onBack = { route = Route.Settings })
+
                         is Route.Settings -> SettingsScreen(
                             store = store,
                             onBack = {
@@ -394,6 +398,7 @@ fun ShijuanApp(store: Store) {
                             onOpenNetwork = { route = Route.Network(fromSettings = true) },
                             onOpenCache = { route = Route.Cache(fromSettings = true) },
                             onOpenSources = { route = Route.Sources(fromSettings = true) },
+                            onOpenTheme = { route = Route.Theme },
                             jmEnabled = isJmEnabled,
                             onJmEnabledChanged = { enabled ->
                                 store.setJmEnabled(enabled)
