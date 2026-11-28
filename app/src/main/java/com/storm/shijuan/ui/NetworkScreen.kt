@@ -1,6 +1,7 @@
 package com.storm.shijuan.ui
 
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
@@ -10,6 +11,7 @@ import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.ArrowBack
 import androidx.compose.material.icons.rounded.Bolt
+import androidx.compose.material.icons.rounded.Refresh
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
@@ -20,6 +22,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.storm.shijuan.data.ClashDetector
 import com.storm.shijuan.data.Net
 import com.storm.shijuan.data.Store
 import kotlinx.coroutines.Dispatchers
@@ -46,6 +49,26 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
     var testing by remember { mutableStateOf(false) }
     var checks by remember { mutableStateOf<List<Triple<String, Boolean, String>>>(emptyList()) }
     val scope = rememberCoroutineScope()
+
+    var clashResult by remember { mutableStateOf<ClashDetector.Result?>(null) }
+    var clashDetecting by remember { mutableStateOf(false) }
+
+    var jmMirror by remember { mutableStateOf(store.jmProxyUrl()) }
+    var isJmDirect by remember { mutableStateOf(store.isJmDirectEnabled()) }
+    var savedJm by remember { mutableStateOf(false) }
+
+    fun detectClash() {
+        if (clashDetecting) return
+        clashDetecting = true
+        scope.launch {
+            clashResult = ClashDetector.detect(store)
+            clashDetecting = false
+        }
+    }
+
+    LaunchedEffect(Unit) {
+        detectClash()
+    }
 
     fun current(): Net.ProxyCfg = cfg.copy(
         host = host.trim(),
@@ -154,7 +177,7 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                 .padding(horizontal = 16.dp)
         ) {
             // ── 自定义代理卡片 ──
-            Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+            LiquidGlassCard(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {
@@ -250,7 +273,89 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                         )
                     }
 
-                    Spacer(Modifier.height(12.dp))
+                    Spacer(Modifier.height(14.dp))
+                    // ── 自动识别当前 Clash 节点 ──
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(RoundedCornerShape(14.dp))
+                            .background(MaterialTheme.colorScheme.onSurface.copy(alpha = 0.05f))
+                            .border(1.dp, MaterialTheme.colorScheme.onSurface.copy(alpha = 0.08f), RoundedCornerShape(14.dp))
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 14.dp, vertical = 12.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Column(Modifier.weight(1f)) {
+                                Text("当前 Clash 节点", fontSize = 12.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                Spacer(Modifier.height(3.dp))
+                                when {
+                                    clashDetecting -> {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            CircularProgressIndicator(Modifier.size(12.dp), strokeWidth = 2.dp)
+                                            Spacer(Modifier.width(6.dp))
+                                            Text("正在识别当前节点...", fontSize = 13.sp, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                        }
+                                    }
+                                    clashResult != null && clashResult!!.success -> {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("🚀 ", fontSize = 13.sp)
+                                            Text(
+                                                clashResult!!.nodeName,
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = OK_GREEN,
+                                                maxLines = 1,
+                                            )
+                                        }
+                                        if (clashResult!!.detail.isNotBlank()) {
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(
+                                                clashResult!!.detail,
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                maxLines = 1,
+                                            )
+                                        }
+                                    }
+                                    else -> {
+                                        Row(verticalAlignment = Alignment.CenterVertically) {
+                                            Text("⚠️ ", fontSize = 13.sp)
+                                            Text(
+                                                "识别失败",
+                                                fontSize = 13.sp,
+                                                fontWeight = FontWeight.Bold,
+                                                color = MaterialTheme.colorScheme.error,
+                                            )
+                                        }
+                                        if (clashResult != null && clashResult!!.detail.isNotBlank()) {
+                                            Spacer(Modifier.height(2.dp))
+                                            Text(
+                                                clashResult!!.detail,
+                                                fontSize = 11.sp,
+                                                color = MaterialTheme.colorScheme.error.copy(alpha = 0.8f),
+                                                maxLines = 1,
+                                            )
+                                        }
+                                    }
+                                }
+                            }
+                            IconButton(
+                                onClick = { detectClash() },
+                                enabled = !clashDetecting,
+                                modifier = Modifier.size(36.dp)
+                            ) {
+                                Icon(
+                                    Icons.Rounded.Refresh,
+                                    contentDescription = "重新识别",
+                                    tint = MaterialTheme.colorScheme.primary,
+                                    modifier = Modifier.size(18.dp)
+                                )
+                            }
+                        }
+                    }
+
+                    Spacer(Modifier.height(14.dp))
                     Button(
                         onClick = { save() },
                         modifier = Modifier.fillMaxWidth(),
@@ -269,10 +374,96 @@ fun NetworkScreen(store: Store, onBack: () -> Unit) {
                 }
             }
 
+            // ── 自定义 JM 镜像源（仅在开启 JM 源时展示） ──
+            if (store.isJmEnabled()) {
+                Spacer(Modifier.height(12.dp))
+                LiquidGlassCard(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+                    Column(Modifier.padding(16.dp)) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            Column(Modifier.weight(1f)) {
+                                Text("自定义 JM 镜像源", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.Bold)
+                                Spacer(Modifier.height(2.dp))
+                                Text(
+                                    if (isJmDirect) "已开启直连 · 跳过镜像代理" else "JMcomic 漫画线路反代与镜像加速",
+                                    fontSize = 12.sp,
+                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                )
+                            }
+                            AdaptiveSwitch(
+                                checked = isJmDirect,
+                                onCheckedChange = { direct ->
+                                    isJmDirect = direct
+                                    store.setJmDirectEnabled(direct)
+                                    savedJm = true
+                                }
+                            )
+                        }
+
+                        Spacer(Modifier.height(8.dp))
+                        Text(
+                            text = if (isJmDirect) "当前状态：已关闭镜像源（官方直连模式）" else "当前状态：使用镜像源加速（推荐）",
+                            fontSize = 12.sp,
+                            color = if (isJmDirect) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant,
+                            fontWeight = FontWeight.Medium
+                        )
+
+                        Spacer(Modifier.height(10.dp))
+                        OutlinedTextField(
+                            value = jmMirror,
+                            onValueChange = {
+                                jmMirror = it
+                                savedJm = false
+                            },
+                            modifier = Modifier.fillMaxWidth(),
+                            label = { Text("JM 镜像源地址", fontSize = 12.sp) },
+                            placeholder = { Text(Store.DEFAULT_JM_MIRROR, fontSize = 13.sp) },
+                            singleLine = true,
+                            enabled = !isJmDirect,
+                            shape = RoundedCornerShape(12.dp),
+                        )
+
+                        Spacer(Modifier.height(10.dp))
+                        Row(
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            modifier = Modifier.fillMaxWidth()
+                        ) {
+                            AssistChip(
+                                onClick = {
+                                    jmMirror = Store.DEFAULT_JM_MIRROR
+                                    store.setJmProxyUrl(Store.DEFAULT_JM_MIRROR)
+                                    savedJm = true
+                                },
+                                label = { Text("重置为默认", fontSize = 12.sp) },
+                            )
+                            Spacer(Modifier.weight(1f))
+                            Button(
+                                onClick = {
+                                    store.setJmProxyUrl(jmMirror.trim())
+                                    savedJm = true
+                                },
+                                enabled = !isJmDirect,
+                                shape = RoundedCornerShape(10.dp),
+                            ) {
+                                Text(if (savedJm) "已保存" else "保存镜像源")
+                            }
+                        }
+                        if (savedJm) {
+                            Spacer(Modifier.height(6.dp))
+                            Text(
+                                "JM 镜像源配置已更新",
+                                fontSize = 11.sp,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+
             Spacer(Modifier.height(12.dp))
 
             // ── 连通性体检 ──
-            Card(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
+            LiquidGlassCard(shape = RoundedCornerShape(18.dp), modifier = Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(16.dp)) {
                     Row(verticalAlignment = Alignment.CenterVertically) {
                         Column(Modifier.weight(1f)) {

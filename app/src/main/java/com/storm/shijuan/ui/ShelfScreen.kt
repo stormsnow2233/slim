@@ -18,6 +18,7 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowForward
 import androidx.compose.material.icons.rounded.Add
 import androidx.compose.material.icons.rounded.AutoStories
+import androidx.compose.material.icons.rounded.CloudDownload
 import androidx.compose.material.icons.rounded.MenuBook
 import androidx.compose.material.icons.rounded.PhotoLibrary
 import androidx.compose.material.icons.rounded.Search
@@ -33,6 +34,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.storm.shijuan.data.Book
+import com.storm.shijuan.data.BookImportManager
+import com.storm.shijuan.data.ImportTask
 import com.storm.shijuan.data.Comic
 import com.storm.shijuan.data.ComicDownloader
 import com.storm.shijuan.data.ComicRecord
@@ -77,29 +80,15 @@ fun ShelfScreen(
     val context = LocalContext.current
     val scope = rememberCoroutineScope()
     val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
+    val isLiquidGlass = LocalLiquidGlassEnabled.current
 
     var pendingUri by remember { mutableStateOf<Uri?>(null) }
     var pendingDetection by remember { mutableStateOf<DetectionResult?>(null) }
-    var importingTitle by remember { mutableStateOf<String?>(null) }
+    val importTask = BookImportManager.currentTask
 
     fun startImport(uri: Uri, fileName: String, type: ImportType) {
-        importingTitle = fileName
-        scope.launch(Dispatchers.IO) {
-            val result = if (type == ImportType.COMIC) {
-                LocalImporter.importComic(context, uri, fileName, store)
-            } else {
-                LocalImporter.importNovel(context, uri, fileName, store)
-            }
-            withContext(Dispatchers.Main) {
-                importingTitle = null
-                result.onSuccess {
-                    val label = if (type == ImportType.COMIC) "漫画书架" else "小说书架"
-                    Toast.makeText(context, "《$fileName》已成功导入并加入 $label！", Toast.LENGTH_SHORT).show()
-                    onImportSuccess()
-                }.onFailure { err ->
-                    Toast.makeText(context, "导入失败: ${err.message ?: "未知错误"}", Toast.LENGTH_LONG).show()
-                }
-            }
+        BookImportManager.startImport(context, uri, fileName, type, store) {
+            onImportSuccess()
         }
     }
 
@@ -186,7 +175,11 @@ fun ShelfScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(top = 8.dp, bottom = 8.dp)
-                            .then(if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)).padding(horizontal = 14.dp, vertical = 10.dp) else Modifier),
+                            .then(
+                                if (isLiquidGlass) Modifier.liquidGlass(enabled = true, shape = RoundedCornerShape(16.dp), elevation = 6.dp).padding(horizontal = 14.dp, vertical = 10.dp)
+                                else if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)).padding(horizontal = 14.dp, vertical = 10.dp)
+                                else Modifier
+                            ),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
@@ -278,12 +271,12 @@ fun ShelfScreen(
                 // 小说书架书籍
                 if (shelf.isEmpty()) {
                     item(key = "novel_empty") {
-                        Surface(
+                        LiquidGlassCard(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp),
                             shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                            enabled = isLiquidGlass,
                         ) {
                             Column(
                                 modifier = Modifier.padding(16.dp),
@@ -313,7 +306,11 @@ fun ShelfScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 6.dp)
-                                .then(if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)).padding(10.dp) else Modifier),
+                                .then(
+                                    if (isLiquidGlass) Modifier.liquidGlass(enabled = true, shape = RoundedCornerShape(16.dp), elevation = 6.dp).padding(10.dp)
+                                    else if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)).padding(10.dp)
+                                    else Modifier
+                                ),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             for (item in chunk) {
@@ -392,7 +389,11 @@ fun ShelfScreen(
                         modifier = Modifier
                             .fillMaxWidth()
                             .padding(bottom = 8.dp)
-                            .then(if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)).padding(horizontal = 14.dp, vertical = 10.dp) else Modifier),
+                            .then(
+                                if (isLiquidGlass) Modifier.liquidGlass(enabled = true, shape = RoundedCornerShape(16.dp), elevation = 6.dp).padding(horizontal = 14.dp, vertical = 10.dp)
+                                else if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f)).padding(horizontal = 14.dp, vertical = 10.dp)
+                                else Modifier
+                            ),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         Icon(
@@ -481,12 +482,12 @@ fun ShelfScreen(
                 // 漫画书架书籍
                 if (cleanComicShelf.isEmpty()) {
                     item(key = "comic_empty") {
-                        Surface(
+                        LiquidGlassCard(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 4.dp),
                             shape = RoundedCornerShape(14.dp),
-                            color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                            enabled = isLiquidGlass,
                         ) {
                             Column(
                                 modifier = Modifier.padding(16.dp),
@@ -516,7 +517,11 @@ fun ShelfScreen(
                             modifier = Modifier
                                 .fillMaxWidth()
                                 .padding(vertical = 6.dp)
-                                .then(if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)).padding(10.dp) else Modifier),
+                                .then(
+                                    if (isLiquidGlass) Modifier.liquidGlass(enabled = true, shape = RoundedCornerShape(16.dp), elevation = 6.dp).padding(10.dp)
+                                    else if (isMiuix) Modifier.clip(RoundedCornerShape(16.dp)).background(MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.3f)).padding(10.dp)
+                                    else Modifier
+                                ),
                             horizontalArrangement = Arrangement.spacedBy(12.dp),
                         ) {
                             for (c in chunk) {
@@ -682,28 +687,86 @@ fun ShelfScreen(
         }
 
         /* ════════════════ 导入中进度弹窗 ════════════════ */
-        if (importingTitle != null) {
+        if (importTask != null && !importTask.isBackground) {
             AdaptiveDialog(
                 onDismissRequest = {},
                 title = { Text("正在导入书籍", fontWeight = FontWeight.Bold) },
                 text = {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        modifier = Modifier.padding(vertical = 8.dp),
+                    Column(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .padding(vertical = 4.dp)
                     ) {
-                        CircularProgressIndicator(modifier = Modifier.size(32.dp), strokeWidth = 3.dp)
-                        Spacer(Modifier.width(16.dp))
-                        Column {
-                            Text("正在解析《${importingTitle}》...")
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
                             Text(
-                                "提取章节与图文数据中，请稍候",
-                                fontSize = 11.sp,
+                                text = "《${importTask.fileName}》",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.SemiBold,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f, fill = false)
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = "${(importTask.progress * 100).toInt()}%",
+                                style = MaterialTheme.typography.titleSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                        }
+                        Spacer(Modifier.height(12.dp))
+                        AdaptiveLinearProgressIndicator(
+                            progress = { importTask.progress },
+                            modifier = Modifier
+                                .fillMaxWidth()
+                                .height(8.dp),
+                            color = MaterialTheme.colorScheme.primary,
+                            trackColor = MaterialTheme.colorScheme.onSurface.copy(alpha = 0.12f)
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            CircularProgressIndicator(
+                                modifier = Modifier.size(14.dp),
+                                strokeWidth = 2.dp,
+                                color = MaterialTheme.colorScheme.primary
+                            )
+                            Spacer(Modifier.width(8.dp))
+                            Text(
+                                text = importTask.stage,
+                                fontSize = 12.sp,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
                             )
                         }
                     }
                 },
-                confirmButton = {},
+                confirmButton = {
+                    FilledTonalButton(
+                        onClick = {
+                            BookImportManager.moveToBackground(context)
+                            Toast.makeText(context, "已转入后台导入，可在通知栏查看进度", Toast.LENGTH_SHORT).show()
+                        },
+                        shape = RoundedCornerShape(12.dp),
+                        contentPadding = PaddingValues(horizontal = 14.dp, vertical = 8.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Rounded.CloudDownload,
+                            contentDescription = null,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(Modifier.width(6.dp))
+                        Text("后台导入", style = MaterialTheme.typography.labelLarge)
+                    }
+                },
                 dismissButton = {},
             )
         }

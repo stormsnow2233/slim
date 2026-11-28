@@ -139,6 +139,12 @@ class JmComicSource : ComicSource {
 
     private fun candidateHosts(): List<String> {
         val list = mutableListOf<String>()
+        val direct = store?.isJmDirectEnabled() ?: false
+        if (direct) {
+            list.add("https://www.cdnhth.club")
+            list.add("https://18comic.vip")
+            return list.distinct()
+        }
         val custom = store?.jmProxyUrl().orEmpty()
         if (custom.isNotBlank()) {
             list.add(custom.trimEnd('/'))

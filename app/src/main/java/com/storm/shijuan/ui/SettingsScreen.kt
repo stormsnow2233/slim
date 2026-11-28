@@ -11,6 +11,7 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.rounded.ArrowBack
@@ -20,9 +21,12 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.storm.shijuan.BuildConfig
@@ -59,39 +63,44 @@ fun SettingsScreen(
     var jmClickCount by remember { mutableIntStateOf(0) }
     var jmLastClickTime by remember { mutableLongStateOf(0L) }
     val isMiuix = LocalAppThemeStyle.current == AppThemeStyle.MiuiX
+    val isLiquidGlass = LocalLiquidGlassEnabled.current
 
-    Scaffold(
-        containerColor = MaterialTheme.colorScheme.background,
-        topBar = {
-            if (isMiuix) {
-                top.yukonga.miuix.kmp.basic.SmallTopAppBar(
-                    title = "设置",
-                    color = MaterialTheme.colorScheme.background,
+    LiquidGlassAtmosphere(
+        modifier = Modifier.fillMaxSize(),
+        enabled = isLiquidGlass,
+    ) {
+        Scaffold(
+            containerColor = Color.Transparent,
+            topBar = {
+                if (isMiuix) {
+                    top.yukonga.miuix.kmp.basic.SmallTopAppBar(
+                        title = "设置",
+                        color = Color.Transparent,
+                        navigationIcon = {
+                            IconButton(onClick = onBack) {
+                                Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
+                            }
+                        },
+                    )
+                } else TopAppBar(
+                    title = {
+                        Text(
+                            "设置",
+                            fontWeight = FontWeight.Bold,
+                            style = MaterialTheme.typography.titleLarge,
+                        )
+                    },
                     navigationIcon = {
                         IconButton(onClick = onBack) {
                             Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
                         }
                     },
-                )
-            } else TopAppBar(
-                title = {
-                    Text(
-                        "设置",
-                        fontWeight = FontWeight.Bold,
-                        style = MaterialTheme.typography.titleLarge,
+                    colors = TopAppBarDefaults.topAppBarColors(
+                        containerColor = Color.Transparent,
                     )
-                },
-                navigationIcon = {
-                    IconButton(onClick = onBack) {
-                        Icon(Icons.AutoMirrored.Rounded.ArrowBack, contentDescription = "返回")
-                    }
-                },
-                colors = TopAppBarDefaults.topAppBarColors(
-                    containerColor = MaterialTheme.colorScheme.background,
                 )
-            )
-        }
-    ) { innerPadding ->
+            }
+        ) { innerPadding ->
         Column(
             modifier = Modifier
                 .fillMaxSize()
@@ -105,7 +114,11 @@ fun SettingsScreen(
                 currentStyle = store.currentThemeStyle,
                 onStyleChange = { store.setAppThemeStyle(it) },
                 currentMode = store.currentThemeMode,
-                onModeChange = { store.setAppThemeMode(it) }
+                onModeChange = { store.setAppThemeMode(it) },
+                customSeedColor = store.customThemeSeedColor,
+                onCustomSeedColorChange = { store.saveCustomThemeSeedColor(it) },
+                isLiquidGlass = store.isLiquidGlassEnabled,
+                onLiquidGlassChange = { store.saveLiquidGlassEnabled(it) }
             )
 
             // ── 书源管理 ──
@@ -392,6 +405,7 @@ fun SettingsScreen(
         }
     }
 }
+}
 
 @Composable
 private fun ThemeSettingsCard(
@@ -399,7 +413,30 @@ private fun ThemeSettingsCard(
     onStyleChange: (Int) -> Unit,
     currentMode: Int,
     onModeChange: (Int) -> Unit,
+    customSeedColor: Int?,
+    onCustomSeedColorChange: (Int?) -> Unit,
+    isLiquidGlass: Boolean = true,
+    onLiquidGlassChange: (Boolean) -> Unit = {},
 ) {
+    val isClassic = currentStyle == AppThemeStyle.Classic.id
+    val effectiveSeed = customSeedColor?.let { Color(it) }
+        ?: if (isClassic) Color(0xFF9C4A2F) else Color(0xFF3482FF)
+
+    var showCustomPicker by remember { mutableStateOf(false) }
+
+    // 将当前有效种子颜色分解为 HSL
+    val currentHsl = remember(effectiveSeed) { ThemeColorGenerator.colorToHsl(effectiveSeed) }
+    var hue by remember(effectiveSeed) { mutableFloatStateOf(currentHsl[0]) }
+    var saturation by remember(effectiveSeed) { mutableFloatStateOf(currentHsl[1]) }
+    var lightness by remember(effectiveSeed) { mutableFloatStateOf(currentHsl[2]) }
+
+    val currentRgb = remember(effectiveSeed) { ThemeColorGenerator.colorToRgbInts(effectiveSeed) }
+    var rInput by remember(effectiveSeed) { mutableStateOf(currentRgb.first.toString()) }
+    var gInput by remember(effectiveSeed) { mutableStateOf(currentRgb.second.toString()) }
+    var bInput by remember(effectiveSeed) { mutableStateOf(currentRgb.third.toString()) }
+
+    var hexInput by remember(effectiveSeed) { mutableStateOf(ThemeColorGenerator.colorToHex(effectiveSeed)) }
+
     MiuixCardGroup {
         Column(modifier = Modifier.padding(16.dp)) {
             Text(
@@ -424,7 +461,7 @@ private fun ThemeSettingsCard(
                     title = "经典书卷",
                     subtitle = "国风暖玉 · Google Sans",
                     paletteColors = listOf(Color(0xFFF8F3EA), Color(0xFF9C4A2F), Color(0xFF5C7A5A)),
-                    selected = currentStyle == AppThemeStyle.Classic.id,
+                    selected = isClassic,
                     onClick = { onStyleChange(AppThemeStyle.Classic.id) }
                 )
                 ThemeStyleCard(
@@ -432,9 +469,334 @@ private fun ThemeSettingsCard(
                     title = "MiuiX 极简",
                     subtitle = "澎湃蔚蓝 · MiSans",
                     paletteColors = listOf(Color(0xFFF7F7F7), Color(0xFF3482FF), Color(0xFF00C4B4)),
-                    selected = currentStyle == AppThemeStyle.MiuiX.id,
+                    selected = !isClassic,
                     onClick = { onStyleChange(AppThemeStyle.MiuiX.id) }
                 )
+            }
+
+            Spacer(Modifier.height(16.dp))
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.35f))
+            Spacer(Modifier.height(14.dp))
+
+            // ── 调色盘与协议色彩衍生 ──
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        Text(
+                            text = "主题调色盘",
+                            style = MaterialTheme.typography.titleMedium,
+                            fontWeight = FontWeight.SemiBold
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Surface(
+                            shape = RoundedCornerShape(6.dp),
+                            color = MaterialTheme.colorScheme.primaryContainer,
+                            modifier = Modifier.padding(vertical = 2.dp)
+                        ) {
+                            Text(
+                                text = if (isClassic) "Material 协议" else "MiuiX 协议",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onPrimaryContainer,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp)
+                            )
+                        }
+                    }
+                    Spacer(Modifier.height(2.dp))
+                    Text(
+                        text = if (isClassic) {
+                            "以当前选定色为基准，依照 Google Material 协议自动拓展全套色阶"
+                        } else {
+                            "以当前选定色为基准，依照小米 MiuiX 规范自动拓展点睛与通透色阶"
+                        },
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                if (customSeedColor != null) {
+                    TextButton(
+                        onClick = { onCustomSeedColorChange(null) },
+                        contentPadding = PaddingValues(horizontal = 8.dp)
+                    ) {
+                        Icon(Icons.Rounded.Refresh, contentDescription = null, Modifier.size(16.dp))
+                        Spacer(Modifier.width(4.dp))
+                        Text("恢复默认", fontSize = 12.sp)
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // 预设种子色块列表
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                ThemePresets.list.forEach { preset ->
+                    val isSelected = effectiveSeed.toArgb() == preset.color.toArgb()
+                    Box(
+                        modifier = Modifier
+                            .size(34.dp)
+                            .clip(CircleShape)
+                            .background(preset.color)
+                            .border(
+                                width = if (isSelected) 3.dp else 1.dp,
+                                color = if (isSelected) MaterialTheme.colorScheme.onSurface else Color.Black.copy(alpha = 0.12f),
+                                shape = CircleShape
+                            )
+                            .clickable {
+                                onCustomSeedColorChange(preset.color.toArgb())
+                            },
+                        contentAlignment = Alignment.Center
+                    ) {
+                        if (isSelected) {
+                            Icon(
+                                imageVector = Icons.Rounded.Check,
+                                contentDescription = null,
+                                tint = if (ThemeColorGenerator.calculateLuminance(preset.color) > 0.5f) Color.Black else Color.White,
+                                modifier = Modifier.size(18.dp)
+                            )
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            // ── 液态玻璃质感全局开关 (方案三 Shu Ding 物理透镜折射算法) ──
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 2.dp),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(
+                        text = "液态玻璃质感 (Liquid Glass)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        fontWeight = FontWeight.Medium
+                    )
+                    Text(
+                        text = "Shu Ding 边缘物理透镜折射与高光（兼容 Android 8+）",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                AdaptiveSwitch(
+                    checked = isLiquidGlass,
+                    onCheckedChange = { onLiquidGlassChange(it) }
+                )
+            }
+
+            Spacer(Modifier.height(12.dp))
+
+            // 调色盘展开控制开关
+            OutlinedButton(
+                onClick = { showCustomPicker = !showCustomPicker },
+                modifier = Modifier.fillMaxWidth(),
+                shape = RoundedCornerShape(12.dp)
+            ) {
+                Icon(Icons.Rounded.Palette, contentDescription = null, Modifier.size(18.dp))
+                Spacer(Modifier.width(8.dp))
+                Text(if (showCustomPicker) "收起精准调色盘" else "展开精准调色盘 (Canva色轮/RGB/Hex)")
+            }
+
+            // 自定义调色盘面板
+            if (showCustomPicker) {
+                Spacer(Modifier.height(14.dp))
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = MaterialTheme.colorScheme.surfaceVariant.copy(alpha = 0.45f),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Column(
+                        modifier = Modifier.padding(14.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally
+                    ) {
+                        // 1. Canva 可画交互色轮
+                        Text(
+                            text = "Canva 交互色轮 (触控拖拽选择色相与饱和度)",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Medium,
+                            modifier = Modifier.fillMaxWidth()
+                        )
+                        Spacer(Modifier.height(10.dp))
+                        ColorWheel(
+                            hue = hue,
+                            saturation = saturation,
+                            lightness = lightness,
+                            onHslChange = { h, s ->
+                                hue = h
+                                saturation = s
+                                val newC = ThemeColorGenerator.hslToColor(hue, saturation, lightness)
+                                onCustomSeedColorChange(newC.toArgb())
+                            },
+                            wheelSize = 190.dp
+                        )
+                        Spacer(Modifier.height(12.dp))
+
+                        // 2. 明度 (Lightness) 微调滑块
+                        Column(Modifier.fillMaxWidth()) {
+                            Text(
+                                "明暗度 (Lightness): ${(lightness * 100).roundToInt()}%",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                            Slider(
+                                value = lightness,
+                                onValueChange = {
+                                    lightness = it
+                                    val newC = ThemeColorGenerator.hslToColor(hue, saturation, lightness)
+                                    onCustomSeedColorChange(newC.toArgb())
+                                },
+                                valueRange = 0.2f..0.85f,
+                                modifier = Modifier.fillMaxWidth()
+                            )
+                        }
+
+                        Spacer(Modifier.height(6.dp))
+
+                        // 3. 可填入的 RGB 分量数值 (0~255)
+                        Column(Modifier.fillMaxWidth()) {
+                            Text("RGB 颜色数值 (0~255)：", style = MaterialTheme.typography.labelMedium)
+                            Spacer(Modifier.height(6.dp))
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                                verticalAlignment = Alignment.CenterVertically
+                            ) {
+                                OutlinedTextField(
+                                    value = rInput,
+                                    onValueChange = { if (it.length <= 3 && it.all { c -> c.isDigit() }) rInput = it },
+                                    label = { Text("R", fontSize = 11.sp) },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f),
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    shape = RoundedCornerShape(10.dp)
+                                )
+                                OutlinedTextField(
+                                    value = gInput,
+                                    onValueChange = { if (it.length <= 3 && it.all { c -> c.isDigit() }) gInput = it },
+                                    label = { Text("G", fontSize = 11.sp) },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f),
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    shape = RoundedCornerShape(10.dp)
+                                )
+                                OutlinedTextField(
+                                    value = bInput,
+                                    onValueChange = { if (it.length <= 3 && it.all { c -> c.isDigit() }) bInput = it },
+                                    label = { Text("B", fontSize = 11.sp) },
+                                    singleLine = true,
+                                    modifier = Modifier.weight(1f),
+                                    keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
+                                    shape = RoundedCornerShape(10.dp)
+                                )
+                                Button(
+                                    onClick = {
+                                        val r = rInput.toIntOrNull()?.coerceIn(0, 255) ?: 0
+                                        val g = gInput.toIntOrNull()?.coerceIn(0, 255) ?: 0
+                                        val b = bInput.toIntOrNull()?.coerceIn(0, 255) ?: 0
+                                        val c = ThemeColorGenerator.rgbToColor(r, g, b)
+                                        onCustomSeedColorChange(c.toArgb())
+                                    },
+                                    shape = RoundedCornerShape(10.dp)
+                                ) {
+                                    Text("应用RGB")
+                                }
+                            }
+                        }
+
+                        Spacer(Modifier.height(10.dp))
+
+                        // 4. Hex 输入框
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            OutlinedTextField(
+                                value = hexInput,
+                                onValueChange = { hexInput = it },
+                                label = { Text("颜色代码 (Hex)") },
+                                placeholder = { Text("#3482FF") },
+                                singleLine = true,
+                                modifier = Modifier.weight(1f),
+                                shape = RoundedCornerShape(10.dp)
+                            )
+                            Spacer(Modifier.width(10.dp))
+                            Button(
+                                onClick = {
+                                    val parsed = ThemeColorGenerator.parseHexColorOrNull(hexInput)
+                                    if (parsed != null) {
+                                        onCustomSeedColorChange(parsed.toArgb())
+                                    }
+                                },
+                                shape = RoundedCornerShape(10.dp)
+                            ) {
+                                Text("应用Hex")
+                            }
+                        }
+                    }
+                }
+            }
+
+            Spacer(Modifier.height(14.dp))
+
+            // ── 当前协议衍生色彩阶梯动态预览条 ──
+            val isDarkCurrent = when (currentMode) {
+                1 -> false
+                2 -> true
+                else -> androidx.compose.foundation.isSystemInDarkTheme()
+            }
+            val previewScheme = remember(effectiveSeed, isClassic, isDarkCurrent) {
+                if (isClassic) {
+                    ThemeColorGenerator.generateMaterialScheme(effectiveSeed, isDarkCurrent)
+                } else {
+                    ThemeColorGenerator.generateMiuixScheme(effectiveSeed, isDarkCurrent).first
+                }
+            }
+
+            Text(
+                text = "${if (isClassic) "Google Material 协议" else "MiuiX 极简协议"} 衍生色谱：",
+                style = MaterialTheme.typography.labelSmall,
+                fontWeight = FontWeight.Medium,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+            Spacer(Modifier.height(6.dp))
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(38.dp)
+                    .clip(RoundedCornerShape(8.dp))
+                    .border(1.dp, MaterialTheme.colorScheme.outlineVariant, RoundedCornerShape(8.dp))
+            ) {
+                listOf(
+                    "主色" to previewScheme.primary,
+                    "容器" to previewScheme.primaryContainer,
+                    "次级" to previewScheme.secondary,
+                    "表面" to previewScheme.surface,
+                    "线条" to previewScheme.outline
+                ).forEach { (label, color) ->
+                    Box(
+                        modifier = Modifier
+                            .weight(1f)
+                            .fillMaxHeight()
+                            .background(color),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Text(
+                            text = label,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.Bold,
+                            color = if (ThemeColorGenerator.calculateLuminance(color) > 0.5f) Color(0xFF1F1F1F) else Color.White
+                        )
+                    }
+                }
             }
 
             Spacer(Modifier.height(16.dp))

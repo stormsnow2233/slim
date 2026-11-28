@@ -50,6 +50,25 @@ object Exporter {
 
     val UTF8_BOM = byteArrayOf(0xEF.toByte(), 0xBB.toByte(), 0xBF.toByte())
 
+    /** 快速嗅探字符集编码 */
+    fun detectCharset(bytes: ByteArray): java.nio.charset.Charset {
+        if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {
+            return Charsets.UTF_8
+        }
+        val sampleSize = minOf(bytes.size, 64 * 1024)
+        val sample = java.nio.ByteBuffer.wrap(bytes, 0, sampleSize)
+        val utf8Decoder = Charsets.UTF_8.newDecoder()
+            .onMalformedInput(java.nio.charset.CodingErrorAction.REPORT)
+            .onUnmappableCharacter(java.nio.charset.CodingErrorAction.REPORT)
+        val isUtf8 = runCatching {
+            utf8Decoder.decode(sample)
+            true
+        }.getOrDefault(false)
+        return if (isUtf8) Charsets.UTF_8 else runCatching {
+            java.nio.charset.Charset.forName("GB18030")
+        }.getOrDefault(Charsets.UTF_8)
+    }
+
     /** 严格嗅探与解码外部下载的 TXT 字节（优先 BOM / 严格 UTF-8，遇到非法序列回退 GB18030） */
     fun decodeNovelBytes(bytes: ByteArray): String {
         if (bytes.size >= 3 && bytes[0] == 0xEF.toByte() && bytes[1] == 0xBB.toByte() && bytes[2] == 0xBF.toByte()) {

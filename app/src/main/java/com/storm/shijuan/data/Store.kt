@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
+import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import java.security.MessageDigest
 import java.util.concurrent.ConcurrentHashMap
@@ -756,14 +757,24 @@ class Store(val context: Context) {
         sp.edit().putString("wenku8_proxy_url", url.trim()).apply()
     }
 
-    // ── JMcomic 自定义反代 / Pages / Worker / CDN ──
+    // ── JMcomic 自定义反代 / 镜像源 / 直连模式 ──
+    companion object {
+        const val DEFAULT_JM_MIRROR = "https://jm-proxy.us.ci"
+    }
+
     fun jmProxyUrl(): String {
         val value = sp.getString("jm_proxy_url", null)?.trim().orEmpty()
-        return if (value.isBlank() || value.contains("jm-proxy.storm-snow.workers.dev") || value.contains("jm-proxy.pages.dev")) "https://jm-proxy.us.ci" else value
+        return if (value.isBlank() || value.contains("jm-proxy.storm-snow.workers.dev") || value.contains("jm-proxy.pages.dev")) DEFAULT_JM_MIRROR else value
     }
 
     fun setJmProxyUrl(url: String) {
         sp.edit().putString("jm_proxy_url", url.trim()).apply()
+    }
+
+    fun isJmDirectEnabled(): Boolean = sp.getBoolean("jm_direct_mode", false)
+
+    fun setJmDirectEnabled(direct: Boolean) {
+        sp.edit().putBoolean("jm_direct_mode", direct).apply()
     }
 
     // ── Z-Library 自定义反代 / Pages / Worker ──
@@ -802,6 +813,32 @@ class Store(val context: Context) {
     fun setAppThemeMode(mode: Int) {
         currentThemeMode = mode
         sp.edit().putInt("app_theme_mode", mode).apply()
+    }
+
+    // ── 调色盘自定义种子颜色 ──
+    var customThemeSeedColor: Int? by mutableStateOf(
+        if (sp.contains("custom_theme_seed_color")) sp.getInt("custom_theme_seed_color", 0) else null
+    )
+        private set
+
+    fun saveCustomThemeSeedColor(color: Int?) {
+        customThemeSeedColor = color
+        if (color != null) {
+            sp.edit().putInt("custom_theme_seed_color", color).apply()
+        } else {
+            sp.edit().remove("custom_theme_seed_color").apply()
+        }
+    }
+
+    // ── 液态玻璃质感 (Liquid Glass · 方案三透镜折射算法) 全局开关 ──
+    var isLiquidGlassEnabled: Boolean by mutableStateOf(
+        sp.getBoolean("liquid_glass_enabled", true)
+    )
+        private set
+
+    fun saveLiquidGlassEnabled(enabled: Boolean) {
+        isLiquidGlassEnabled = enabled
+        sp.edit().putBoolean("liquid_glass_enabled", enabled).apply()
     }
 
     /** 清除离线缓存；保留书架、阅读进度、搜索历史和应用设置。 */
